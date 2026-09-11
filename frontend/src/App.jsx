@@ -6,6 +6,8 @@ export default function App() {
   // ==========================================================
   const [activeTab, setActiveTab] = useState('control');
   const [wsStatus, setWsStatus] = useState('연결 시도 중...');
+  const [devices, setDevices] = useState([]);
+  const [deviceError, setDeviceError] = useState('');
   const BACKEND_HOST = window.location.hostname;
   const API_BASE = `http://${BACKEND_HOST}:8000`;
 
@@ -171,6 +173,44 @@ export default function App() {
 
     return () => socket.close();
   }, [BACKEND_HOST]);
+
+  // ==========================================================
+  // Zenoh 연결 장비 관리
+  // ==========================================================
+  useEffect(() => {
+    let stopped = false;
+    async function loadDevices() {
+      try {
+        const response = await fetch(`${API_BASE}/api/connections`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (!stopped) {
+          setDevices(data.devices || []);
+          setDeviceError('');
+        }
+      } catch (error) {
+        if (!stopped) setDeviceError(error.message);
+      }
+    }
+    loadDevices();
+    const timer = setInterval(loadDevices, 2000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [API_BASE]);
+
+  const changeDeviceAccess = async (ip, action) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/connections/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || '처리 실패');
+      setDevices(data.devices || []);
+    } catch (error) {
+      alert(`연결 관리 실패: ${error.message}`);
+    }
+  };
 
   // ==========================================================
   // 3. Canvas 크기 변경 감지
@@ -539,6 +579,9 @@ export default function App() {
             <button onClick={() => setActiveTab('wms')} style={tabButtonStyle(activeTab === 'wms')}>
               📦 재고 관리 & LLM 배차 (WMS)
             </button>
+            <button onClick={() => setActiveTab('connections')} style={tabButtonStyle(activeTab === 'connections')}>
+              🔌 연결 관리
+            </button>
           </div>
         </div>
         <div style={{ fontSize: '13px', color: wsStatus.includes('🟢') ? '#22c55e' : '#ef4444', fontWeight: 'bold' }}>
@@ -682,9 +725,58 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {activeTab === 'connections' && (
+        <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+          <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
+            <h2 style={{ color: '#38bdf8', marginTop: 0 }}>🔌 Zenoh 연결 관리</h2>
+            <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '18px' }}>메인 PC TCP 7447에 연결되는 장비를 표시합니다.</div>
+            {deviceError && <div style={{ color: '#fca5a5', marginBottom: '12px' }}>조회 오류: {deviceError}</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px' }}>
+              <section style={connectionPanelStyle}>
+                <h3 style={{ color: '#22c55e', marginTop: 0 }}>승인 / 연결 장비</h3>
+                {devices.filter((d) => !d.blocked && (d.known || d.connected)).map((d) => (
+                  <DeviceRow key={d.ip} device={d} onAction={changeDeviceAccess} />
+                ))}
+              </section>
+              <section style={connectionPanelStyle}>
+                <h3 style={{ color: '#f59e0b', marginTop: 0 }}>미승인 / 차단 장비</h3>
+                {devices.filter((d) => d.blocked || (!d.known && d.connected)).map((d) => (
+                  <DeviceRow key={d.ip} device={d} onAction={changeDeviceAccess} />
+                ))}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+
+function DeviceRow({ device, onAction }) {
+  const stateColor = device.blocked ? '#ef4444' : device.connected ? '#22c55e' : '#64748b';
+  return (
+    <div style={{ ...panelStyle, marginBottom: '9px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+        <div>
+          <div style={{ fontWeight: 'bold' }}>{device.name}</div>
+          <div style={{ color: '#94a3b8', fontSize: '12px' }}>{device.ip}</div>
+          <div style={{ color: stateColor, fontSize: '11px', marginTop: '3px' }}>● {device.state}</div>
+        </div>
+        <button
+          onClick={() => onAction(device.ip, device.blocked ? 'allow' : 'block')}
+          style={{ ...smallActionButtonStyle, background: device.blocked ? '#0284c7' : '#b91c1c' }}
+        >
+          {device.blocked ? '연결 허용' : '차단'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const connectionPanelStyle = { background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '18px' };
+const smallActionButtonStyle = { border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
 
 const panelStyle = {
   background: '#0f172a',

@@ -3,6 +3,8 @@ import io
 import json
 import re
 import struct
+import subprocess
+import ipaddress
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,6 +32,7 @@ ROUTE_DIR = BASE_DIR / "routes"
 
 MAP_YAML_PATH = MAP_DIR / "my_map.yaml"
 ROUTE_GRAPH_PATH = ROUTE_DIR / "test.geojson"
+
 # ============================================================
 # WebSocket 연결 관리자
 # ============================================================
@@ -63,6 +66,65 @@ zenoh_subscriber = None
 loop = None
 zenoh_publishers = {}
 
+KNOWN_DEVICES = {
+    "10.10.141.221": "robot1",
+    "10.10.141.226": "robot2",
+    "10.10.141.246": "robot3",
+}
+blocked_devices = set()
+seen_devices = set(KNOWN_DEVICES.keys())
+
+def _valid_ip(ip: str) -> str:
+    return str(ipaddress.ip_address(ip))
+
+def _run_ss():
+    result = subprocess.run(["ss", "-Hnt"], capture_output=True, text=True, check=False)
+    return result.stdout
+
+def _zenoh_peers():
+    peers = set()
+    for line in _run_ss().splitlines():
+        cols = line.split()
+        if len(cols) < 5 or cols[0] != "ESTAB":
+            continue
+        local_addr, peer_addr = cols[3], cols[4]
+        if not local_addr.endswith(":7447"):
+            continue
+        ip = peer_addr.rsplit(":", 1)[0].strip("[]")
+        if ip not in ("127.0.0.1", "::1"):
+            peers.add(ip)
+    seen_devices.update(peers)
+    return peers
+
+def _firewall(action: str, ip: str):
+    ip = _valid_ip(ip)
+    base = ["sudo", "iptables"]
+    rule = ["INPUT", "-s", ip, "-p", "tcp", "--dport", "7447", "-j", "REJECT"]
+    if action == "block":
+        check = subprocess.run(base + ["-C"] + rule, capture_output=True)
+        if check.returncode != 0:
+            subprocess.run(base + ["-I"] + rule, check=True)
+        blocked_devices.add(ip)
+    elif action == "allow":
+        while subprocess.run(base + ["-C"] + rule, capture_output=True).returncode == 0:
+            subprocess.run(base + ["-D"] + rule, check=True)
+        blocked_devices.discard(ip)
+
+def device_snapshot():
+    connected = _zenoh_peers()
+    devices = []
+    for ip in sorted(seen_devices | blocked_devices):
+        blocked = ip in blocked_devices
+        devices.append({
+            "ip": ip,
+            "name": KNOWN_DEVICES.get(ip, "Unknown"),
+            "known": ip in KNOWN_DEVICES,
+            "connected": ip in connected and not blocked,
+            "blocked": blocked,
+            "state": "BLOCKED" if blocked else ("CONNECTED" if ip in connected else "OFFLINE"),
+        })
+    return devices
+
 
 # ============================================================
 # 정적 지도 / Route Graph 유틸
@@ -77,7 +139,6 @@ def load_map_metadata():
         map_yaml = yaml.safe_load(f)
 
     image_name = map_yaml["image"]
-
     image_path = Path(image_name)
 
     if not image_path.is_absolute():
@@ -124,7 +185,6 @@ def pgm_to_png_bytes() -> bytes:
     image_path = Path(map_info["image_path"])
 
     with Image.open(image_path) as img:
-        # 지도 원본의 grayscale 값을 그대로 유지해서 PNG로만 변환한다.
         converted = img.convert("L")
         output = io.BytesIO()
         converted.save(output, format="PNG")
@@ -139,7 +199,7 @@ def zenoh_telemetry_listener(sample):
         topic = str(sample.key_expr)
         raw_bytes = sample.payload.to_bytes()
 
-        # ROS2 std_msgs/String CDR 데이터에서 JSON 문자열 부분 추출
+        # ROS 2 std_msgs/String CDR 데이터에서 JSON 문자열 부분 추출
         text = raw_bytes.decode("utf-8", errors="ignore")
         json_match = re.search(r"\{.*\}", text)
         if not json_match:
@@ -189,7 +249,7 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     await init_db()
 
-    # 맵/그래프 파일 확인
+    # 맵/그래프 파일 로드 확인
     try:
         map_info = load_map_metadata()
         print(
@@ -216,15 +276,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f" -> [WARN] Route Graph 로드 실패: {e}")
 
-    # Zenoh가 잠시 꺼져 있어도 지도 UI 자체는 실행 가능하도록 처리
+    # Zenoh 연결 및 구독자 등록 (GC 소멸 방지: zenoh_subscriber 변수에 할당)
     try:
         conf = zenoh.Config()
+        conf.insert_json5("mode", '"client"')
         conf.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
+        conf.insert_json5("scouting/multicast/enabled", "false")
+        conf.insert_json5("scouting/gossip/enabled", "false")
         zenoh_session = zenoh.open(conf)
         zenoh_subscriber = zenoh_session.declare_subscriber(
-            "**/telemetry", zenoh_telemetry_listener
+            "**/telemetry",
+            zenoh_telemetry_listener
         )
+        
+        # ===== [추가] 로봇 1, 2, 3을 위한 퍼블리셔를 미리 생성하여 브리지 라우팅 지연 방지 =====
+        for i in range(1, 4):
+            topic = f"robot{i}/goal"
+            zenoh_publishers[topic] = zenoh_session.declare_publisher(topic)
+        # =========================================================================
+
         print(f" -> FMS Zenoh 수신 세션 활성화 완료! (ZID: {zenoh_session.zid()})")
+
     except Exception as e:
         zenoh_session = None
         zenoh_subscriber = None
@@ -256,7 +328,6 @@ app.add_middleware(
 async def get_map_info():
     try:
         info = load_map_metadata()
-        # 브라우저가 직접 서버 내부 파일 경로를 알 필요는 없으므로 제거
         info.pop("yaml_path", None)
         info.pop("image_path", None)
         info["image_url"] = "/api/map/image"
@@ -302,22 +373,35 @@ class CommandPayload(BaseModel):
 @app.post("/api/command/goal")
 async def send_goal(cmd: CommandPayload):
     if not zenoh_session:
-        return {"status": "ERROR", "message": "Zenoh session inactive"}
+        return {
+            "status": "ERROR",
+            "message": "Zenoh session inactive"
+        }
 
+    # zenoh-bridge-ros2dds가 ROS 2 DDS 토픽으로 매핑할 수 있도록 rt/ 접두사 추가
     target_topic = f"{cmd.robot_id}/goal"
 
     if target_topic not in zenoh_publishers:
         zenoh_publishers[target_topic] = zenoh_session.declare_publisher(target_topic)
 
-    json_str = json.dumps({"x": cmd.target_x, "y": cmd.target_y})
+    json_str = json.dumps({
+        "x": cmd.target_x,
+        "y": cmd.target_y
+    })
+
     utf8_bytes = json_str.encode("utf-8") + b"\x00"
 
-    # ROS 2 std_msgs/msg/String CDR 직렬화
+    # ROS 2 std_msgs/msg/String CDR 직렬화 헤더
     cdr_header = b"\x00\x01\x00\x00"
     length_prefix = struct.pack("<I", len(utf8_bytes))
     cdr_payload = cdr_header + length_prefix + utf8_bytes
 
     zenoh_publishers[target_topic].put(cdr_payload)
+
+    print(
+        f" -> GOAL TX: {target_topic} "
+        f"payload={json_str}"
+    )
 
     return {
         "status": "SUCCESS",
@@ -325,6 +409,37 @@ async def send_goal(cmd: CommandPayload):
         "payload": json_str,
     }
 
+
+
+class DevicePayload(BaseModel):
+    ip: str
+
+
+@app.get("/api/connections")
+async def get_connections():
+    return {"devices": device_snapshot()}
+
+
+@app.post("/api/connections/block")
+async def block_connection(payload: DevicePayload):
+    try:
+        ip = _valid_ip(payload.ip)
+        seen_devices.add(ip)
+        _firewall("block", ip)
+        return {"status": "SUCCESS", "ip": ip, "devices": device_snapshot()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/connections/allow")
+async def allow_connection(payload: DevicePayload):
+    try:
+        ip = _valid_ip(payload.ip)
+        seen_devices.add(ip)
+        _firewall("allow", ip)
+        return {"status": "SUCCESS", "ip": ip, "devices": device_snapshot()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
 # Dashboard WebSocket
@@ -334,10 +449,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # 연결 유지. 프론트에서 메시지를 보내지 않아도 WebSocket은 열린 상태로 유지됨.
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
-
