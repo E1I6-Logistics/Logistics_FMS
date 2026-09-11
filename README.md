@@ -367,6 +367,18 @@ source /opt/ros/jazzy/setup.bash
 python simulation/mock_fleet.py
 ```
 
+특정 로봇을 Route Graph의 Point id로 이동시키려면 로봇 번호와 목적지 Point id를
+함께 전달합니다. 로봇의 초기 위치는 `robot1=Point 2`, `robot2=Point 0`,
+`robot3=Point 1`로 고정됩니다.
+
+```bash
+# robot1: Point 2 -> Point 7
+python simulation/mock_fleet.py --robot-number 1 --point-id 7
+```
+
+Route Graph에 경로가 없는 조합은 실행 시 오류로 알려줍니다. 목적지를 지정하지
+않은 로봇은 초기 Point에 정지합니다.
+
 정상적으로 연결되면:
 
 ```text
