@@ -1,25 +1,32 @@
+/* 카운터 버튼 컴포넌트의 스타일입니다. (App.jsx 내부의 카운터 버튼에 적용될 것으로 예상됩니다) */
 .counter {
   font-size: 16px;
   padding: 5px 10px;
   border-radius: 5px;
+  /* var(--accent)는 전역(index.css 등) 혹은 최상단에 정의된 CSS 변수(Custom Properties)를 불러와 
+     앱 전체의 테마 색상(포인트 컬러)을 일관되게 적용하는 원리입니다. */
   color: var(--accent);
   background: var(--accent-bg);
   border: 2px solid transparent;
   transition: border-color 0.3s;
   margin-bottom: 24px;
 
+  /* 마우스를 올렸을 때(hover)의 스타일입니다. 부모 클래스 안에 '&'를 사용해 중첩하여 가독성을 높였습니다. */
   &:hover {
     border-color: var(--accent-border);
   }
+  /* 키보드 탭(Tab) 키 등을 이용해 접근성 포커스가 맞춰졌을 때 외곽선을 그려 시각적으로 알려주는 접근성(a11y) 속성입니다. */
   &:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 }
 
+/* 화면 상단(주로 로고가 배치되는) 히어로(Hero) 섹션입니다. 3D 변형 효과를 다룹니다. */
 .hero {
   position: relative;
 
+  /* 하위의 세 가지 요소(기본 로고, 프레임워크 로고, Vite 로고)를 모두 화면 가운데로 정렬합니다. */
   .base,
   .framework,
   .vite {
@@ -30,6 +37,7 @@
   .base {
     width: 170px;
     position: relative;
+    /* z-index를 0으로 주어 뒤쪽에 배치합니다. */
     z-index: 0;
   }
 
@@ -38,10 +46,12 @@
     position: absolute;
   }
 
+  /* CSS 3D Transform을 이용해 로고들을 3차원 공간에서 회전시키고 원근감(perspective)을 주는 핵심 애니메이션/배치 코드입니다. */
   .framework {
-    z-index: 1;
+    z-index: 1; /* base 요소보다 앞쪽에 위치하도록 z-index 값을 높입니다. */
     top: 34px;
     height: 28px;
+    /* perspective(2000px)로 시야 거리를 설정하고, Z, X, Y 축으로 회전시켜 입체적인 UI를 만듭니다. */
     transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
       scale(1.4);
   }
@@ -51,33 +61,39 @@
     top: 107px;
     height: 26px;
     width: auto;
+    /* 위와 동일한 원근법을 주되, 스케일(크기)과 위치를 다르게 하여 층을 이룬 것처럼(Layered) 보이게 합니다. */
     transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
       scale(0.8);
   }
 }
 
+/* 화면 정중앙 배치를 담당하는 래퍼(Wrapper) 레이아웃입니다. */
 #center {
   display: flex;
   flex-direction: column;
-  gap: 25px;
+  gap: 25px; /* 자식 요소들 사이의 간격을 25px로 띄웁니다. */
   place-content: center;
-  place-items: center;
-  flex-grow: 1;
+  place-items: center; /* 수직, 수평 모두 가운데 정렬합니다. */
+  flex-grow: 1; /* 남은 공간을 모두 차지하도록 늘려줍니다. */
 
+  /* 화면 가로폭이 1024px 이하(주로 태블릿/모바일)일 때 적용되는 반응형 디자인 룰(Media Query)입니다. 여백을 줄입니다. */
   @media (max-width: 1024px) {
     padding: 32px 20px 24px;
     gap: 18px;
   }
 }
 
+/* 다음 단계를 안내하는 하단 정보 영역입니다. */
 #next-steps {
   display: flex;
   border-top: 1px solid var(--border);
   text-align: left;
 
+  /* 하위 div 요소들이 가로 공간을 균등하게(1:1) 나눠 가지도록 flex: 1 1 0을 줍니다. */
   & > div {
     flex: 1 1 0;
     padding: 32px;
+    /* 모바일 환경에서는 패딩(안쪽 여백)을 줄입니다. */
     @media (max-width: 1024px) {
       padding: 24px 20px;
     }
@@ -89,23 +105,27 @@
     height: 22px;
   }
 
+  /* 모바일/태블릿 환경에서는 가로 배치(row) 대신 세로 배치(column)로 변경하고 텍스트를 가운데 정렬합니다. */
   @media (max-width: 1024px) {
     flex-direction: column;
     text-align: center;
   }
 }
 
+/* 공식 문서(docs)를 안내하는 영역과 다른 영역 사이의 구분선을 긋습니다. */
 #docs {
   border-right: 1px solid var(--border);
 
+  /* 화면이 좁아지면 세로로 배치되므로 우측 구분선을 없애고 하단 구분선으로 변경합니다. */
   @media (max-width: 1024px) {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
 }
 
+/* #next-steps 영역 내부에 있는 링크 목록(ul) 스타일입니다. */
 #next-steps ul {
-  list-style: none;
+  list-style: none; /* 기본 불릿(점)을 없앱니다. */
   padding: 0;
   display: flex;
   gap: 8px;
@@ -115,6 +135,7 @@
     height: 18px;
   }
 
+  /* 리스트 안의 <a> 태그(버튼형 링크)에 대한 디테일한 스타일링입니다. */
   a {
     color: var(--text-h);
     font-size: 16px;
@@ -122,10 +143,10 @@
     background: var(--social-bg);
     display: flex;
     padding: 6px 12px;
-    align-items: center;
+    align-items: center; /* 텍스트와 아이콘 높이를 수직 중앙으로 맞춥니다. */
     gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
+    text-decoration: none; /* 링크 밑줄을 제거합니다. */
+    transition: box-shadow 0.3s; /* 호버(그림자) 효과에 0.3초 애니메이션을 추가해 부드럽게 렌더링합니다. */
 
     &:hover {
       box-shadow: var(--shadow);
@@ -136,11 +157,13 @@
     }
   }
 
+  /* 좁은 화면에서의 링크 리스트 그리드 배치(2열 배치) 설정입니다. */
   @media (max-width: 1024px) {
     margin-top: 20px;
-    flex-wrap: wrap;
+    flex-wrap: wrap; /* 화면이 좁아지면 링크 버튼들이 다음 줄로 넘어가도록 허용합니다. */
     justify-content: center;
 
+    /* calc를 사용해 2개의 버튼이 가로 공간의 50%씩 차지하여 2열로 정렬되게 수학적으로 계산합니다. */
     li {
       flex: 1 1 calc(50% - 8px);
     }
@@ -153,18 +176,22 @@
   }
 }
 
+/* 섹션과 섹션 사이의 여백을 띄워주는 빈 공간 블록입니다. */
 #spacer {
   height: 88px;
   border-top: 1px solid var(--border);
+  /* 모바일에서는 불필요하게 넓은 여백을 줄이기 위해 높이를 48px로 조절합니다. */
   @media (max-width: 1024px) {
     height: 48px;
   }
 }
 
+/* 눈금자 모양이나 모서리의 꺾쇠 같은 시각적 장식을 만드는 클래스입니다. */
 .ticks {
   position: relative;
   width: 100%;
 
+  /* CSS의 ::before와 ::after 가상 요소(Pseudo-element)를 사용해 HTML 태그 추가 없이 양 끝에 작은 화살표나 선(경계선 5px 투명도 트릭)을 그리는 기법입니다. */
   &::before,
   &::after {
     content: '';

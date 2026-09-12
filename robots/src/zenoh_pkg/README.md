@@ -27,19 +27,19 @@ source install/setup.bash
 ### Robot1
 
 ```bash
-ros2 launch zenoh_pkg zenoh.launch.py namespace:=robot1
+ros2 launch zenoh_pkg zenoh.launch.py ns:=robot1
 ```
 
 ### Robot2
 
 ```bash
-ros2 launch zenoh_pkg zenoh.launch.py namespace:=robot2
+ros2 launch zenoh_pkg zenoh.launch.py ns:=robot2
 ```
 
 ### Robot3
 
 ```bash
-ros2 launch zenoh_pkg zenoh.launch.py namespace:=robot3
+ros2 launch zenoh_pkg zenoh.launch.py ns:=robot3
 ```
 
 Namespace를 지정하지 않으면 기본값은 `noname_robot`입니다.

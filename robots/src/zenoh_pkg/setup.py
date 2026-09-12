@@ -21,6 +21,10 @@ setup(
             os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py')
         ),
+        (
+            os.path.join('share', package_name, 'config'),
+            glob('config/*.json5')
+        ),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,7 +34,7 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'robot_agent = zenoh_pkg.robot_agent:main',
+            'robot_agent_test = zenoh_pkg.robot_agent_test:main',
         ],
     },
 )
