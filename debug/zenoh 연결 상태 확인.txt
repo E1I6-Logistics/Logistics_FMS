@@ -1,0 +1,22 @@
+ps aux | grep zenoh
+root       78041  0.0  0.0  37776 12548 ?        Ssl   9월11   0:36 /zenohd --listen tcp/0.0.0.0:7447
+ugie01    127975  0.1  0.8 1762548 261648 ?      Sl   19:13   0:01 /usr/bin/gnome-text-editor /home/ugie01/Logistics_FMS/debug/zenoh_monitor.py
+ugie01    128582  0.0  0.0  10816  2464 pts/13   S+   19:29   0:00 grep --color=auto zenoh
+
+
+pgrep -af zenoh
+78041 /zenohd --listen tcp/0.0.0.0:7447
+127975 /usr/bin/gnome-text-editor /home/ugie01/Logistics_FMS/debug/zenoh_monitor.py
+
+
+ss -tnp | grep 7447
+ESTAB 0      0               10.10.141.15:7447          10.10.141.221:57358                                        
+ESTAB 0      0               10.10.141.15:7447          10.10.141.246:56330                                        
+ESTAB 0      0               10.10.141.15:7447          10.10.141.226:41708                                        
+ESTAB 0      0                  127.0.0.1:7447              127.0.0.1:49986                                        
+ESTAB 0      0                  127.0.0.1:49986             127.0.0.1:7447  users:(("python3.12",pid=128432,fd=28))
+
+
+ss -lntp | grep 7447
+LISTEN 0      1024                       0.0.0.0:7447       0.0.0.0:*                                                                      
+
