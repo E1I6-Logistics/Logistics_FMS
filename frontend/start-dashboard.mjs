@@ -17,4 +17,4 @@ if (!existsSync(join(root, 'node_modules/vite/bin/vite.js'))) {
   if (result !== 0) process.exit(result)
 }
 console.log('\nOpen http://127.0.0.1:5173 in your browser. Press Ctrl+C to stop.\n')
-process.exit(run(process.execPath, [join(root, 'node_modules/vite/bin/vite.js')]))
+process.exit(run(process.execPath, [join(root, 'node_modules/vite/bin/vite.js'), '--open']))
