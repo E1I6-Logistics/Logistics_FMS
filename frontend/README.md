@@ -1,47 +1,49 @@
 # 물류 창고 시스템 FMS 대시보드
 
-실제 물류센터 지도를 기반으로 로봇, 경로, 작업 및 알람 상태를 확인하는 React/Vite 대시보드입니다.
+물류센터의 로봇, 경로, 작업 및 알람 상태를 화면에서 확인하는 React/Vite 기반 데모 대시보드입니다. 실제 FMS·ROS·MQTT 서버에는 연결하지 않습니다.
 
-## 처음 실행하기
+## 가장 빠른 실행 방법 (Windows)
 
-### 1. Node.js 설치
+처음 사용하는 경우에도 아래 순서만 따르면 됩니다.
 
-1. [Node.js 공식 사이트](https://nodejs.org/)에서 LTS 버전을 내려받아 설치합니다.
-2. 이 프로젝트는 Node.js 22.12 이상이 필요합니다.
-3. 설치가 끝나면 열려 있던 터미널을 닫고 새 PowerShell을 엽니다.
-4. 다음 명령으로 설치 여부를 확인합니다.
+1. Windows용 [Node.js LTS](https://nodejs.org/)를 설치합니다. 설치 화면에서는 기본 설정을 그대로 사용합니다.
+2. 설치가 끝나면 PowerShell을 새로 열고 아래 명령을 실행합니다.
 
 ```powershell
 node --version
 npm --version
 ```
 
-두 명령 모두 버전이 출력되어야 합니다. `node`를 찾을 수 없다는 메시지가 나오면 Node.js를 다시 설치한 후 Windows를 재시작합니다.
+두 명령 모두 버전 번호를 보여야 합니다. Node.js는 **22.12 이상**이 필요합니다.
 
-### 2. pnpm 설치
-
-Node.js 설치 프로그램에 포함된 npm으로 pnpm을 설치합니다.
+3. pnpm을 한 번만 설치합니다.
 
 ```powershell
 npm install --global pnpm
 pnpm --version
 ```
 
-`pnpm --version`에서 버전이 출력되면 준비가 끝났습니다.
+4. 파일 탐색기에서 아래 폴더를 엽니다.
 
-### 3. Windows에서 실행
+```text
+S:\Sangong\E1i6_Logistics\Logistics_FMS\frontend
+```
 
-1. 파일 탐색기에서 이 `frontend` 폴더를 엽니다.
-2. `start-dashboard.cmd`를 더블클릭합니다.
-3. 최초 실행에서는 필요한 패키지를 자동으로 설치하므로 인터넷 연결이 필요합니다.
-4. 터미널에 서버 주소가 표시되면 브라우저에서 [http://127.0.0.1:5173](http://127.0.0.1:5173)을 엽니다.
-5. 서버를 종료하려면 실행 중인 터미널에서 `Ctrl+C`를 누릅니다.
+5. `start-dashboard.cmd`를 더블클릭합니다.
 
-소스의 `index.html`은 TypeScript와 React 변환이 필요하므로 파일을 직접 열 수 없습니다. `start-dashboard.cmd` 또는 `pnpm dev`로 Vite 개발 서버를 실행해야 합니다.
+처음 실행할 때는 의존성을 설치하므로 인터넷 연결이 필요합니다. 완료되면 기본 브라우저가 자동으로 열리고 대시보드가 표시됩니다. 열리지 않을 경우 브라우저 주소창에 `http://127.0.0.1:5173`을 입력합니다.
 
-## 터미널에서 실행
+실행 중인 검은 창은 서버입니다. 대시보드를 사용하는 동안 닫지 마세요. 종료할 때는 해당 창에서 `Ctrl+C`를 누르거나 창을 닫습니다.
 
-저장소를 다른 위치에 받은 경우 아래 `cd` 경로를 실제 `frontend` 폴더 경로로 변경합니다.
+## 꼭 지켜야 할 점
+
+이 프로젝트는 **Windows에서 실행**합니다. `start-dashboard.cmd`를 실행할 때는 Windows용 Node.js와 pnpm이 필요합니다.
+
+WSL에서 `npm install` 또는 `pnpm install`을 실행하지 마세요. WSL은 Linux용 네이티브 파일을 만들고, Windows에서 실행할 때 빈 화면 또는 Vite 실행 오류가 발생할 수 있습니다. 이미 WSL로 설치했다면 아래의 “문제 해결” 절차로 복구하세요.
+
+## PowerShell에서 실행하기
+
+더블클릭 대신 PowerShell에서 실행하려면 다음을 사용합니다.
 
 ```powershell
 cd 'S:\Sangong\E1i6_Logistics\Logistics_FMS\frontend'
@@ -49,19 +51,51 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-브라우저에서 http://127.0.0.1:5173 접속.
-의존성을 설치한 이후에는 `pnpm dev`만 실행합니다.
+브라우저에서 `http://127.0.0.1:5173`을 엽니다. 의존성 설치가 끝난 다음부터는 `pnpm dev`만 실행하면 됩니다.
 
-`Port 5173 is already in use` 오류가 나오면 기존에 실행 중인 개발 서버를 종료한 후 다시 실행합니다.
+## 문제 해결
+
+### `Node.js is required` 또는 `node`를 찾을 수 없음
+
+Windows용 Node.js가 설치되지 않았거나, 설치 직후 열어 둔 PowerShell/파일 탐색기를 계속 사용 중인 경우입니다. Node.js LTS를 설치한 뒤 PowerShell과 파일 탐색기 창을 모두 닫고 새로 엽니다. 그래도 해결되지 않으면 Windows를 재시작합니다.
+
+### `pnpm`을 찾을 수 없음
+
+새 PowerShell에서 아래 명령을 실행합니다.
 
 ```powershell
-pnpm typecheck
-pnpm build
-pnpm preview
+npm install --global pnpm
 ```
 
-빌드 출력은 dist 폴더이며 preview 주소는 http://127.0.0.1:4173 입니다.
+설치가 끝난 뒤 `pnpm --version`으로 확인하고 `start-dashboard.cmd`를 다시 실행합니다.
 
+### 브라우저가 하얗게 보이거나 Vite/rolldown 오류가 남
+
+WSL과 Windows에서 같은 `node_modules`를 사용했을 때 발생할 수 있습니다. 먼저 실행 중인 대시보드 창을 종료하고, **Windows PowerShell**에서 아래 명령을 순서대로 실행합니다.
+
+```powershell
+cd 'S:\Sangong\E1i6_Logistics\Logistics_FMS\frontend'
+Remove-Item -LiteralPath .\node_modules -Recurse -Force
+pnpm install --frozen-lockfile
+pnpm run build
+```
+
+마지막 명령에서 `built in ...`이 표시되면 복구된 것입니다. 이후 `start-dashboard.cmd`를 다시 더블클릭합니다.
+
+### `Port 5173 is already in use`
+
+이미 대시보드가 실행 중입니다. 기존 대시보드의 검은 창에서 `Ctrl+C`를 눌러 종료한 뒤 다시 실행합니다. 기존 창을 찾기 어렵다면 PC를 재시작한 후 다시 실행합니다.
+
+## 개발·검증 명령
+
+```powershell
+pnpm dev        # 개발 서버 실행
+pnpm run build  # 배포용 파일 생성 및 빌드 확인
+pnpm typecheck  # TypeScript 검사
+pnpm preview    # 빌드 결과 미리보기: http://127.0.0.1:4173
+```
+
+배포용 결과물은 `dist` 폴더에 생성됩니다.
 ## 지도 수정 내용
 
 - 원본 135 × 135 좌표에서 외곽 경계, 작은 구조물 6개, 좌측 하단 두 꺾임, 우측 지그재그 선을 SVG로 재구성했습니다.
