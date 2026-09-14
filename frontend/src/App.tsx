@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import WarehouseMap from './WarehouseMap'
 import { WarehouseGeometry } from './WarehouseGeometry'
+import { sendGoalNode, stopRobot } from './api/fmsApi'
+import { useRouteGraph } from './hooks/useRouteGraph'
+import { useCmdVel } from './hooks/useCmdVel'
+import { useRobotFleet, type RobotId as FleetRobotId } from './hooks/useRobotFleet'
 
 // ── Design tokens ──
 const C = {
@@ -104,16 +108,16 @@ const TABS: { id: TabId; label: string }[] = [
 
 // Control commands — ready:false = 준비 중 (not yet implemented in backend)
 const CTRL_CMDS = [
-  { id: 'assign',   label: '작업 배정',        variant: 'primary',  ready: true,  confirm: false },
+  { id: 'assign',   label: '작업 배정',        variant: 'primary',  ready: false, confirm: false },
   { id: 'nodeMove', label: '특정 노드 이동',   variant: 'default',  ready: true,  confirm: false },
-  { id: 'charge',   label: '충전 스테이션 이동', variant: 'default', ready: true,  confirm: false },
+  { id: 'charge',   label: '충전 스테이션 이동', variant: 'default', ready: false, confirm: false },
   { id: 'stop',     label: '선택 로봇 정지',   variant: 'danger',   ready: true,  confirm: true  },
   { id: 'manual',   label: '수동 모드 전환',   variant: 'warning',  ready: false, confirm: true  },
 ]
 
 const KEY_ROWS = [
   [{ k: 'Q', l: '좌회전' }, { k: 'W', l: '전진' },  { k: 'E', l: '우회전' }],
-  [{ k: 'A', l: '좌이동' }, { k: 'S', l: '후진' },  { k: 'D', l: '우이동' }],
+  [{ k: 'A', l: '좌회전' }, { k: 'S', l: '후진' },  { k: 'D', l: '우회전' }],
 ]
 
 // ── Stage 4 data ──
@@ -514,38 +518,9 @@ const LIVE_LOG_QUEUE: SLogEntry[] = [
   { id:'L029', ts:'09:34:21', seq:29, type:'배차',  target:'TK-260913-002', targetType:'task',   message:'TK-260913-002 배차 확정 · R-02 출발',                     detail:{ robotId:'R-02', taskId:'TK-260913-002', orderId:'ORD-260913-002' } },
 ]
 
-// ── Node picker (shared between map canvas and ControlTab) ──
-type MapNodeId = 'N1'|'N2'|'N3'|'N4'|'N5'|'N6'|'N7'|'N8'|'N9'|'N10'|'N11'|'N12'|'N13'|'N14'
-const MAP_NODES: Record<MapNodeId, {x:number;y:number}> = {
-  N1: {x:86,  y:61},  N2:  {x:65,  y:61},  N3:  {x:37,  y:61},
-  N4: {x:37,  y:43},  N5:  {x:37,  y:14},  N6:  {x:65,  y:14},
-  N7: {x:86,  y:14},  N8:  {x:86,  y:43},  N9:  {x:86,  y:86},
-  N10:{x:86,  y:111}, N11: {x:65,  y:82},  N12: {x:37,  y:82},
-  N13:{x:65,  y:111}, N14: {x:37,  y:111},
-}
+// ── Node picker (backend GeoJSON 기반) ──
+type MapNodeId = string
 interface NodePickerItem { id: string; label: string; mapNodeId: MapNodeId }
-const NODE_PICKER_GROUPS: { title: string; items: NodePickerItem[] }[] = [
-  {
-    title: '경로 노드',
-    items: (Object.keys(MAP_NODES) as MapNodeId[]).map(id => ({ id, label: id, mapNodeId: id })),
-  },
-  {
-    title: '설비 접근 노드',
-    items: [
-      { id: 'FAC_PAL1', label: '팔레트 1',  mapNodeId: 'N4'  },
-      { id: 'FAC_PAL2', label: '팔레트 2',  mapNodeId: 'N6'  },
-      { id: 'FAC_PAL3', label: '팔레트 3',  mapNodeId: 'N3'  },
-      { id: 'FAC_PAL4', label: '팔레트 4',  mapNodeId: 'N2'  },
-      { id: 'FAC_ARM1', label: '로봇팔 1',  mapNodeId: 'N4'  },
-      { id: 'FAC_ARM2', label: '로봇팔 2',  mapNodeId: 'N4'  },
-      { id: 'FAC_CH1',  label: '충전 CH-1', mapNodeId: 'N1'  },
-      { id: 'FAC_CH2',  label: '충전 CH-2', mapNodeId: 'N9'  },
-      { id: 'FAC_CH3',  label: '충전 CH-3', mapNodeId: 'N10' },
-      { id: 'FAC_ST1',  label: '패킹 ST-1', mapNodeId: 'N12' },
-      { id: 'FAC_ST2',  label: '패킹 ST-2', mapNodeId: 'N14' },
-    ],
-  },
-]
 
 function useWindowWidth() {
   const [w, setW] = useState(window.innerWidth)
@@ -572,7 +547,6 @@ export default function App() {
   const [bottomH, setBottomH]           = useState(118)
   const [bottomVisible, setBottomVis]   = useState(false)
   // ── Step 3 additions ──
-  const [remoteConn, setRemoteConn]     = useState<RemoteConn>('off')
   const [cmdState, setCmdState]         = useState<CmdState>(null)
   const [pendingCmd, setPendingCmd]     = useState<string | null>(null)
   const [confirmDlg, setConfirmDlg]     = useState<string | null>(null)
@@ -580,6 +554,68 @@ export default function App() {
   const [analyticsTaskId, setAnalyticsTaskId] = useState<string | undefined>(undefined)
   const [nodeMoveTarget, setNodeMoveTarget]   = useState<NodePickerItem | null>(null)
   const [nodeMovePickerOpen, setNodeMovePickerOpen] = useState(false)
+  const [robotManagerOpen, setRobotManagerOpen] = useState(false)
+  const [robotManagerBusy, setRobotManagerBusy] = useState<string | null>(null)
+
+  const {
+    availableDevices,
+    managedIds,
+    managedRobots,
+    loading: fleetLoading,
+    error: fleetError,
+    addRobot,
+    removeRobot,
+    disconnectRobot,
+    allowRobot,
+  } = useRobotFleet()
+
+  const fleetRobotById = Object.fromEntries(
+    managedRobots.map(robot => [robot.id, robot])
+  ) as Partial<Record<RobotId, (typeof managedRobots)[number]>>
+
+  const getUiRobot = (id: RobotId) => {
+    const base = ROBOT_DATA[id]
+    const live = fleetRobotById[id]
+    const connected = Boolean(live?.connected)
+    const backendStatus = String(live?.status ?? '').toUpperCase()
+    const charging = backendStatus.includes('CHARG') || backendStatus.includes('충전')
+    const moving = backendStatus.includes('MOV') || backendStatus.includes('RUN') || backendStatus.includes('이동')
+    const status = !connected ? '오프라인' : charging ? '충전 중' : moving ? '이동 중' : '대기'
+    const statusColor = !connected ? C.danger : charging ? C.primary : moving ? C.success : C.warning
+    const statusBg = !connected ? '#FFF0F2' : charging ? '#EDF6FF' : moving ? '#E9F8F3' : '#FFF5DF'
+
+    return {
+      ...base,
+      battery: live?.battery ?? 0,
+      status,
+      statusColor,
+      statusBg,
+      comms: connected ? '연결됨' : '끊김',
+    }
+  }
+
+  const {
+    nodes: mapNodes,
+    edges: mapEdges,
+    nodeItems: routeNodeItems,
+    loading: graphLoading,
+    error: graphError,
+  } = useRouteGraph()
+
+  const nodePickerGroups: { title: string; items: NodePickerItem[] }[] = [
+    { title: '경로 노드', items: routeNodeItems },
+  ]
+
+  const {
+    status: remoteConn,
+    activeKeys: remoteActiveKeys,
+    pressKey: pressRemoteKey,
+    releaseKey: releaseRemoteKey,
+    stop: stopRemote,
+  } = useCmdVel({
+    robotId: selectedRobot,
+    enabled: Boolean(selectedRobot && isAdmin && remoteOn && !simCommsLost),
+  })
 
   const cmdTimers = useRef<number[]>([])
   const clearCmdTimers = () => { cmdTimers.current.forEach(clearTimeout); cmdTimers.current = [] }
@@ -589,21 +625,10 @@ export default function App() {
     return () => clearInterval(t)
   }, [])
 
-  // Remote connection simulation
-  useEffect(() => {
-    if (remoteOn && isAdmin && !simCommsLost) {
-      setRemoteConn('connecting')
-      const t = window.setTimeout(() => setRemoteConn('ready'), 1500)
-      return () => clearTimeout(t)
-    } else {
-      setRemoteConn('off')
-    }
-  }, [remoteOn, isAdmin, simCommsLost])
-
   // Auto-reset when leaving admin mode
   useEffect(() => {
     if (!isAdmin) {
-      setRemoteOn(false); setRemoteConn('off')
+      setRemoteOn(false)
       setCmdState(null); setPendingCmd(null); setConfirmDlg(null)
       clearCmdTimers()
     }
@@ -612,7 +637,7 @@ export default function App() {
   // Auto-reset when comms lost
   useEffect(() => {
     if (simCommsLost) {
-      setRemoteOn(false); setRemoteConn('off')
+      setRemoteOn(false)
       setCmdState(null); setPendingCmd(null); setConfirmDlg(null)
       clearCmdTimers()
     }
@@ -628,33 +653,102 @@ export default function App() {
 
   const handleSelect = (id: RobotId) => {
     if (id !== selectedRobot) {
-      setRemoteOn(false); setRemoteConn('off'); setSimLost(false)
+      setRemoteOn(false); setSimLost(false)
       resetCmdState()
     }
     setSelected(id); setActiveTab('status')
   }
   const handleClose = () => {
-    setSelected(null); setRemoteOn(false); setRemoteConn('off')
+    setSelected(null); setRemoteOn(false)
     setSimLost(false); resetCmdState()
   }
 
-  const executeCmd = (id: string) => {
-    setConfirmDlg(null); setPendingCmd(id); setCmdState('requesting')
+  const handleAddRobot = async (device: (typeof availableDevices)[number]) => {
+    try {
+      setRobotManagerBusy(device.ip)
+      await addRobot(device)
+    } catch (error) {
+      console.error('robot add failed:', error)
+    } finally {
+      setRobotManagerBusy(null)
+    }
+  }
+
+  const handleAllowRobot = async (device: (typeof availableDevices)[number]) => {
+    try {
+      setRobotManagerBusy(device.ip)
+      await allowRobot(device)
+    } catch (error) {
+      console.error('robot allow failed:', error)
+    } finally {
+      setRobotManagerBusy(null)
+    }
+  }
+
+  const handleRemoveRobot = (id: RobotId) => {
+    if (selectedRobot === id) handleClose()
+    removeRobot(id as FleetRobotId)
+  }
+
+  const handleDisconnectRobot = async (id: RobotId) => {
+    try {
+      const robot = fleetRobotById[id]
+      setRobotManagerBusy(robot?.ip ?? id)
+      if (selectedRobot === id) handleClose()
+      await disconnectRobot(id as FleetRobotId)
+    } catch (error) {
+      console.error('robot disconnect failed:', error)
+    } finally {
+      setRobotManagerBusy(null)
+    }
+  }
+
+  const executeCmd = async (id: string) => {
+    setConfirmDlg(null)
+    setPendingCmd(id)
+    setCmdState('requesting')
     clearCmdTimers()
-    const t1 = window.setTimeout(() => {
-      // simulate backend: reject if comms lost, else approve
-      if (simCommsLost) { setCmdState('rejected'); return }
+
+    if (simCommsLost || !selectedRobot) {
+      setCmdState('rejected')
+      return
+    }
+
+    try {
+      if (id === 'nodeMove') {
+        if (!nodeMoveTarget) {
+          setCmdState('rejected')
+          return
+        }
+        await sendGoalNode(selectedRobot, nodeMoveTarget.mapNodeId)
+      } else if (id === 'stop') {
+        stopRemote()
+        await stopRobot(selectedRobot)
+      } else {
+        // 아직 backend 실제 기능이 없는 명령
+        setCmdState('rejected')
+        return
+      }
+
       setCmdState('approved')
-      const t2 = window.setTimeout(() => setCmdState('confirmed'), 900)
-      cmdTimers.current.push(t2)
-    }, 1400)
-    cmdTimers.current.push(t1)
+      const t = window.setTimeout(() => setCmdState('confirmed'), 350)
+      cmdTimers.current.push(t)
+    } catch (error) {
+      console.error('FMS command failed:', error)
+      setCmdState('rejected')
+    }
   }
 
   const handleCmd = (id: string, confirm: boolean) => {
     if (simCommsLost) { setPendingCmd(id); setCmdState('rejected'); return }
     if (confirm) { setConfirmDlg(id) } else { executeCmd(id) }
   }
+
+  const managedUiRobots = (managedIds as RobotId[]).map(id => getUiRobot(id))
+  const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
+  const workingRobotCount = managedUiRobots.filter(robot => robot.status === '이동 중').length
+  const chargingRobotCount = managedUiRobots.filter(robot => robot.status === '충전 중').length
+  const waitingRobotCount = managedUiRobots.filter(robot => robot.status === '대기').length
 
   const listWidth  = selectedRobot ? 64 : 215
   const keysActive = isAdmin && remoteOn && remoteConn === 'ready' && !simCommsLost
@@ -712,7 +806,7 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.success, display: 'inline-block', animation: 'pulse-dot 2.4s ease-in-out infinite' }} />
-              <span style={{ fontSize: 10.5, color: C.success, fontWeight: 600 }}>데모 · 서버 미연결</span>
+              <span style={{ fontSize: 10.5, color: fleetError ? C.danger : C.success, fontWeight: 600 }}>{fleetError ? 'FMS 서버 오류' : `FMS 연결 · 로봇 ${connectedRobotCount}대 온라인`}</span>
             </div>
             <Div />
             <button onClick={() => setIsAdmin(p => !p)} title="데모: 관리자 모드 전환"
@@ -725,11 +819,11 @@ export default function App() {
 
         {/* ── STATUS CHIPS ── */}
         <div style={{ height: 36, background: isAdmin ? '#FDF8EE' : C.subtle, borderBottom: `1px solid ${isAdmin ? '#E8CF98' : C.line}`, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, transition: 'background 0.2s' }}>
-          <SChip label="전체 로봇" value="3" />
+          <SChip label="전체 로봇" value={String(managedIds.length)} />
           <Div />
-          <SChip label="작업 중" value="2" dot={C.success} vc={{ color: '#147A4E', fontWeight: 800 }} bg="#E5F8EF" bd="#9ED9BD" />
-          <SChip label="대기" value="1" dot={C.warning} vc={{ color: '#8C5A0A', fontWeight: 800 }} bg="#FEF5E0" bd="#E5C87E" />
-          <SChip label="충전 중" value="0" dot={C.primary} vc={{ color: '#11509E', fontWeight: 800 }} bg="#EAF3FF" bd="#A8CAEF" />
+          <SChip label="작업 중" value={String(workingRobotCount)} dot={C.success} vc={{ color: '#147A4E', fontWeight: 800 }} bg="#E5F8EF" bd="#9ED9BD" />
+          <SChip label="대기" value={String(waitingRobotCount)} dot={C.warning} vc={{ color: '#8C5A0A', fontWeight: 800 }} bg="#FEF5E0" bd="#E5C87E" />
+          <SChip label="충전 중" value={String(chargingRobotCount)} dot={C.primary} vc={{ color: '#11509E', fontWeight: 800 }} bg="#EAF3FF" bd="#A8CAEF" />
           <Div />
           <SChip label="미처리 알람" value="1" dot={C.danger} vc={{ color: '#991E35', fontWeight: 800 }} bg="#FEF0F2" bd="#EDADB8" />
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -743,7 +837,7 @@ export default function App() {
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0, flexDirection: isSmall && activeNav === 'dashboard' ? 'column' : 'row' }}>
 
           {activeNav === 'robots' ? (
-            <RobotsArmsScreen onSelectRobot={(id) => { handleSelect(id); setActiveNav('dashboard') }} />
+            <RobotsArmsScreen robotIds={managedIds as RobotId[]} getRobotData={getUiRobot} onSelectRobot={(id) => { handleSelect(id); setActiveNav('dashboard') }} />
           ) : activeNav === 'orders' ? (
             <OrdersScreen
               isAdmin={isAdmin}
@@ -766,8 +860,8 @@ export default function App() {
             {selectedRobot ? (
               <div style={{ flex: 1, overflowY: 'auto', padding: '10px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
                 <div style={{ fontSize: 8, color: '#C0C8D0', textAlign: 'center', marginBottom: 2, lineHeight: 1.4 }}>로봇<br />목록</div>
-                {(['R-01', 'R-02', 'R-03'] as RobotId[]).map(id => {
-                  const r = ROBOT_DATA[id]; const sel = selectedRobot === id
+                {(managedIds as RobotId[]).map(id => {
+                  const r = getUiRobot(id); const sel = selectedRobot === id
                   return (
                     <button key={id} onClick={() => handleSelect(id)} title={`${id} · ${r.status}`}
                       style={{ width: 40, height: 40, borderRadius: '50%', background: sel ? '#EDF6FF' : '#F8FAFC', border: `2.5px solid ${sel ? C.primary : r.statusColor}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 10, color: sel ? C.primary : C.text, cursor: 'pointer', outline: 'none', boxShadow: sel ? '0 0 0 3px rgba(37,137,245,0.15)' : 'none', transition: 'all 0.12s', flexShrink: 0 }}>
@@ -781,18 +875,66 @@ export default function App() {
                 <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid #EDF0F3', flexShrink: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
                     <span style={{ fontWeight: 800, fontSize: 12 }}>TurtleBot 목록</span>
-                    <span style={{ fontSize: 9, color: C.muted, fontWeight: 600 }}>3 / 3 대</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 9, color: C.muted, fontWeight: 600 }}>{managedIds.length} 대</span>
+                      <button onClick={() => setRobotManagerOpen(v => !v)}
+                        style={{ border: '1px solid #B9DAFB', background: '#EDF6FF', color: C.primary, borderRadius: 5, fontSize: 9, fontWeight: 800, padding: '3px 7px', cursor: 'pointer' }}>
+                        + 로봇 추가
+                      </button>
+                    </div>
                   </div>
+                  {robotManagerOpen && (
+                    <div style={{ padding: 7, marginBottom: 7, background: '#F8FAFC', border: `1px solid ${C.line}`, borderRadius: 7 }}>
+                      <div style={{ fontSize: 9, fontWeight: 800, color: C.text, marginBottom: 5 }}>Zenoh 연결 로봇</div>
+                      {fleetLoading && <div style={{ fontSize: 9, color: C.muted }}>검색 중…</div>}
+                      {fleetError && <div style={{ fontSize: 8.5, color: C.danger }}>연결 조회 오류: {fleetError}</div>}
+                      {!fleetLoading && availableDevices.length === 0 && <div style={{ fontSize: 9, color: C.muted }}>검색된 로봇 없음</div>}
+                      {availableDevices.map(device => {
+                        const uiId = (`R-${String(Number(device.name.replace(/\D/g, ''))).padStart(2, '0')}`) as RobotId
+                        const isManaged = (managedIds as RobotId[]).includes(uiId)
+                        const busy = robotManagerBusy === device.ip || robotManagerBusy === uiId
+                        return (
+                          <div key={device.ip} style={{ padding: '6px 0', borderTop: `1px solid ${C.line}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 9.5, fontWeight: 800 }}>{uiId} <span style={{ color: C.muted, fontWeight: 500 }}>· {device.ip}</span></div>
+                                <div style={{ fontSize: 8.5, color: device.blocked ? C.danger : device.connected ? C.success : C.muted }}>
+                                  {device.blocked ? '차단됨' : device.connected ? 'Zenoh 연결됨' : '오프라인'}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 4 }}>
+                                {device.blocked ? (
+                                  <button disabled={busy} onClick={() => handleAllowRobot(device)} style={{ fontSize: 8.5, padding: '3px 6px', cursor: 'pointer' }}>허용</button>
+                                ) : !isManaged ? (
+                                  <button disabled={busy || !device.connected} onClick={() => handleAddRobot(device)} style={{ fontSize: 8.5, padding: '3px 6px', cursor: device.connected ? 'pointer' : 'not-allowed' }}>추가</button>
+                                ) : (
+                                  <>
+                                    <button disabled={busy} onClick={() => handleRemoveRobot(uiId)} style={{ fontSize: 8.5, padding: '3px 6px', cursor: 'pointer' }}>제거</button>
+                                    <button disabled={busy} onClick={() => handleDisconnectRobot(uiId)} style={{ fontSize: 8.5, padding: '3px 6px', color: C.danger, cursor: 'pointer' }}>끊기</button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: '#F7F9FB', border: '1px solid #E4E8ED', borderRadius: 7 }}>
                     <SearchIcon />
-                    <span style={{ fontSize: 10, color: '#C0C8D0' }}>ID 또는 상태 검색</span>
+                    <span style={{ fontSize: 10, color: '#C0C8D0' }}>추가한 로봇만 목록에 표시</span>
                   </div>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-                  {(['R-01', 'R-02', 'R-03'] as RobotId[]).map(id => {
-                    const r = ROBOT_DATA[id]
+                  {(managedIds as RobotId[]).map(id => {
+                    const r = getUiRobot(id)
                     return <RobotCard key={id} id={id} serial={r.serial} status={r.status} statusColor={r.statusColor} statusBg={r.statusBg} battery={r.battery} task={r.taskId} selected={selectedRobot === id} onClick={() => handleSelect(id)} />
                   })}
+                  {managedIds.length === 0 && (
+                    <div style={{ padding: '24px 10px', textAlign: 'center', color: C.muted, fontSize: 10, lineHeight: 1.6 }}>
+                      등록된 로봇이 없습니다.<br />상단의 <b>+ 로봇 추가</b>에서 연결된 로봇을 추가하세요.
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -838,19 +980,24 @@ export default function App() {
 
             {isMapEdit && <div style={{ padding: '7px 14px', background: '#F4F0FF', color: '#7255CB', fontSize: 10 }}>지도 편집 미리보기 · 이 데모에서는 구조물 및 경로 변경을 저장하지 않습니다.</div>}
             <WarehouseMap
-              nodes={MAP_NODES}
+              nodes={mapNodes}
+              edges={mapEdges}
               layers={layers}
               selectedRobot={selectedRobot}
               onSelect={handleSelect}
               picking={nodeMovePickerOpen}
               targetNode={nodeMoveTarget?.mapNodeId}
-              onPick={id => setNodeMoveTarget({ id, label: id, mapNodeId: id as MapNodeId })}
+              onPick={id => setNodeMoveTarget({ id, label: `Node ${id}`, mapNodeId: id })}
+              graphLoading={graphLoading}
+              graphError={graphError}
+              visibleRobotIds={managedIds as RobotId[]}
             />
           </div>
           {/* ── DETAIL PANEL ── */}
           {selectedRobot && (
             <DetailPanel
               robotId={selectedRobot}
+              robot={getUiRobot(selectedRobot)}
               updateTime={clock}
               activeTab={activeTab}
               onTabChange={setActiveTab}
@@ -860,6 +1007,10 @@ export default function App() {
               remoteOn={remoteOn}
               onToggleRemoteOn={() => { if (isAdmin && !simCommsLost) setRemoteOn(p => !p) }}
               keysActive={keysActive}
+              activeKeys={remoteActiveKeys}
+              onRemoteKeyDown={pressRemoteKey}
+              onRemoteKeyUp={releaseRemoteKey}
+              onRemoteStop={stopRemote}
               isAdmin={isAdmin}
               remoteConn={remoteConn}
               cmdState={cmdState}
@@ -875,6 +1026,7 @@ export default function App() {
               nodeMovePickerOpen={nodeMovePickerOpen}
               onNodeMoveTargetChange={setNodeMoveTarget}
               onNodeMovePickerOpenChange={setNodeMovePickerOpen}
+              nodePickerGroups={nodePickerGroups}
             />
           )}
           </>)}
@@ -959,11 +1111,16 @@ export default function App() {
 // DetailPanel
 // ══════════════════════════════════════
 interface DPProps {
-  robotId: RobotId; updateTime: string
+  robotId: RobotId; robot: RData; updateTime: string
   activeTab: TabId; onTabChange: (t: TabId) => void; onClose: () => void
   remoteExpanded: boolean; onToggleExpand: () => void
   remoteOn: boolean; onToggleRemoteOn: () => void
-  keysActive: boolean; isAdmin: boolean; remoteConn: RemoteConn
+  keysActive: boolean
+  activeKeys: Set<string>
+  onRemoteKeyDown: (key: string) => void
+  onRemoteKeyUp: (key: string) => void
+  onRemoteStop: () => void
+  isAdmin: boolean; remoteConn: RemoteConn
   cmdState: CmdState; pendingCmd: string | null
   confirmDlg: string | null
   onCmd: (id: string, confirm: boolean) => void
@@ -975,10 +1132,11 @@ interface DPProps {
   nodeMovePickerOpen: boolean
   onNodeMoveTargetChange: (item: NodePickerItem | null) => void
   onNodeMovePickerOpenChange: (open: boolean) => void
+  nodePickerGroups: { title: string; items: NodePickerItem[] }[]
 }
 
 function DetailPanel(p: DPProps) {
-  const r = ROBOT_DATA[p.robotId]
+  const r = p.robot
   const commsOk = !p.simCommsLost
   const switchOn = p.remoteOn && p.isAdmin && commsOk
 
@@ -1070,6 +1228,7 @@ function DetailPanel(p: DPProps) {
             nodeMovePickerOpen={p.nodeMovePickerOpen}
             onNodeMoveTargetChange={p.onNodeMoveTargetChange}
             onNodeMovePickerOpenChange={p.onNodeMovePickerOpenChange}
+            nodePickerGroups={p.nodePickerGroups}
           />
         )}
       </div>
@@ -1139,11 +1298,21 @@ function DetailPanel(p: DPProps) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginBottom: 5 }}>
               {KEY_ROWS.map((row, ri) =>
                 row.map(({ k, l }) => (
-                  <KeyCap key={`${ri}${k}`} keyLabel={k} actionLabel={l} active={p.keysActive} />
+                  <KeyCap
+                    key={`${ri}${k}`}
+                    keyLabel={k}
+                    actionLabel={l}
+                    active={p.keysActive}
+                    pressed={p.activeKeys.has(k.toLowerCase())}
+                    onPress={() => p.onRemoteKeyDown(k)}
+                    onRelease={() => p.onRemoteKeyUp(k)}
+                  />
                 ))
               )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 34, background: p.keysActive ? '#fff' : '#F3F6FA', border: `1px solid ${p.keysActive ? '#CDD5DE' : '#E4E8ED'}`, borderBottom: `${p.keysActive ? 3 : 2}px solid ${p.keysActive ? '#B5C0CE' : '#DFE4EB'}`, borderRadius: 7, opacity: p.keysActive ? 1 : 0.5, cursor: p.keysActive ? 'pointer' : 'default', userSelect: 'none', transition: 'all 0.15s' }}>
+            <div
+              onPointerDown={() => { if (p.keysActive) p.onRemoteStop() }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 34, background: p.keysActive ? '#fff' : '#F3F6FA', border: `1px solid ${p.keysActive ? '#CDD5DE' : '#E4E8ED'}`, borderBottom: `${p.keysActive ? 3 : 2}px solid ${p.keysActive ? '#B5C0CE' : '#DFE4EB'}`, borderRadius: 7, opacity: p.keysActive ? 1 : 0.5, cursor: p.keysActive ? 'pointer' : 'default', userSelect: 'none', transition: 'all 0.15s' }}>
               <span style={{ fontSize: 10, fontWeight: 800, color: p.keysActive ? C.text : '#8A95A0' }}>SPACE · 주행 명령 정지</span>
             </div>
             {p.keysActive && (
@@ -1273,7 +1442,7 @@ const CMD_RESULT_CFG: Record<NonNullable<CmdState>, { bg: string; border: string
 }
 
 function ControlTab({ isAdmin, commsOk, cmdState, pendingCmd, onCmd, onDismiss,
-  nodeMoveTarget, nodeMovePickerOpen, onNodeMoveTargetChange, onNodeMovePickerOpenChange }: {
+  nodeMoveTarget, nodeMovePickerOpen, onNodeMoveTargetChange, onNodeMovePickerOpenChange, nodePickerGroups }: {
   isAdmin: boolean; commsOk: boolean
   cmdState: CmdState; pendingCmd: string | null
   onCmd: (id: string, confirm: boolean) => void
@@ -1282,6 +1451,7 @@ function ControlTab({ isAdmin, commsOk, cmdState, pendingCmd, onCmd, onDismiss,
   nodeMovePickerOpen: boolean
   onNodeMoveTargetChange: (item: NodePickerItem | null) => void
   onNodeMovePickerOpenChange: (open: boolean) => void
+  nodePickerGroups: { title: string; items: NodePickerItem[] }[]
 }) {
   const canAct = isAdmin && commsOk
   const [pickerQuery, setPickerQuery] = useState('')
@@ -1311,7 +1481,7 @@ function ControlTab({ isAdmin, commsOk, cmdState, pendingCmd, onCmd, onDismiss,
     setPickerQuery('')
   }
 
-  const filteredGroups = NODE_PICKER_GROUPS.map(g => ({
+  const filteredGroups = nodePickerGroups.map(g => ({
     ...g,
     items: g.items.filter(item =>
       pickerQuery === '' ||
@@ -1537,10 +1707,43 @@ function ControlTab({ isAdmin, commsOk, cmdState, pendingCmd, onCmd, onDismiss,
 // ══════════════════════════════════════
 // Key cap atom
 // ══════════════════════════════════════
-function KeyCap({ keyLabel, actionLabel, active }: { keyLabel: string; actionLabel: string; active: boolean }) {
+function KeyCap({
+  keyLabel,
+  actionLabel,
+  active,
+  pressed = false,
+  onPress,
+  onRelease,
+}: {
+  keyLabel: string
+  actionLabel: string
+  active: boolean
+  pressed?: boolean
+  onPress?: () => void
+  onRelease?: () => void
+}) {
+  const release = () => { if (active) onRelease?.() }
   return (
-    <div style={{ height: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: active ? '#fff' : C.subtle, border: `1px solid ${active ? '#BEC8D6' : C.line}`, borderBottom: `${active ? 3 : 2}px solid ${active ? '#A4B0C0' : '#D4DAE5'}`, borderRadius: 7, opacity: active ? 1 : 0.45, cursor: active ? 'pointer' : 'default', userSelect: 'none' as const, transition: 'all 0.15s', boxShadow: active ? E1 : 'none' }}>
-      <span style={{ fontSize: 14, fontWeight: 900, color: active ? C.text : '#9097A3', lineHeight: 1, letterSpacing: '-0.01em' }}>{keyLabel}</span>
+    <div
+      onPointerDown={event => {
+        if (!active) return
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        onPress?.()
+      }}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onPointerLeave={event => { if (event.buttons) release() }}
+      style={{
+        height: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        background: pressed ? '#EAF2FF' : active ? '#fff' : C.subtle,
+        border: `1px solid ${pressed ? C.primary : active ? '#BEC8D6' : C.line}`,
+        borderBottom: `${pressed ? 1 : active ? 3 : 2}px solid ${pressed ? C.primary : active ? '#A4B0C0' : '#D4DAE5'}`,
+        borderRadius: 7, opacity: active ? 1 : 0.45, cursor: active ? 'pointer' : 'default',
+        userSelect: 'none' as const, transition: 'all 0.08s', boxShadow: active ? E1 : 'none',
+        transform: pressed ? 'translateY(1px)' : 'none',
+      }}>
+      <span style={{ fontSize: 14, fontWeight: 900, color: pressed ? C.primary : active ? C.text : '#9097A3', lineHeight: 1, letterSpacing: '-0.01em' }}>{keyLabel}</span>
       <span style={{ fontSize: 8, color: C.muted, marginTop: 2.5, fontWeight: 500 }}>{actionLabel}</span>
     </div>
   )
@@ -1636,7 +1839,7 @@ function RMark({ x, y, id, status, selected, onSelect }: { x: string; y: string;
 // ══════════════════════════════════════
 // RobotsArmsScreen (Stage 4)
 // ══════════════════════════════════════
-function RobotsArmsScreen({ onSelectRobot }: { onSelectRobot: (id: RobotId) => void }) {
+function RobotsArmsScreen({ robotIds, getRobotData, onSelectRobot }: { robotIds: RobotId[]; getRobotData: (id: RobotId) => RData; onSelectRobot: (id: RobotId) => void }) {
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
 
@@ -1647,7 +1850,7 @@ function RobotsArmsScreen({ onSelectRobot }: { onSelectRobot: (id: RobotId) => v
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '8px 12px', background: C.surface, border: `1px solid ${C.line}`, borderRadius: 9 }}>
           <span style={{ fontSize: 11, fontWeight: 800 }}>설비 현황</span>
           <span style={{ color: '#D0D5DC', fontSize: 11 }}>·</span>
-          <SumChip icon="🤖" label="TurtleBot" value="3 대" color={C.primary} />
+          <SumChip icon="🤖" label="TurtleBot" value={`${robotIds.length} 대`} color={C.primary} />
           <SumChip icon="🦾" label="로봇팔" value="2 대" color={C.purple} />
           <SumChip icon="📦" label="패킹 스테이션" value="2 곳" color={C.warning} />
           <SumChip icon="🔋" label="충전 스테이션" value="3 곳" color={C.success} />
@@ -1655,7 +1858,7 @@ function RobotsArmsScreen({ onSelectRobot }: { onSelectRobot: (id: RobotId) => v
         </div>
 
         {/* ── TurtleBot 섹션 ── */}
-        <RASectionHead label="TurtleBot" count={3} subtitle="이동 로봇 — 팔레트 운반 담당" />
+        <RASectionHead label="TurtleBot" count={robotIds.length} subtitle="이동 로봇 — 팔레트 운반 담당" />
         <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 9, overflow: 'hidden', marginBottom: 20 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -1666,8 +1869,8 @@ function RobotsArmsScreen({ onSelectRobot }: { onSelectRobot: (id: RobotId) => v
               </tr>
             </thead>
             <tbody>
-              {(['R-01', 'R-02', 'R-03'] as RobotId[]).map((id, i) => {
-                const r = ROBOT_DATA[id]
+              {robotIds.map((id, i) => {
+                const r = getRobotData(id)
                 const bc = r.battery < 30 ? C.danger : r.battery < 50 ? C.warning : C.success
                 return (
                   <tr key={id} style={{ borderTop: i > 0 ? `1px solid #F0F3F7` : undefined, cursor: 'pointer', transition: 'background 0.1s' }}
