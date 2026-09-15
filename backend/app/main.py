@@ -49,6 +49,10 @@ from .services.route_graph import (
     graph_summary,
 )
 
+from .services.ros_gateway import (
+    ros_gateway,
+)
+
 from .services.zenoh_service import (
     start_zenoh,
     stop_zenoh,
@@ -64,15 +68,19 @@ async def lifespan(
     app: FastAPI,
 ):
 
-    # --------------------------------------------------------
+    # ========================================================
     # PostgreSQL
-    # --------------------------------------------------------
+    # ========================================================
 
     await init_db()
 
-    # --------------------------------------------------------
-    # Map 확인
-    # --------------------------------------------------------
+    print(
+        " -> Database 초기화 완료"
+    )
+
+    # ========================================================
+    # Map
+    # ========================================================
 
     try:
 
@@ -95,9 +103,9 @@ async def lifespan(
             f"{exc}"
         )
 
-    # --------------------------------------------------------
-    # Route Graph 확인
-    # --------------------------------------------------------
+    # ========================================================
+    # Route Graph
+    # ========================================================
 
     try:
 
@@ -119,13 +127,38 @@ async def lifespan(
             f"{exc}"
         )
 
-    # --------------------------------------------------------
-    # Zenoh
-    # --------------------------------------------------------
+    # ========================================================
+    # Native Zenoh
+    #
+    # FMS 전용 데이터
+    # telemetry / heartbeat / status 등
+    # ========================================================
 
     start_zenoh(
         asyncio.get_running_loop()
     )
+
+    # ========================================================
+    # ROS Gateway
+    #
+    # Topic / Service / Action
+    # ========================================================
+
+    try:
+
+        ros_gateway.start()
+
+    except Exception as exc:
+
+        print(
+            " -> [WARN] "
+            "ROS Gateway 시작 실패: "
+            f"{exc}"
+        )
+
+    # ========================================================
+    # FastAPI Start
+    # ========================================================
 
     try:
 
@@ -133,9 +166,49 @@ async def lifespan(
 
     finally:
 
-        stop_zenoh()
+        # ====================================================
+        # Shutdown
+        # ====================================================
 
-        await close_db()
+        try:
+
+            ros_gateway.stop()
+
+        except Exception as exc:
+
+            print(
+                " -> [WARN] "
+                "ROS Gateway 종료 오류: "
+                f"{exc}"
+            )
+
+        try:
+
+            stop_zenoh()
+
+        except Exception as exc:
+
+            print(
+                " -> [WARN] "
+                "Zenoh 종료 오류: "
+                f"{exc}"
+            )
+
+        try:
+
+            await close_db()
+
+        except Exception as exc:
+
+            print(
+                " -> [WARN] "
+                "Database 종료 오류: "
+                f"{exc}"
+            )
+
+        print(
+            " -> FMS Backend 종료 완료"
+        )
 
 
 # ============================================================
@@ -148,7 +221,7 @@ app = FastAPI(
         "E1I6 Logistics FMS API"
     ),
 
-    version="1.0.0",
+    version="2.0.0",
 
     lifespan=lifespan,
 )
@@ -215,8 +288,14 @@ async def root():
         "service":
             "E1I6 Logistics FMS API",
 
+        "version":
+            "2.0.0",
+
         "status":
             "ok",
+
+        "architecture":
+            "Native Zenoh + ROS Gateway",
 
         "docs":
             "/docs",
@@ -230,6 +309,18 @@ async def root():
 @app.get("/health")
 async def health():
 
+    from .services.zenoh_service import (
+        status_snapshot,
+    )
+
     return {
-        "status": "ok"
+
+        "status":
+            "ok",
+
+        "ros_gateway":
+            ros_gateway.status_snapshot(),
+
+        "native_zenoh":
+            status_snapshot(),
     }

@@ -15,11 +15,12 @@ from ..services.route_graph import (
     get_node,
 )
 
+from ..services.ros_gateway import (
+    ros_gateway,
+)
+
 from ..services.zenoh_service import (
-    is_ready,
-    publish_goal,
-    publish_stop,
-    status_snapshot,
+    status_snapshot as zenoh_status_snapshot,
 )
 
 
@@ -30,16 +31,16 @@ router = APIRouter(
 
 
 # ============================================================
-# Zenoh 확인
+# ROS Gateway 확인
 # ============================================================
 
-def _require_zenoh() -> None:
+def _require_ros() -> None:
 
-    if not is_ready():
+    if not ros_gateway.active:
 
         raise HTTPException(
             status_code=503,
-            detail="Zenoh session inactive",
+            detail="ROS Gateway inactive",
         )
 
 
@@ -50,11 +51,18 @@ def _require_zenoh() -> None:
 @router.get("/status")
 async def command_status():
 
-    return status_snapshot()
+    return {
+
+        "ros":
+            ros_gateway.status_snapshot(),
+
+        "zenoh":
+            zenoh_status_snapshot(),
+    }
 
 
 # ============================================================
-# 현재 Backend가 실제 지원하는 기능
+# Backend Capability
 # ============================================================
 
 @router.get("/capabilities")
@@ -62,25 +70,56 @@ async def command_capabilities():
 
     return {
 
-        "nodeMove": True,
+        # ----------------------------------------------------
+        # ROS Topic
+        # ----------------------------------------------------
 
-        "coordinateGoal": True,
+        "cmdVel":
+            True,
 
-        "stop": True,
+        "stop":
+            True,
 
-        "cmdVel": True,
+        # ----------------------------------------------------
+        # ROS Action
+        # ----------------------------------------------------
 
-        # 아직 실제 프로토콜 없음
-        "assign": False,
+        "coordinateGoal":
+            True,
 
-        "charge": False,
+        "nodeMove":
+            True,
 
-        "manualModeSwitch": False,
+        "navigateToPose":
+            True,
+
+        # ----------------------------------------------------
+        # 추후 구현
+        # ----------------------------------------------------
+
+        "assign":
+            False,
+
+        "charge":
+            False,
+
+        "manualModeSwitch":
+            False,
+
+        # ----------------------------------------------------
+        # Communication
+        # ----------------------------------------------------
+
+        "rosGateway":
+            True,
+
+        "nativeZenohTelemetry":
+            True,
     }
 
 
 # ============================================================
-# 좌표 기반 Goal
+# 좌표 기반 Nav2 Goal
 # ============================================================
 
 @router.post("/goal")
@@ -88,20 +127,28 @@ async def send_coordinate_goal(
     payload: GoalCoordinateRequest,
 ):
 
-    _require_zenoh()
+    _require_ros()
 
     try:
 
-        return publish_goal(
+        return await ros_gateway.navigate_to_pose(
             payload.robot_id,
             payload.target_x,
             payload.target_y,
+            frame_id="map",
         )
 
     except ValueError as exc:
 
         raise HTTPException(
             status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+
+        raise HTTPException(
+            status_code=503,
             detail=str(exc),
         ) from exc
 
@@ -114,7 +161,7 @@ async def send_coordinate_goal(
 
 
 # ============================================================
-# Node 기반 Goal
+# Node 기반 Nav2 Goal
 # ============================================================
 
 @router.post("/goal-node")
@@ -122,23 +169,35 @@ async def send_node_goal(
     payload: GoalNodeRequest,
 ):
 
-    _require_zenoh()
+    _require_ros()
 
     try:
 
-        # Node ID를 GeoJSON에서 찾음
+        # ----------------------------------------------------
+        # GeoJSON Node 검색
+        # ----------------------------------------------------
+
         node = get_node(
             payload.node_id
         )
 
-        # 실제 로봇에는 x/y 전달
-        result = publish_goal(
-            payload.robot_id,
-            node["x"],
-            node["y"],
+        # ----------------------------------------------------
+        # Node 좌표 -> Nav2 NavigateToPose
+        # ----------------------------------------------------
+
+        result = (
+            await ros_gateway.navigate_to_pose(
+                payload.robot_id,
+                node["x"],
+                node["y"],
+                frame_id=node["frame"],
+            )
         )
 
-        # Frontend 확인용
+        # ----------------------------------------------------
+        # Frontend 확인용 Node 정보
+        # ----------------------------------------------------
+
         result["node"] = {
 
             "id":
@@ -170,6 +229,13 @@ async def send_node_goal(
             detail=str(exc),
         ) from exc
 
+    except RuntimeError as exc:
+
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+
     except Exception as exc:
 
         raise HTTPException(
@@ -187,26 +253,25 @@ async def stop_robot(
     payload: StopRequest,
 ):
 
-    _require_zenoh()
+    _require_ros()
 
     try:
 
-        result = publish_stop(
+        return ros_gateway.stop_robot(
             payload.robot_id
         )
-
-        result[
-            "message"
-        ] = (
-            "정지 cmd_vel 전송 완료"
-        )
-
-        return result
 
     except ValueError as exc:
 
         raise HTTPException(
             status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+
+        raise HTTPException(
+            status_code=503,
             detail=str(exc),
         ) from exc
 

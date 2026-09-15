@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import struct
+
 from typing import (
     Any,
     Optional,
@@ -14,10 +14,7 @@ import zenoh
 from fastapi import WebSocket
 
 from ..config import (
-    CMD_VEL_MAX_ANGULAR,
-    CMD_VEL_MAX_LINEAR,
     ZENOH_ENDPOINT,
-    ZENOH_ROBOT_COUNT,
 )
 
 from ..database.database import (
@@ -100,7 +97,7 @@ manager = ConnectionManager()
 
 
 # ============================================================
-# Zenoh Runtime State
+# Zenoh Runtime
 # ============================================================
 
 _session = None
@@ -111,14 +108,9 @@ _loop: Optional[
     asyncio.AbstractEventLoop
 ] = None
 
-_publishers: dict[
-    str,
-    Any,
-] = {}
-
 
 # ============================================================
-# Zenoh 상태
+# 상태
 # ============================================================
 
 def is_ready() -> bool:
@@ -143,165 +135,83 @@ def status_snapshot() -> dict[str, Any]:
                 manager.active_connections
             ),
 
-        "publishers":
-            sorted(
-                _publishers.keys()
-            ),
+        "role":
+            "fms_native_data",
+
+        "subscriptions": [
+            "**/telemetry",
+        ],
     }
 
 
 # ============================================================
-# Publisher cache
+# Telemetry Payload Parsing
 # ============================================================
 
-def _publisher(
-    topic: str,
-):
-
-    if _session is None:
-
-        raise RuntimeError(
-            "Zenoh session inactive"
-        )
-
-    if topic not in _publishers:
-
-        _publishers[topic] = (
-            _session.declare_publisher(
-                topic
-            )
-        )
-
-    return _publishers[
-        topic
-    ]
-
-
-# ============================================================
-# std_msgs/String CDR
-# ============================================================
-
-def _make_ros_string_cdr(
-    text: str,
-) -> bytes:
-
-    utf8_bytes = (
-        text.encode("utf-8")
-        + b"\x00"
-    )
-
-    cdr_header = (
-        b"\x00\x01\x00\x00"
-    )
-
-    length_prefix = struct.pack(
-        "<I",
-        len(utf8_bytes),
-    )
-
-    return (
-        cdr_header
-        + length_prefix
-        + utf8_bytes
-    )
-
-
-# ============================================================
-# geometry_msgs/TwistStamped CDR
-# ============================================================
-
-def make_twist_stamped_cdr(
-    linear_x: float,
-    angular_z: float,
-) -> bytes:
-
-    cdr_header = (
-        b"\x00\x01\x00\x00"
-    )
-
-    # builtin_interfaces/Time
-    sec = 0
-
-    nanosec = 0
-
-    # Header.frame_id = ""
-    frame_id = b"\x00"
-
-    frame_id_length = len(
-        frame_id
-    )
-
-    body = struct.pack(
-        "<iII",
-        sec,
-        nanosec,
-        frame_id_length,
-    )
-
-    body += frame_id
-
-    # 8 byte alignment
-    padding = (
-        8
-        - (
-            len(body)
-            % 8
-        )
-    ) % 8
-
-    body += (
-        b"\x00"
-        * padding
-    )
-
-    # geometry_msgs/Twist
-    body += struct.pack(
-        "<6d",
-
-        float(linear_x),
-        0.0,
-        0.0,
-
-        0.0,
-        0.0,
-        float(angular_z),
-    )
-
-    return (
-        cdr_header
-        + body
-    )
-
-
-# ============================================================
-# Telemetry JSON 추출
-# ============================================================
-
-def _extract_json_from_cdr(
+def _extract_json(
     payload: bytes,
 ) -> Optional[dict[str, Any]]:
 
-    text = payload.decode(
-        "utf-8",
-        errors="ignore",
-    )
+    """
+    Native JSON payload와
+    ROS std_msgs/String이 ROS2DDS를 통해 전달된
+    CDR payload 둘 다 허용한다.
+    """
 
-    match = re.search(
-        r"\{.*\}",
-        text,
-    )
+    # --------------------------------------------------------
+    # 1. 순수 JSON 먼저 시도
+    # --------------------------------------------------------
 
-    if not match:
+    try:
 
-        return None
+        text = payload.decode(
+            "utf-8"
+        ).strip()
 
-    return json.loads(
-        match.group(0)
-    )
+        if (
+            text.startswith("{")
+            and text.endswith("}")
+        ):
+
+            return json.loads(
+                text
+            )
+
+    except Exception:
+
+        pass
+
+    # --------------------------------------------------------
+    # 2. CDR 내부 JSON 검색
+    # --------------------------------------------------------
+
+    try:
+
+        text = payload.decode(
+            "utf-8",
+            errors="ignore",
+        )
+
+        match = re.search(
+            r"\{.*\}",
+            text,
+        )
+
+        if match:
+
+            return json.loads(
+                match.group(0)
+            )
+
+    except Exception:
+
+        pass
+
+    return None
 
 
 # ============================================================
-# Zenoh Telemetry Callback
+# Telemetry Callback
 # ============================================================
 
 def _telemetry_listener(
@@ -314,21 +224,23 @@ def _telemetry_listener(
             sample.key_expr
         )
 
-        data = _extract_json_from_cdr(
+        payload = (
             sample.payload.to_bytes()
+        )
+
+        data = _extract_json(
+            payload
         )
 
         if not data:
 
             return
 
-        # 예:
-        #
+        # ----------------------------------------------------
         # robot1/telemetry
-        #
-        # 또는
-        #
         # rt/robot1/telemetry
+        # 둘 다 대응
+        # ----------------------------------------------------
 
         parts = [
             part
@@ -414,34 +326,42 @@ def _telemetry_listener(
                 status,
         }
 
-        if _loop is not None:
+        if _loop is None:
 
-            # DB update
-            asyncio.run_coroutine_threadsafe(
-                upsert_robot_state(
-                    robot_id,
-                    x,
-                    y,
-                    yaw,
-                    battery,
-                    status,
-                ),
-                _loop,
-            )
+            return
 
-            # Dashboard broadcast
-            asyncio.run_coroutine_threadsafe(
-                manager.broadcast(
-                    {
-                        "type":
-                            "telemetry",
+        # ----------------------------------------------------
+        # DB
+        # ----------------------------------------------------
 
-                        "data":
-                            telemetry,
-                    }
-                ),
-                _loop,
-            )
+        asyncio.run_coroutine_threadsafe(
+            upsert_robot_state(
+                robot_id,
+                x,
+                y,
+                yaw,
+                battery,
+                status,
+            ),
+            _loop,
+        )
+
+        # ----------------------------------------------------
+        # Frontend WebSocket
+        # ----------------------------------------------------
+
+        asyncio.run_coroutine_threadsafe(
+            manager.broadcast(
+                {
+                    "type":
+                        "telemetry",
+
+                    "data":
+                        telemetry,
+                }
+            ),
+            _loop,
+        )
 
     except Exception as exc:
 
@@ -461,7 +381,9 @@ def start_zenoh(
         asyncio.AbstractEventLoop,
 ) -> None:
 
-    global _loop, _session, _subscriber
+    global _loop
+    global _session
+    global _subscriber
 
     _loop = event_loop
 
@@ -472,6 +394,10 @@ def start_zenoh(
     try:
 
         config = zenoh.Config()
+
+        # ----------------------------------------------------
+        # Main zenohd에만 연결
+        # ----------------------------------------------------
 
         config.insert_json5(
             "mode",
@@ -487,6 +413,10 @@ def start_zenoh(
             ),
         )
 
+        # ----------------------------------------------------
+        # 다른 Zenoh peer 자동 discovery 차단
+        # ----------------------------------------------------
+
         config.insert_json5(
             "scouting/multicast/enabled",
             "false",
@@ -501,7 +431,10 @@ def start_zenoh(
             config
         )
 
-        # 모든 robot telemetry
+        # ----------------------------------------------------
+        # FMS Telemetry
+        # ----------------------------------------------------
+
         _subscriber = (
             _session.declare_subscriber(
                 "**/telemetry",
@@ -509,36 +442,8 @@ def start_zenoh(
             )
         )
 
-        # Publisher 사전 생성
-        for index in range(
-            1,
-            ZENOH_ROBOT_COUNT + 1,
-        ):
-
-            robot_id = (
-                f"robot{index}"
-            )
-
-            for suffix in (
-                "goal",
-                "cmd_vel",
-            ):
-
-                topic = (
-                    f"{robot_id}/{suffix}"
-                )
-
-                _publishers[
-                    topic
-                ] = (
-                    _session
-                    .declare_publisher(
-                        topic
-                    )
-                )
-
         print(
-            " -> FMS Zenoh 세션 활성화 완료 "
+            " -> FMS Native Zenoh 활성화 완료 "
             f"(endpoint={ZENOH_ENDPOINT}, "
             f"zid={_session.zid()})"
         )
@@ -546,15 +451,12 @@ def start_zenoh(
     except Exception as exc:
 
         _session = None
-
         _subscriber = None
-
-        _publishers.clear()
 
         print(
             " -> [WARN] "
-            "Zenoh 연결 실패. "
-            "Map/API만 실행: "
+            "Native Zenoh 연결 실패. "
+            "Map/API는 계속 실행: "
             f"{exc}"
         )
 
@@ -565,7 +467,9 @@ def start_zenoh(
 
 def stop_zenoh() -> None:
 
-    global _session, _subscriber, _loop
+    global _session
+    global _subscriber
+    global _loop
 
     try:
 
@@ -588,158 +492,9 @@ def stop_zenoh() -> None:
         pass
 
     _subscriber = None
-
     _session = None
-
     _loop = None
 
-    _publishers.clear()
-
-
-# ============================================================
-# Goal publish
-# ============================================================
-
-def publish_goal(
-    robot_id: str,
-    target_x: float,
-    target_y: float,
-) -> dict[str, Any]:
-
-    backend_id = normalize_robot_id(
-        robot_id
-    )
-
-    topic = (
-        f"{backend_id}/goal"
-    )
-
-    body = {
-
-        "x":
-            float(target_x),
-
-        "y":
-            float(target_y),
-    }
-
-    json_text = json.dumps(
-        body,
-        ensure_ascii=False,
-    )
-
-    _publisher(
-        topic
-    ).put(
-        _make_ros_string_cdr(
-            json_text
-        )
-    )
-
     print(
-        f" -> GOAL TX: "
-        f"{topic} "
-        f"payload={json_text}"
-    )
-
-    return {
-
-        "status":
-            "SUCCESS",
-
-        "robot_id":
-            backend_id,
-
-        "ui_id":
-            to_ui_robot_id(
-                backend_id
-            ),
-
-        "topic":
-            topic,
-
-        "target":
-            body,
-    }
-
-
-# ============================================================
-# cmd_vel publish
-# ============================================================
-
-def publish_cmd_vel(
-    robot_id: str,
-    linear_x: float,
-    angular_z: float,
-) -> dict[str, Any]:
-
-    backend_id = normalize_robot_id(
-        robot_id
-    )
-
-    linear = max(
-        -CMD_VEL_MAX_LINEAR,
-        min(
-            CMD_VEL_MAX_LINEAR,
-            float(linear_x),
-        ),
-    )
-
-    angular = max(
-        -CMD_VEL_MAX_ANGULAR,
-        min(
-            CMD_VEL_MAX_ANGULAR,
-            float(angular_z),
-        ),
-    )
-
-    topic = (
-        f"{backend_id}/cmd_vel"
-    )
-
-    _publisher(
-        topic
-    ).put(
-        make_twist_stamped_cdr(
-            linear,
-            angular,
-        )
-    )
-
-    return {
-
-        "status":
-            "SUCCESS",
-
-        "robot_id":
-            backend_id,
-
-        "ui_id":
-            to_ui_robot_id(
-                backend_id
-            ),
-
-        "topic":
-            topic,
-
-        "linear_x":
-            linear,
-
-        "angular_z":
-            angular,
-    }
-
-
-# ============================================================
-# Stop
-# ============================================================
-
-def publish_stop(
-    robot_id: str,
-) -> dict[str, Any]:
-
-    return publish_cmd_vel(
-        robot_id,
-        0.0,
-        0.0,
+        " -> FMS Native Zenoh 종료"
     )

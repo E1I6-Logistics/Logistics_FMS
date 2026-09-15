@@ -10,10 +10,12 @@ from ..schemas.robot import (
     normalize_robot_id,
 )
 
+from ..services.ros_gateway import (
+    ros_gateway,
+)
+
 from ..services.zenoh_service import (
     manager,
-    publish_cmd_vel,
-    publish_stop,
     status_snapshot,
 )
 
@@ -24,7 +26,7 @@ router = APIRouter(
 
 
 # ============================================================
-# Dashboard telemetry
+# Dashboard Telemetry
 # ============================================================
 
 @router.websocket(
@@ -38,14 +40,23 @@ async def dashboard_websocket(
         websocket
     )
 
-    # 연결 직후 Zenoh/FMS 상태 전달
+    # --------------------------------------------------------
+    # 최초 시스템 상태
+    # --------------------------------------------------------
+
     await websocket.send_json(
         {
             "type":
                 "system",
 
             "data":
-                status_snapshot(),
+                {
+                    "zenoh":
+                        status_snapshot(),
+
+                    "ros":
+                        ros_gateway.status_snapshot(),
+                },
         }
     )
 
@@ -53,15 +64,20 @@ async def dashboard_websocket(
 
         while True:
 
-            # 클라이언트에서 ping 등 수신.
+            # Frontend ping 등 수신.
             #
-            # 실제 telemetry 전송은
+            # 실제 telemetry:
             #
-            # Zenoh callback
-            #     ↓
+            # Robot
+            #   ↓
+            # Native Zenoh
+            #   ↓
+            # zenoh_service
+            #   ↓
             # manager.broadcast()
-            #
-            # 에서 처리함.
+            #   ↓
+            # Frontend
+
             await websocket.receive_text()
 
     except WebSocketDisconnect:
@@ -90,7 +106,9 @@ async def cmd_vel_websocket(
 
     await websocket.accept()
 
-    last_robot_id: str | None = None
+    last_robot_id: (
+        str | None
+    ) = None
 
     try:
 
@@ -100,6 +118,10 @@ async def cmd_vel_websocket(
                 await websocket
                 .receive_json()
             )
+
+            # ------------------------------------------------
+            # Robot ID
+            # ------------------------------------------------
 
             raw_robot_id = str(
                 data.get(
@@ -130,14 +152,26 @@ async def cmd_vel_websocket(
                     )
                 )
 
-                publish_cmd_vel(
+                # --------------------------------------------
+                # FastAPI
+                #   ↓
+                # in-process Queue
+                #   ↓
+                # rclpy
+                #   ↓
+                # TwistStamped
+                # --------------------------------------------
+
+                ros_gateway.send_cmd_vel(
                     last_robot_id,
+
                     float(
                         data.get(
                             "linear_x",
                             0.0,
                         )
                     ),
+
                     float(
                         data.get(
                             "angular_z",
@@ -184,17 +218,21 @@ async def cmd_vel_websocket(
 
     finally:
 
+        # ----------------------------------------------------
+        # 안전 정지
+        #
         # 브라우저 종료
-        # 네트워크 단절
+        # Wi-Fi 단절
         # WebSocket 종료
         #
-        # → 마지막 로봇 강제 정지
+        # 마지막 제어 로봇에 0 속도 전송
+        # ----------------------------------------------------
 
         if last_robot_id is not None:
 
             try:
 
-                publish_stop(
+                ros_gateway.stop_robot(
                     last_robot_id
                 )
 
