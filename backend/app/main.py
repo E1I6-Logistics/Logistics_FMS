@@ -58,65 +58,6 @@ from .services.zenoh_service import (
     stop_zenoh,
 )
 
-KNOWN_DEVICES = {
-    "10.10.141.221": "robot1",
-    "10.10.141.226": "robot2",
-    "10.10.141.246": "robot3",
-}
-blocked_devices = set()
-seen_devices = set(KNOWN_DEVICES.keys())
-
-def _valid_ip(ip: str) -> str:
-    return str(ipaddress.ip_address(ip))
-
-def _run_ss():
-    result = subprocess.run(["ss", "-Hnt"], capture_output=True, text=True, check=False)
-    return result.stdout
-
-def _zenoh_peers():
-    peers = set()
-    for line in _run_ss().splitlines():
-        cols = line.split()
-        if len(cols) < 5 or cols[0] != "ESTAB":
-            continue
-        local_addr, peer_addr = cols[3], cols[4]
-        if not local_addr.endswith(":7447"):
-            continue
-        ip = peer_addr.rsplit(":", 1)[0].strip("[]")
-        if ip not in ("127.0.0.1", "::1"):
-            peers.add(ip)
-    seen_devices.update(peers)
-    return peers
-
-def _firewall(action: str, ip: str):
-    ip = _valid_ip(ip)
-    base = ["sudo", "iptables"]
-    rule = ["INPUT", "-s", ip, "-p", "tcp", "--dport", "7447", "-j", "REJECT"]
-    if action == "block":
-        check = subprocess.run(base + ["-C"] + rule, capture_output=True)
-        if check.returncode != 0:
-            subprocess.run(base + ["-I"] + rule, check=True)
-        blocked_devices.add(ip)
-    elif action == "allow":
-        while subprocess.run(base + ["-C"] + rule, capture_output=True).returncode == 0:
-            subprocess.run(base + ["-D"] + rule, check=True)
-        blocked_devices.discard(ip)
-
-def device_snapshot():
-    connected = _zenoh_peers()
-    devices = []
-    for ip in sorted(seen_devices | blocked_devices):
-        blocked = ip in blocked_devices
-        devices.append({
-            "ip": ip,
-            "name": KNOWN_DEVICES.get(ip, "Unknown"),
-            "known": ip in KNOWN_DEVICES,
-            "connected": ip in connected and not blocked,
-            "blocked": blocked,
-            "state": "BLOCKED" if blocked else ("CONNECTED" if ip in connected else "OFFLINE"),
-        })
-    return devices
-
 
 # ============================================================
 # FastAPI Lifecycle
@@ -342,11 +283,6 @@ app.include_router(
 @app.get("/")
 async def root():
 
-    print(
-        f" -> GOAL TX: {target_topic} "
-        f"payload={json_str}"
-    )
-
     return {
 
         "service":
@@ -365,37 +301,6 @@ async def root():
             "/docs",
     }
 
-
-
-class DevicePayload(BaseModel):
-    ip: str
-
-
-@app.get("/api/connections")
-async def get_connections():
-    return {"devices": device_snapshot()}
-
-
-@app.post("/api/connections/block")
-async def block_connection(payload: DevicePayload):
-    try:
-        ip = _valid_ip(payload.ip)
-        seen_devices.add(ip)
-        _firewall("block", ip)
-        return {"status": "SUCCESS", "ip": ip, "devices": device_snapshot()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/connections/allow")
-async def allow_connection(payload: DevicePayload):
-    try:
-        ip = _valid_ip(payload.ip)
-        seen_devices.add(ip)
-        _firewall("allow", ip)
-        return {"status": "SUCCESS", "ip": ip, "devices": device_snapshot()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
 # Health Check
