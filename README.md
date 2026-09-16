@@ -595,7 +595,7 @@ backend/app/database/database.py
 ### Frontend
 
 ```text
-frontend/src/App.jsx
+frontend/src/App.tsx
 ```
 
 ### Robot
