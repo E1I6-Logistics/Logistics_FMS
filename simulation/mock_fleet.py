@@ -8,6 +8,7 @@ import zenoh
 import argparse
 import heapq
 from pathlib import Path
+import struct
 
 ROUTE_GRAPH_PATH = Path(__file__).resolve().parents[1] / "routes" / "test.geojson"
 ROBOT_IDS = ("robot1", "robot2", "robot3")
@@ -103,6 +104,28 @@ def parse_route_arguments(args):
     return parsed, ros_args
 
 
+def parse_goal_payload(raw_payload):
+    json_bytes = raw_payload.lstrip(b"\xef\xbb\xbf \t\r\n")
+
+    if json_bytes.startswith((b"{", b"[")):
+        return json.loads(json_bytes.decode("utf-8"))
+
+    cdr_header_size = 4
+    string_length_size = 4
+    minimum_cdr_size = cdr_header_size + string_length_size
+    if len(raw_payload) < minimum_cdr_size:
+        raise ValueError("Goal payload가 JSON 또는 유효한 ROS 2 CDR 형식이 아닙니다.")
+
+    string_length = struct.unpack_from("<I", raw_payload, cdr_header_size)[0]
+    json_start = minimum_cdr_size
+    json_end = json_start + string_length
+    if string_length == 0 or json_end > len(raw_payload):
+        raise ValueError("ROS 2 CDR 문자열 길이가 payload 범위를 벗어났습니다.")
+
+    json_bytes = raw_payload[json_start:json_end].rstrip(b"\x00")
+    return json.loads(json_bytes.decode("utf-8"))
+
+
 class FleetSimulatorNode(Node):
     def __init__(self, robot_number=None, point_id=None):
         super().__init__('fleet_simulator_node')
@@ -192,24 +215,60 @@ class FleetSimulatorNode(Node):
         yaw = math.atan2(end[1] - start[1], end[0] - start[0])
         return x, y, yaw
 
+    def find_nearest_point_id(self, x, y):
+        return min(
+            self.points,
+            key=lambda point_id: (self.points[point_id][0] - x) ** 2
+            + (self.points[point_id][1] - y) ** 2,
+        )
+
+    def update_robot_goal(self, robot_id, target_x, target_y):
+        if robot_id not in self.robot_states:
+            raise ValueError(f"알 수 없는 로봇 ID입니다: {robot_id}")
+
+        target_point_id = self.find_nearest_point_id(target_x, target_y)
+        state = self.robot_states[robot_id]
+
+        current_point_id = state["path"][state["segment"]]
+        new_path = shortest_path(
+            self.points,
+            self.edges,
+            current_point_id,
+            target_point_id,
+        )
+
+        state["path"] = new_path
+        state["segment"] = 0
+        state["progress"] = 0.0
+        state["status"] = "NAVIGATING" if len(new_path) > 1 else "IDLE"
+
+        self.get_logger().info(
+            f"[{robot_id}] 목표 경로 갱신: "
+            f"Point {current_point_id} -> Point {target_point_id}, "
+            f"경로={new_path}"
+        )
+
     def on_zenoh_goal_received(self, sample):
         """관제 웹에서 Zenoh로 보낸 주행 목표를 수신하여 ROS 2 토픽으로 전환"""
         try:
             topic = str(sample.key_expr)
             robot_id = topic.split('/')[0]
-            payload = json.loads(sample.payload.to_bytes().decode('utf-8'))
-            
-            self.get_logger().info(f"[{robot_id}] Zenoh Goal 수신 -> X: {payload['x']}, Y: {payload['y']}")
+            payload = parse_goal_payload(sample.payload.to_bytes())
+            target_x = float(payload['x'])
+            target_y = float(payload['y'])            
+            self.get_logger().info(f"[{robot_id}] Zenoh Goal 수신 -> X: {target_x}, Y: {target_y}")
+            self.update_robot_goal(robot_id, target_x, target_y)
 
             # ROS 2 PoseStamped 메시지로 변환 후 내부 발행
             if robot_id in self.goal_publishers:
                 msg = PoseStamped()
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.header.frame_id = 'map'
-                msg.pose.position.x = float(payload['x'])
-                msg.pose.position.y = float(payload['y'])
+                msg.pose.position.x = target_x
+                msg.pose.position.y = target_y
                 msg.pose.orientation.w = 1.0
                 self.goal_publishers[robot_id].publish(msg)
+
         except Exception as e:
             self.get_logger().error(f"Goal 처리 에러: {e}")
 
