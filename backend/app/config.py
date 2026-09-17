@@ -48,6 +48,19 @@ ZENOH_ROBOT_COUNT = int(
     os.getenv("FMS_ROBOT_COUNT", "3")
 )
 
+ROBOT_MODE = os.getenv(
+    "FMS_ROBOT_MODE",
+    "simulation",
+).strip().lower()
+
+if ROBOT_MODE not in {"real", "simulation"}:
+    raise ValueError(
+        "FMS_ROBOT_MODE must be either 'real' or 'simulation'"
+    )
+
+TELEMETRY_TIMEOUT_SECONDS = float(
+    os.getenv("FMS_TELEMETRY_TIMEOUT_SECONDS", "5.0")
+)
 
 # ============================================================
 # 수동주행 최대 속도

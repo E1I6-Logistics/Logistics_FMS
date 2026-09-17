@@ -14,6 +14,7 @@ from ..schemas.robot import (
     normalize_robot_id,
     to_ui_robot_id,
 )
+from ..config import ROBOT_MODE
 
 
 router = APIRouter(
@@ -49,6 +50,7 @@ def _serialize(
     ] = to_ui_robot_id(
         robot_id
     )
+    result["mode"] = ROBOT_MODE
 
     if (
         result.get(

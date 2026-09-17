@@ -88,6 +88,7 @@ export type RobotStateDto = {
   y: number
   yaw: number
   updated_at?: string | null
+  mode: 'real' | 'simulation'
 }
 
 export function getConnections() {

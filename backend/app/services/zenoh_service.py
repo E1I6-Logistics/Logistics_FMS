@@ -372,6 +372,27 @@ def _telemetry_listener(
         )
 
 
+async def publish_telemetry(
+    telemetry: dict[str, Any],
+) -> None:
+    """Publish simulator telemetry through the same dashboard contract."""
+    robot_id = normalize_robot_id(str(telemetry["robot_id"]))
+    data = {
+        **telemetry,
+        "robot_id": robot_id,
+        "ui_id": to_ui_robot_id(robot_id),
+    }
+    await upsert_robot_state(
+        robot_id,
+        float(data["x"]),
+        float(data["y"]),
+        float(data["yaw"]),
+        float(data["battery"]),
+        str(data["status"]),
+    )
+    await manager.broadcast({"type": "telemetry", "data": data})
+
+    
 # ============================================================
 # Zenoh Startup
 # ============================================================

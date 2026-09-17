@@ -19,6 +19,11 @@ from ..services.ros_gateway import (
     ros_gateway,
 )
 
+from ..services.simulation_gateway import (
+    simulation_gateway,
+)
+from ..config import ROBOT_MODE
+
 from ..services.zenoh_service import (
     status_snapshot as zenoh_status_snapshot,
 )
@@ -34,13 +39,18 @@ router = APIRouter(
 # ROS Gateway 확인
 # ============================================================
 
-def _require_ros() -> None:
+def _require_control() -> None:
 
-    if not ros_gateway.active:
+    active = (
+        simulation_gateway.active
+        if ROBOT_MODE == "simulation"
+        else ros_gateway.active
+    )
+    if not active:
 
         raise HTTPException(
             status_code=503,
-            detail="ROS Gateway inactive",
+            detail="Robot control gateway inactive",
         )
 
 
@@ -55,6 +65,9 @@ async def command_status():
 
         "ros":
             ros_gateway.status_snapshot(),
+        "mode": ROBOT_MODE,
+        "simulation":
+            simulation_gateway.status_snapshot(),
 
         "zenoh":
             zenoh_status_snapshot(),
@@ -111,7 +124,9 @@ async def command_capabilities():
         # ----------------------------------------------------
 
         "rosGateway":
-            True,
+            ROBOT_MODE == "real",
+        "simulationGateway":
+            ROBOT_MODE == "simulation",
 
         "nativeZenohTelemetry":
             True,
@@ -127,10 +142,14 @@ async def send_coordinate_goal(
     payload: GoalCoordinateRequest,
 ):
 
-    _require_ros()
+    _require_control()
 
     try:
 
+        if ROBOT_MODE == "simulation":
+            return simulation_gateway.navigate_to_pose(
+                payload.robot_id, payload.target_x, payload.target_y, frame_id="map"
+            )
         return await ros_gateway.navigate_to_pose(
             payload.robot_id,
             payload.target_x,
@@ -169,7 +188,7 @@ async def send_node_goal(
     payload: GoalNodeRequest,
 ):
 
-    _require_ros()
+    _require_control()
 
     try:
 
@@ -185,14 +204,14 @@ async def send_node_goal(
         # Node 좌표 -> Nav2 NavigateToPose
         # ----------------------------------------------------
 
-        result = (
-            await ros_gateway.navigate_to_pose(
-                payload.robot_id,
-                node["x"],
-                node["y"],
-                frame_id=node["frame"],
+        if ROBOT_MODE == "simulation":
+            result = simulation_gateway.navigate_to_pose(
+                payload.robot_id, node["x"], node["y"], frame_id=node["frame"]
             )
-        )
+        else:
+            result = await ros_gateway.navigate_to_pose(
+                payload.robot_id, node["x"], node["y"], frame_id=node["frame"]
+            )
 
         # ----------------------------------------------------
         # Frontend 확인용 Node 정보
@@ -253,13 +272,13 @@ async def stop_robot(
     payload: StopRequest,
 ):
 
-    _require_ros()
+    _require_control()
 
     try:
 
-        return ros_gateway.stop_robot(
-            payload.robot_id
-        )
+        if ROBOT_MODE == "simulation":
+            return simulation_gateway.stop_robot(payload.robot_id)
+        return ros_gateway.stop_robot(payload.robot_id)
 
     except ValueError as exc:
 

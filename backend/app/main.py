@@ -14,6 +14,7 @@ from fastapi.middleware.cors import (
 
 from .config import (
     CORS_ORIGINS,
+    ROBOT_MODE,
 )
 
 from .database.database import (
@@ -52,6 +53,7 @@ from .services.route_graph import (
 from .services.ros_gateway import (
     ros_gateway,
 )
+from .services.simulation_gateway import simulation_gateway
 
 from .services.zenoh_service import (
     start_zenoh,
@@ -144,17 +146,18 @@ async def lifespan(
     # Topic / Service / Action
     # ========================================================
 
-    try:
-
-        ros_gateway.start()
-
-    except Exception as exc:
-
-        print(
-            " -> [WARN] "
-            "ROS Gateway 시작 실패: "
-            f"{exc}"
-        )
+    if ROBOT_MODE == "simulation":
+        simulation_gateway.start()
+        print(" -> Simulation Gateway 활성화")
+    else:
+        try:
+            ros_gateway.start()
+        except Exception as exc:
+            print(
+                " -> [WARN] "
+                "ROS Gateway 시작 실패: "
+                f"{exc}"
+            )
 
     # ========================================================
     # FastAPI Start
@@ -170,17 +173,17 @@ async def lifespan(
         # Shutdown
         # ====================================================
 
-        try:
-
-            ros_gateway.stop()
-
-        except Exception as exc:
-
-            print(
-                " -> [WARN] "
-                "ROS Gateway 종료 오류: "
-                f"{exc}"
-            )
+        if ROBOT_MODE == "simulation":
+            await simulation_gateway.stop()
+        else:
+            try:
+                ros_gateway.stop()
+            except Exception as exc:
+                print(
+                    " -> [WARN] "
+                    "ROS Gateway 종료 오류: "
+                    f"{exc}"
+                )
 
         try:
 

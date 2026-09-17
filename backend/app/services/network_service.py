@@ -4,6 +4,7 @@ import ipaddress
 import subprocess
 
 from ..config import KNOWN_DEVICES
+from ..config import ROBOT_MODE
 
 
 # ============================================================
@@ -193,7 +194,7 @@ def firewall(
 
 def device_snapshot() -> list[dict]:
 
-    connected = zenoh_peers()
+    connected = set(KNOWN_DEVICES) if ROBOT_MODE == "simulation" else zenoh_peers()
 
     devices = []
 

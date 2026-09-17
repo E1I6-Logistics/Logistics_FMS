@@ -9,6 +9,7 @@ import argparse
 import heapq
 from pathlib import Path
 import struct
+import os
 
 ROUTE_GRAPH_PATH = Path(__file__).resolve().parents[1] / "routes" / "test.geojson"
 ROBOT_IDS = ("robot1", "robot2", "robot3")
@@ -137,8 +138,8 @@ class FleetSimulatorNode(Node):
         
         # 1. Zenoh 세션 초기화 (기존 인프라 7447 포트 연동)
         conf = zenoh.Config()
-        # conf.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
-        conf.insert_json5("connect/endpoints", '["tcp/10.10.141.15:7447"]')
+        conf.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
+        # conf.insert_json5("connect/endpoints", '["tcp/10.10.141.15:7447"]')
         self.zenoh_session = zenoh.open(conf)
         self.get_logger().info("-> Zenoh 세션 연결 완료 (fms-zenoh-router:7447)")
         
