@@ -166,3 +166,5 @@ test-results/
 # Documentation
 !doc/
 !doc/**
+
+doc/record_file/
