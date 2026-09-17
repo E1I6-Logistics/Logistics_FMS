@@ -1,6 +1,9 @@
+# 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
+# IP 주소 형식 검증 기능 사용
 import ipaddress
+# Linux 명령 실행 기능 사용
 import subprocess
 
 from ..config import KNOWN_DEVICES
@@ -10,8 +13,10 @@ from ..config import KNOWN_DEVICES
 # Runtime 상태
 # ============================================================
 
+# 차단된 장치 IP 목록 관리
 blocked_devices: set[str] = set()
 
+# 확인된 장치 IP 목록 관리
 seen_devices: set[str] = set(
     KNOWN_DEVICES.keys()
 )
@@ -21,6 +26,7 @@ seen_devices: set[str] = set(
 # IP 검증
 # ============================================================
 
+# 입력 IP 주소 형식 검증 기능
 def valid_ip(
     ip: str,
 ) -> str:
@@ -34,6 +40,7 @@ def valid_ip(
 # Linux socket 조회
 # ============================================================
 
+# Linux ss 명령을 이용한 TCP 연결 상태 조회 기능
 def _run_ss() -> str:
 
     result = subprocess.run(
@@ -53,10 +60,12 @@ def _run_ss() -> str:
 # Zenoh 연결 Peer 조회
 # ============================================================
 
+# Zenoh 7447 포트에 연결된 Peer IP 조회 기능
 def zenoh_peers() -> set[str]:
 
     peers: set[str] = set()
 
+    # TCP 연결 목록을 한 줄씩 분석
     for line in _run_ss().splitlines():
 
         columns = line.split()
@@ -64,6 +73,7 @@ def zenoh_peers() -> set[str]:
         if len(columns) < 5:
             continue
 
+        # ESTABLISHED 상태 연결만 사용
         if columns[0] != "ESTAB":
             continue
 
@@ -71,6 +81,7 @@ def zenoh_peers() -> set[str]:
 
         peer_addr = columns[4]
 
+        # Zenoh 기본 포트 7447 연결만 사용
         if not local_addr.endswith(
             ":7447"
         ):
@@ -88,6 +99,7 @@ def zenoh_peers() -> set[str]:
         ):
             continue
 
+        # 연결된 Peer IP 목록에 추가
         peers.add(ip)
 
     seen_devices.update(
@@ -101,6 +113,7 @@ def zenoh_peers() -> set[str]:
 # Firewall
 # ============================================================
 
+# 특정 Robot IP의 Zenoh 통신 차단 및 허용 기능
 def firewall(
     action: str,
     ip: str,
@@ -129,6 +142,7 @@ def firewall(
     # Block
     # --------------------------------------------------------
 
+    # iptables 차단 규칙 추가 기능
     if action == "block":
 
         check = subprocess.run(
@@ -157,6 +171,7 @@ def firewall(
     # Allow
     # --------------------------------------------------------
 
+    # iptables 차단 규칙 제거 기능
     if action == "allow":
 
         while (
@@ -191,8 +206,10 @@ def firewall(
 # Frontend 연결 상태
 # ============================================================
 
+# Frontend 전달용 장치 연결 상태 목록 생성 기능
 def device_snapshot() -> list[dict]:
 
+    # 현재 연결된 Zenoh Peer 목록 조회
     connected = zenoh_peers()
 
     devices = []
@@ -215,6 +232,7 @@ def device_snapshot() -> list[dict]:
             and not blocked
         )
 
+        # 장치별 연결 및 차단 상태 정보 생성
         devices.append(
             {
                 "ip": ip,

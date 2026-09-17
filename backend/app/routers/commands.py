@@ -1,29 +1,30 @@
+# 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
+# API Router 및 HTTP 예외 처리 기능 사용
 from fastapi import (
     APIRouter,
     HTTPException,
 )
 
+# 명령 요청 데이터 Schema 사용
 from ..schemas.command import (
     GoalCoordinateRequest,
     GoalNodeRequest,
     StopRequest,
 )
 
+# Route Graph Node 조회 기능 사용
 from ..services.route_graph import (
     get_node,
 )
 
+# ROS2 명령 전송용 ROS Gateway 사용
 from ..services.ros_gateway import (
     ros_gateway,
 )
 
-from ..services.zenoh_service import (
-    status_snapshot as zenoh_status_snapshot,
-)
-
-
+# Command API Router 생성
 router = APIRouter(
     prefix="/api/command",
     tags=["commands"],
@@ -34,8 +35,10 @@ router = APIRouter(
 # ROS Gateway 확인
 # ============================================================
 
+# ROS Gateway 활성 상태 확인 기능
 def _require_ros() -> None:
 
+    # ROS Gateway 비활성 상태 예외 처리
     if not ros_gateway.active:
 
         raise HTTPException(
@@ -48,16 +51,13 @@ def _require_ros() -> None:
 # Command 상태
 # ============================================================
 
+# ROS Gateway 상태 조회 API 생성
 @router.get("/status")
 async def command_status():
 
     return {
-
         "ros":
             ros_gateway.status_snapshot(),
-
-        "zenoh":
-            zenoh_status_snapshot(),
     }
 
 
@@ -65,6 +65,7 @@ async def command_status():
 # Backend Capability
 # ============================================================
 
+# Backend 지원 기능 조회 API 생성
 @router.get("/capabilities")
 async def command_capabilities():
 
@@ -112,9 +113,6 @@ async def command_capabilities():
 
         "rosGateway":
             True,
-
-        "nativeZenohTelemetry":
-            True,
     }
 
 
@@ -122,15 +120,18 @@ async def command_capabilities():
 # 좌표 기반 Nav2 Goal
 # ============================================================
 
+# 좌표 기반 Nav2 이동 요청 API 생성
 @router.post("/goal")
 async def send_coordinate_goal(
     payload: GoalCoordinateRequest,
 ):
 
+    # ROS Gateway 사용 가능 상태 확인
     _require_ros()
 
     try:
 
+        # 지정 좌표 기준 NavigateToPose 명령 전송
         return await ros_gateway.navigate_to_pose(
             payload.robot_id,
             payload.target_x,
@@ -164,6 +165,7 @@ async def send_coordinate_goal(
 # Node 기반 Nav2 Goal
 # ============================================================
 
+# Route Graph Node 기반 Nav2 이동 요청 API 생성
 @router.post("/goal-node")
 async def send_node_goal(
     payload: GoalNodeRequest,
@@ -177,6 +179,7 @@ async def send_node_goal(
         # GeoJSON Node 검색
         # ----------------------------------------------------
 
+        # 요청한 Route Graph Node 정보 조회
         node = get_node(
             payload.node_id
         )
@@ -185,6 +188,7 @@ async def send_node_goal(
         # Node 좌표 -> Nav2 NavigateToPose
         # ----------------------------------------------------
 
+        # Node 좌표 기준 NavigateToPose 명령 실행
         result = (
             await ros_gateway.navigate_to_pose(
                 payload.robot_id,
@@ -198,6 +202,7 @@ async def send_node_goal(
         # Frontend 확인용 Node 정보
         # ----------------------------------------------------
 
+        # Frontend 확인용 Node 정보 응답에 추가
         result["node"] = {
 
             "id":
@@ -248,6 +253,7 @@ async def send_node_goal(
 # Robot Stop
 # ============================================================
 
+# Robot 정지 요청 API 생성
 @router.post("/stop")
 async def stop_robot(
     payload: StopRequest,
@@ -257,6 +263,7 @@ async def stop_robot(
 
     try:
 
+        # 대상 Robot 정지 명령 전송
         return ros_gateway.stop_robot(
             payload.robot_id
         )

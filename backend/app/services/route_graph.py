@@ -1,6 +1,9 @@
+# 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
+# 원본 GeoJSON 유지용 깊은 복사 기능 사용
 import copy
+# Route Graph GeoJSON 파일 파싱 기능 사용
 import json
 from typing import (
     Any,
@@ -10,6 +13,7 @@ from typing import (
 from ..config import ROUTE_GRAPH_PATH
 
 
+# 숫자 및 문자열 Node ID 모두 지원
 NodeId = Union[int, str]
 
 
@@ -17,21 +21,24 @@ NodeId = Union[int, str]
 # GeoJSON Load
 # ============================================================
 
+# Route Graph GeoJSON 파일 로드 및 형식 검증 기능
 def load_route_graph() -> dict[str, Any]:
 
+    # Route Graph 파일 존재 여부 확인
     if not ROUTE_GRAPH_PATH.exists():
 
         raise FileNotFoundError(
             f"Route Graph 파일 없음: {ROUTE_GRAPH_PATH}"
         )
 
+    # Route Graph JSON 파일 열기 및 파싱
     with ROUTE_GRAPH_PATH.open(
         "r",
         encoding="utf-8",
     ) as file:
-
         graph = json.load(file)
 
+    # GeoJSON FeatureCollection 형식 검증
     if graph.get("type") != "FeatureCollection":
 
         raise ValueError(
@@ -46,6 +53,7 @@ def load_route_graph() -> dict[str, Any]:
 # Node ID key 통일
 # ============================================================
 
+# Node ID 비교용 문자열 Key 변환 기능
 def _id_key(
     value: Any,
 ) -> str:
@@ -57,6 +65,7 @@ def _id_key(
 # Node Lookup 생성
 # ============================================================
 
+# Node ID 기준 Point Feature Lookup 생성 기능
 def node_lookup(
     graph: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -86,6 +95,7 @@ def node_lookup(
             or {}
         )
 
+        # Point Geometry만 Node로 사용
         if geometry.get("type") != "Point":
             continue
 
@@ -109,6 +119,7 @@ def node_lookup(
         if len(coordinates) < 2:
             continue
 
+        # Node ID 기준 Feature 저장
         nodes[
             _id_key(node_id)
         ] = feature
@@ -120,6 +131,7 @@ def node_lookup(
 # 특정 Node
 # ============================================================
 
+# 특정 Node 정보 조회 기능
 def get_node(
     node_id: NodeId,
 ) -> dict[str, Any]:
@@ -175,6 +187,7 @@ def get_node(
 # 전체 Node
 # ============================================================
 
+# 전체 Node 정보 목록 생성 기능
 def list_nodes() -> list[dict[str, Any]]:
 
     graph = load_route_graph()
@@ -221,6 +234,7 @@ def list_nodes() -> list[dict[str, Any]]:
             }
         )
 
+    # 숫자 Node ID 우선 정렬 기준 생성 기능
     def sort_key(
         node: dict[str, Any],
     ):
@@ -254,6 +268,7 @@ def list_nodes() -> list[dict[str, Any]]:
 # Frontend 렌더링용 GeoJSON 생성
 # ============================================================
 
+# Frontend 렌더링용 GeoJSON 복사본 생성 기능
 def build_renderable_geojson() -> dict[str, Any]:
 
     """
@@ -276,6 +291,7 @@ def build_renderable_geojson() -> dict[str, Any]:
 
     graph = load_route_graph()
 
+    # 원본 Route Graph 보호를 위한 깊은 복사
     renderable = copy.deepcopy(
         graph
     )
@@ -298,6 +314,7 @@ def build_renderable_geojson() -> dict[str, Any]:
             "type"
         )
 
+        # LineString 및 MultiLineString Edge만 처리
         if geometry_type not in (
             "LineString",
             "MultiLineString",
@@ -309,6 +326,7 @@ def build_renderable_geojson() -> dict[str, Any]:
             "coordinates"
         )
 
+        # 기존 Edge 좌표가 있으면 그대로 사용
         if coordinates:
             continue
 
@@ -331,10 +349,12 @@ def build_renderable_geojson() -> dict[str, Any]:
         ):
             continue
 
+        # Edge 시작 Node 정보 조회
         start_feature = nodes.get(
             _id_key(start_id)
         )
 
+        # Edge 종료 Node 정보 조회
         end_feature = nodes.get(
             _id_key(end_id)
         )
@@ -361,6 +381,7 @@ def build_renderable_geojson() -> dict[str, Any]:
             ][:2]
         )
 
+        # MultiLineString 형식 좌표 생성
         if geometry_type == "MultiLineString":
 
             geometry["coordinates"] = [
@@ -384,6 +405,7 @@ def build_renderable_geojson() -> dict[str, Any]:
 # Graph Summary
 # ============================================================
 
+# Route Graph Node 및 Edge 요약 정보 생성 기능
 def graph_summary() -> dict[str, Any]:
 
     graph = load_route_graph()
@@ -408,10 +430,12 @@ def graph_summary() -> dict[str, Any]:
             "type"
         )
 
+        # Point Feature 개수 기준 Node 수 계산
         if geometry_type == "Point":
 
             nodes += 1
 
+        # LineString 계열 Feature 개수 기준 Edge 수 계산
         elif geometry_type in (
             "LineString",
             "MultiLineString",

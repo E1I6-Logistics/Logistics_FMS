@@ -106,8 +106,8 @@ fi
 cd "$PROJECT_DIR"
 
 echo "[8/8] .env"
-if [[ ! -f "$PROJECT_DIR/.env" && -f "$PROJECT_DIR/.env.example" ]]; then
-  cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+if [[ ! -f "$PROJECT_DIR/.env" && -f "$PROJECT_DIR/.env" ]]; then
+  cp "$PROJECT_DIR/.env" "$PROJECT_DIR/.env"
 fi
 
 echo "============================================================"
