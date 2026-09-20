@@ -1,4 +1,5 @@
 const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
+export const MAP_IMAGE_URL = `${API_BASE}/api/map/image`
 
 function wsBaseFromHttp(base: string) {
   if (base.startsWith('https://')) return `wss://${base.slice('https://'.length)}`
@@ -31,6 +32,17 @@ export type GeoJsonFeatureCollection = {
   type: 'FeatureCollection'
   name?: string
   features: GeoJsonFeature[]
+}
+
+export type MapInfoDto = {
+  width: number
+  height: number
+  image_url: string
+  image_name: string
+}
+
+export function getMapInfo() {
+  return request<MapInfoDto>('/api/map/info')
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -83,11 +95,16 @@ export type RobotStateDto = {
   robot_id: string
   ui_id?: string
   status: string
-  battery: number
+  battery: number | null
   x: number
   y: number
   yaw: number
   updated_at?: string | null
+
+  pixel_x?: number | null
+  pixel_y?: number | null
+  map_pose_received: boolean
+  connection_state: string
 }
 
 export function getConnections() {

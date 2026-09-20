@@ -1,8 +1,11 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import mapImage from './imports/map.png'
-import { STRUCTURES, WarehouseGeometry } from './WarehouseGeometry'
+// import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+import { getMapInfo, MAP_IMAGE_URL, type MapInfoDto } from './api/fmsApi'
+
 import type { MapEdge, MapPoint } from './hooks/useRouteGraph'
 import './warehouse-map.css'
+import type { ManagedRobot } from './hooks/useRobotFleet'
 
 type RobotId = 'R-01' | 'R-02' | 'R-03'
 type Point = { x: number; y: number }
@@ -19,15 +22,23 @@ type Props = {
   graphLoading?: boolean
   graphError?: string | null
   visibleRobotIds?: RobotId[]
+  robotStates?: ManagedRobot[]
 }
 
 // 로봇 위치는 아직 telemetry 연동 전이므로 기존 UI 위치를 임시 유지한다.
 // 노드/엣지는 아래에서 backend GeoJSON 기반 props만 사용한다.
-const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
-  { id: 'R-01', x: 76, y: 61, color: '#2589F5', heading: 270 },
-  { id: 'R-02', x: 37, y: 61, color: '#E5A53A', heading: 0 },
-  { id: 'R-03', x: 86, y: 111, color: '#36BD8A', heading: 90 },
-]
+// const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
+//   { id: 'R-01', x: 116.210, y: 58.449, color: '#2589F5', heading: 270 },
+//   { id: 'R-02', x: 115.052, y: 87.312, color: '#E5A53A', heading: 270 },
+//   { id: 'R-03', x: 115.548, y: 112.893, color: '#36BD8A', heading: 270 },
+// ]
+const robotColors: Record<RobotId, string> = {
+  'R-01': '#2589F5',
+  'R-02': '#E5A53A',
+  'R-03': '#36BD8A',
+}
+
+
 
 export default function WarehouseMap({
   nodes,
@@ -41,6 +52,7 @@ export default function WarehouseMap({
   graphLoading = false,
   graphError = null,
   visibleRobotIds = [],
+  robotStates = [],
 }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const drag = useRef<{ id: number; x: number; y: number; pan: Point } | null>(null)
@@ -49,21 +61,57 @@ export default function WarehouseMap({
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
   const [raw, setRaw] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const gridId = useId().replace(/:/g, '')
+  const [mapInfo, setMapInfo] = useState<MapInfoDto | null>(null)
+  const [mapImageSrc, setMapImageSrc] = useState('')
+  // const gridId = useId().replace(/:/g, '')
 
   useEffect(() => {
-    const observer = new ResizeObserver(([entry]) => {
-      setSize({ width: entry.contentRect.width, height: entry.contentRect.height })
-    })
-    if (host.current) observer.observe(host.current)
-    return () => observer.disconnect()
+    let cancelled = false
+
+    getMapInfo()
+      .then(info => {
+        if (cancelled) return
+        setMapInfo(info)
+
+        // 같은 파일명으로 맵을 교체해도 새로고침 시 새 이미지를 요청
+        setMapImageSrc(`${MAP_IMAGE_URL}?v=${Date.now()}`)
+      })
+      .catch(error => console.error('맵 정보 로드 실패:', error))
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  const span = 151 / zoom
-  const scale = Math.max(0.1, Math.min(size.width, size.height) / span)
+  const mapWidth = mapInfo?.width ?? 97
+  const mapHeight = mapInfo?.height ?? 47
+
+  const viewWidth = (mapWidth + 16) / zoom
+  const viewHeight = (mapHeight + 16) / zoom
+
+  const scale = Math.max(
+    0.1,
+    Math.min(size.width / viewWidth, size.height / viewHeight),
+  )
   const px = (n: number) => n / scale
   const adjustZoom = (factor: number) => setZoom(value => Math.max(0.75, Math.min(4, value * factor)))
   const reset = () => { setZoom(1); setPan({ x: 0, y: 0 }) }
+
+  const robotsForMap = robotStates
+  .filter(robot =>
+    visibleRobotIds.includes(robot.id)
+    && robot.hasPose
+    && robot.pixelX != null
+    && robot.pixelY != null
+  )
+  .map(robot => ({
+    id: robot.id,
+    x: robot.pixelX as number,
+    y: robot.pixelY as number,
+    color: robotColors[robot.id],
+    heading: 90 - robot.yaw * 180 / Math.PI,
+    stale: robot.connectionState !== 'ONLINE',
+  }))
 
   return (
     <div className="warehouse-map" ref={host}>
@@ -71,7 +119,7 @@ export default function WarehouseMap({
         className="warehouse-map__canvas"
         aria-label="실제 공간 기반 관제 지도"
         role="group"
-        viewBox={`${67.5 - span / 2 + pan.x} ${67.5 - span / 2 + pan.y} ${span} ${span}`}
+        viewBox={`${mapWidth / 2 - viewWidth / 2 + pan.x} ${mapHeight / 2 - viewHeight / 2 + pan.y} ${viewWidth} ${viewHeight}`}
         preserveAspectRatio="xMidYMid meet"
         style={{ cursor: dragging ? 'grabbing' : 'grab' }}
         onPointerDown={event => {
@@ -92,18 +140,16 @@ export default function WarehouseMap({
         onPointerCancel={() => { drag.current = null; setDragging(false) }}
         onWheel={event => adjustZoom(event.deltaY < 0 ? 1.12 : 1 / 1.12)}
       >
-        <defs>
-          <pattern id={gridId} width="4" height="4" patternUnits="userSpaceOnUse">
-            <path d="M4 0H0V4" fill="none" stroke="#BBC6D2" strokeWidth="0.08" opacity="0.45" />
-          </pattern>
-        </defs>
-
-        {raw
-          ? <image href={mapImage} x="0" y="0" width="135" height="135" imageRendering="pixelated" />
-          : <WarehouseGeometry />}
-
-        {!raw && (
-          <rect x="7" y="7" width="119" height="120" fill={`url(#${gridId})`} pointerEvents="none" />
+        
+        {mapInfo && (
+          <image
+            href={mapImageSrc}
+            x="0"
+            y="0"
+            width={mapInfo.width}
+            height={mapInfo.height}
+            imageRendering="pixelated"
+          />
         )}
 
         {/* GeoJSON 기반 Edge */}
@@ -173,20 +219,10 @@ export default function WarehouseMap({
           </g>
         )}
 
-        {!raw && layers.station && (
-          <g data-testid="structure-labels" fill="#697582" fontSize={px(10)} fontWeight="600">
-            {STRUCTURES.map(s => (
-              <text key={s.id} x={s.x + s.w + px(6)} y={s.y + s.h / 2} dominantBaseline="middle">
-                {s.id}
-              </text>
-            ))}
-          </g>
-        )}
-
         {/* 로봇 위치는 아직 demo. 다음 단계에서 /api/robots + /ws/dashboard로 교체 */}
         {!raw && layers.robotId && (
           <g data-testid="robot-markers">
-            {DEMO_ROBOTS.filter(robot => visibleRobotIds.includes(robot.id)).map(robot => {
+            {robotsForMap.map(robot => {
               const selected = selectedRobot === robot.id
               return (
                 <g
@@ -210,8 +246,10 @@ export default function WarehouseMap({
                     cx={robot.x}
                     cy={robot.y}
                     r={px(13)}
-                    fill={selected ? '#E8F4FF' : '#FFF'}
-                    stroke={selected ? '#2589F5' : robot.color}
+                    fill={selected ? '#E8F4FF' : '#1f1818'}
+                    stroke={
+                      selected ? '#2589F5' : robot.stale ? '#9AA4B0' : robot.color
+                    }
                     strokeWidth={px(selected ? 3 : 2.3)}
                   />
                   <path
