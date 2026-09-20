@@ -1,34 +1,66 @@
-/* 모든 요소(*)에 대해 CSS 박스 모델의 기준을 설정합니다. */
-* {
-  /* 패딩과 테두리 두께를 포함하여 width(가로)와 height(세로)를 계산하도록 강제하여 레이아웃이 어긋나는 것을 방지합니다. */
-  box-sizing: border-box; 
-}
-
-/* 문서의 최상위 태그(html)부터 React 앱이 마운트되는 뿌리(#root)까지의 기본 공간을 100%로 잡습니다. */
-html,
-body,
-#root {
-  width: 100%;
+html, body, #root {
   height: 100%;
-  margin: 0; /* 브라우저가 기본적으로 제공하는 불필요한 바깥 여백을 없앱니다. */
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  /* 레이아웃이 깨지는 것을 막기 위해 브라우저 창을 아무리 줄여도 화면의 최소 가로폭을 900px로 유지하도록 강제합니다. (모바일 대응을 고려하지 않은 강한 제약일 수 있습니다) */
-  min-width: 900px;
-  
-  /* 전체 텍스트의 글꼴(Font)을 지정합니다. 
-     앞에서부터 순서대로 지원하는 폰트를 찾습니다.
-     - Inter: 영문 기본 폰트
-     - Pretendard: 한글 폰트(요즘 많이 쓰이는 깔끔한 고딕)
-     - system-ui ~ sans-serif: 위 폰트가 없을 때 각 OS(맥, 윈도우 등)의 기본 고딕 폰트로 대체(Fallback)시키는 규칙입니다. */
-  font-family: Inter, Pretendard, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+/* ── Responsive layout ── */
+/* nav rail (icon-only, <1024px) */
+.fms-nav-label { display: inline; }
+.fms-nav-wordmark { display: flex; }
+.fms-status-strip { display: flex; }
+.fms-bottom-panel { display: flex; }
+.fms-bottom-toggle { display: none; }
+
+@media (max-width: 1023px) {
+  .fms-nav-label { display: none; }
+  .fms-nav-wordmark { display: none; }
+}
+/* bottom panel toggle at narrow viewport */
+@media (max-width: 767px) {
+  .fms-status-strip { display: none; }
+  .fms-bottom-panel { display: none !important; }
+  .fms-bottom-toggle { display: flex; }
+}
+/* bottom tab bar at mobile */
+.fms-bottom-tabbar { display: none; }
+.fms-left-nav { display: flex; }
+@media (max-width: 479px) {
+  .fms-left-nav { display: none !important; }
+  .fms-bottom-tabbar { display: flex !important; }
+  .fms-status-strip { display: none; }
 }
 
-/* 폼(Form) 관련 태그들의 폰트 상속 버그 해결 */
-button,
-input,
-select {
-  /* 버튼이나 인풋 창은 간혹 OS/브라우저 기본 폰트를 고집하는 성질이 있습니다. 이를 무시하고 부모 요소(body)의 폰트(Pretendard 등)를 그대로 따르도록 강제합니다. */
-  font: inherit; 
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D1D8E2; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #A8B4C4; }
+
+/* ── Animations ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes log-arrive {
+  0%   { box-shadow: inset 3px 0 0 #1A6FD8; }
+  65%  { box-shadow: inset 3px 0 0 #1A6FD8; }
+  100% { box-shadow: none; }
+}
+.log-row-new { animation: log-arrive 1.8s ease-out forwards; }
+
+/* ── Interactive base ── */
+button { transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s; }
+button:focus-visible { outline: 2px solid #1A6FD8; outline-offset: 2px; border-radius: 4px; }
+

@@ -1,0 +1,6 @@
+# Ubuntu 24.04 / ROS 2 Jazzy
+# APT packages used by install script
+ros-jazzy-rmw-cyclonedds-cpp
+ros-jazzy-rmw-fastrtps-cpp
+curl
+gnupg

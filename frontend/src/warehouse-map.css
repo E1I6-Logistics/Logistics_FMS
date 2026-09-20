@@ -1,0 +1,18 @@
+.warehouse-map { flex: 1; position: relative; overflow: hidden; min-height: 180px; background: #E7EBF0; }
+.warehouse-map__canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; }
+.warehouse-map__tools { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 5px; align-items: center; }
+.warehouse-map__tools button, .warehouse-map__compare { background: #FFFFFFF2; color: #454F5C; border: 1px solid #D5DDE8; border-radius: 7px; cursor: pointer; box-shadow: 0 3px 10px #26354510; }
+.warehouse-map__tools button { width: 32px; height: 32px; font-size: 19px; }
+.warehouse-map__tools span { color: #718194; font: 10px monospace; padding-top: 4px; }
+.warehouse-map__tools button:hover, .warehouse-map__compare:hover { color: #2589F5; border-color: #79B8F7; background: #EDF6FF; }
+.warehouse-map__compare { position: absolute; top: 14px; right: 14px; padding: 7px 11px; font-family: inherit; font-size: 11px; font-weight: 600; }
+.warehouse-map__compare[aria-pressed=true] { color: #2589F5; border-color: #2589F5; }
+.warehouse-map__legend { position: absolute; bottom: 30px; left: 14px; display: flex; flex-wrap: wrap; gap: 12px; padding: 7px 10px; background: #FFFFFFF2; border: 1px solid #D8DEE6; border-radius: 7px; color: #687687; font-size: 10px; pointer-events: none; }
+.warehouse-map__legend span { display: inline-flex; align-items: center; gap: 5px; }
+.warehouse-map__legend i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; }
+.warehouse-map__note { position: absolute; bottom: 9px; left: 15px; color: #6A7889; font-size: 10px; pointer-events: none; }
+.warehouse-map__hint { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: #2589F5; color: white; border-radius: 7px; padding: 8px 12px; font-size: 11px; pointer-events: none; }
+@media (max-width: 767px) { .warehouse-map__legend { gap: 7px; font-size: 9px; } .warehouse-map__hint { top: 55px; width: max-content; max-width: 75%; } }
+
+.warehouse-map__canvas g[role="button"] { outline: none; }
+.warehouse-map__canvas g[role="button"]:focus-visible > circle:last-of-type { stroke: #2589F5; stroke-dasharray: 1 0.5; }
