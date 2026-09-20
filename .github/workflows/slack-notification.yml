@@ -28,20 +28,34 @@ jobs:
         if: github.event_name == 'push'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          REPOSITORY: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           USER: ${{ github.actor }}
         run: |
+          COMMIT_COUNT=$(jq '.commits | length' "$GITHUB_EVENT_PATH")
+
+          LATEST_COMMIT=$(jq -r '
+            .commits[-1].message
+            | split("\n")[0]
+          ' "$GITHUB_EVENT_PATH")
+
           COMMIT_LIST=$(jq -r '
             .commits
-            | map("- " + .message)
+            | reverse
+            | map("- " + (.message | split("\n")[0]))
             | join("\n")
           ' "$GITHUB_EVENT_PATH")
 
-          MESSAGE=$(cat <<EOF
-          🟢 Push: ${BRANCH} 브랜치 업데이트
+          if [ "$COMMIT_COUNT" -gt 1 ]; then
+            OTHER_COUNT=$((COMMIT_COUNT - 1))
+            TITLE="🟢 PUSH: ${LATEST_COMMIT} 외 ${OTHER_COUNT}건"
+          else
+            TITLE="🟢 PUSH: ${LATEST_COMMIT}"
+          fi
 
-          User: ${USER} | Branch: ${BRANCH} | Repository: ${REPOSITORY}
+          MESSAGE=$(cat <<EOF
+          ${TITLE}
+
+          User: ${USER} | Branch: ${BRANCH}
 
           Commit 내역:
           ${COMMIT_LIST}
@@ -64,7 +78,6 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          REPOSITORY: ${{ github.repository }}
           USER: ${{ github.actor }}
         run: |
           PR_TITLE=$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")
@@ -88,7 +101,7 @@ jobs:
           MESSAGE=$(cat <<EOF
           ${ICON} PR: ${PR_TITLE}
 
-          User: ${USER} | Branch: ${HEAD_BRANCH} | Repository: ${REPOSITORY}
+          User: ${USER} | Branch: ${HEAD_BRANCH}
           ${HEAD_BRANCH} merge into ${BASE_BRANCH}
 
           PR #${PR_NUMBER} | Status: ${STATUS}
