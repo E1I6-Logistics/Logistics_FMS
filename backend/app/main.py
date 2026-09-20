@@ -19,11 +19,11 @@ from .config import (
     CORS_ORIGINS,
 )
 
-# Database 초기화 및 종료 기능 사용
-from .database.database import (
-    close_db,
-    init_db,
-)
+# # Database 초기화 및 종료 기능 사용
+# from .database.database import (
+#     close_db,
+#     init_db,
+# )
 
 # Command API Router 사용
 from .routers.commands import (
@@ -81,12 +81,12 @@ async def lifespan(
     # PostgreSQL
     # --------------------------------------------------------
 
-# PostgreSQL 초기화 실행
-    await init_db()
+# # PostgreSQL 초기화 실행
+#     await init_db()
 
-    print(
-        " -> Database 초기화 완료"
-    )
+#     print(
+#         " -> Database 초기화 완료"
+#     )
 
     # --------------------------------------------------------
     # Map
@@ -188,8 +188,8 @@ async def lifespan(
 
         try:
 # PostgreSQL 연결 종료
-
-            await close_db()
+            pass
+            # await close_db()
 
         except Exception as exc:
 
