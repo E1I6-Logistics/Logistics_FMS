@@ -18,6 +18,7 @@ from ..schemas.robot import (
     normalize_robot_id,
     to_ui_robot_id,
 )
+from ..config import ROBOT_MODE
 
 
 # Robot API Router 생성
@@ -58,6 +59,7 @@ def _serialize(
     ] = to_ui_robot_id(
         robot_id
     )
+    result["mode"] = ROBOT_MODE
 
     # 상태 갱신 시간이 존재하는 경우 처리
     if (

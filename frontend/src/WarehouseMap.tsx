@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import mapImage from './imports/map.png'
 import { STRUCTURES, WarehouseGeometry } from './WarehouseGeometry'
 import type { MapEdge, MapPoint } from './hooks/useRouteGraph'
+import type { ManagedRobot } from './hooks/useRobotFleet'
 import './warehouse-map.css'
 
 type RobotId = 'R-01' | 'R-02' | 'R-03'
@@ -19,15 +20,22 @@ type Props = {
   graphLoading?: boolean
   graphError?: string | null
   visibleRobotIds?: RobotId[]
+  robots: ManagedRobot[]
+}
+
+const ROBOT_COLORS: Record<RobotId, string> = {
+  'R-01': '#2589F5',
+  'R-02': '#E5A53A',
+  'R-03': '#36BD8A',
 }
 
 // 로봇 위치는 아직 telemetry 연동 전이므로 기존 UI 위치를 임시 유지한다.
 // 노드/엣지는 아래에서 backend GeoJSON 기반 props만 사용한다.
-const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
-  { id: 'R-01', x: 76, y: 61, color: '#2589F5', heading: 270 },
-  { id: 'R-02', x: 37, y: 61, color: '#E5A53A', heading: 0 },
-  { id: 'R-03', x: 86, y: 111, color: '#36BD8A', heading: 90 },
-]
+// const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
+//   { id: 'R-01', x: 76, y: 61, color: '#2589F5', heading: 270 },
+//   { id: 'R-02', x: 37, y: 61, color: '#E5A53A', heading: 0 },
+//   { id: 'R-03', x: 86, y: 111, color: '#36BD8A', heading: 90 },
+// ]
 
 export default function WarehouseMap({
   nodes,
@@ -41,6 +49,7 @@ export default function WarehouseMap({
   graphLoading = false,
   graphError = null,
   visibleRobotIds = [],
+  robots,
 }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const drag = useRef<{ id: number; x: number; y: number; pan: Point } | null>(null)
@@ -64,6 +73,29 @@ export default function WarehouseMap({
   const px = (n: number) => n / scale
   const adjustZoom = (factor: number) => setZoom(value => Math.max(0.75, Math.min(4, value * factor)))
   const reset = () => { setZoom(1); setPan({ x: 0, y: 0 }) }
+  const worldPoints = Object.values(nodes)
+  const worldBounds = worldPoints.reduce((bounds, node) => ({
+    minX: Math.min(bounds.minX, node.worldX),
+    maxX: Math.max(bounds.maxX, node.worldX),
+    minY: Math.min(bounds.minY, node.worldY),
+    maxY: Math.max(bounds.maxY, node.worldY),
+    minPixelX: Math.min(bounds.minPixelX, node.x),
+    maxPixelX: Math.max(bounds.maxPixelX, node.x),
+    minPixelY: Math.min(bounds.minPixelY, node.y),
+    maxPixelY: Math.max(bounds.maxPixelY, node.y),
+  }), {
+    minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity,
+    minPixelX: Infinity, maxPixelX: -Infinity, minPixelY: Infinity, maxPixelY: -Infinity,
+  })
+  const toMapPosition = (x: number, y: number) => {
+    if (!worldPoints.length) return { x: 67.5, y: 67.5 }
+    const xRatio = (x - worldBounds.minX) / Math.max(worldBounds.maxX - worldBounds.minX, 0.001)
+    const yRatio = (y - worldBounds.minY) / Math.max(worldBounds.maxY - worldBounds.minY, 0.001)
+    return {
+      x: worldBounds.minPixelX + xRatio * (worldBounds.maxPixelX - worldBounds.minPixelX),
+      y: worldBounds.maxPixelY - yRatio * (worldBounds.maxPixelY - worldBounds.minPixelY),
+    }
+  }
 
   return (
     <div className="warehouse-map" ref={host}>
@@ -186,7 +218,9 @@ export default function WarehouseMap({
         {/* 로봇 위치는 아직 demo. 다음 단계에서 /api/robots + /ws/dashboard로 교체 */}
         {!raw && layers.robotId && (
           <g data-testid="robot-markers">
-            {DEMO_ROBOTS.filter(robot => visibleRobotIds.includes(robot.id)).map(robot => {
+            {robots.filter(robot => visibleRobotIds.includes(robot.id)).map(robot => {
+              const position = toMapPosition(robot.x, robot.y)
+              const color = ROBOT_COLORS[robot.id]
               const selected = selectedRobot === robot.id
               return (
                 <g
@@ -204,26 +238,26 @@ export default function WarehouseMap({
                     }
                   }}
                 >
-                  {selected && <circle cx={robot.x} cy={robot.y} r={px(21)} fill="#2589F5" opacity="0.12" />}
-                  <circle cx={robot.x} cy={robot.y + px(2)} r={px(13)} fill="#263545" opacity="0.12" />
+                  {selected && <circle cx={position.x} cy={position.y} r={px(21)} fill="#2589F5" opacity="0.12" />}
+                  <circle cx={position.x} cy={position.y + px(2)} r={px(13)} fill="#263545" opacity="0.12" />
                   <circle
-                    cx={robot.x}
-                    cy={robot.y}
+                    cx={position.x}
+                    cy={position.y}
                     r={px(13)}
                     fill={selected ? '#E8F4FF' : '#FFF'}
-                    stroke={selected ? '#2589F5' : robot.color}
+                    stroke={selected ? '#2589F5' : color}
                     strokeWidth={px(selected ? 3 : 2.3)}
                   />
                   <path
-                    d={`M${robot.x} ${robot.y - px(9)}v${-px(8)}`}
-                    transform={`rotate(${robot.heading} ${robot.x} ${robot.y})`}
+                    d={`M${position.x} ${position.y - px(9)}v${-px(8)}`}
+                    transform={`rotate(${(robot.yaw * 180) / Math.PI + 90} ${position.x} ${position.y})`}
                     stroke="#273444"
                     strokeWidth={px(2)}
                     strokeLinecap="round"
                   />
                   <text
-                    x={robot.x}
-                    y={robot.y + px(0.5)}
+                    x={position.x}
+                    y={position.y + px(0.5)}
                     textAnchor="middle"
                     dominantBaseline="middle"
                     fontSize={px(8.5)}
@@ -266,7 +300,7 @@ export default function WarehouseMap({
       </div>
 
       <div className="warehouse-map__note">
-        노드·엣지: backend GeoJSON · 로봇 위치: 현재 데모 데이터
+        노드·엣지: backend GeoJSON · 로봇 위치: telemetry
       </div>
     </div>
   )

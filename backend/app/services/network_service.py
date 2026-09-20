@@ -7,6 +7,7 @@ import ipaddress
 import subprocess
 
 from ..config import KNOWN_DEVICES
+from ..config import ROBOT_MODE
 
 
 # ============================================================
@@ -209,8 +210,12 @@ def firewall(
 # Frontend 전달용 장치 연결 상태 목록 생성 기능
 def device_snapshot() -> list[dict]:
 
+<<<<<<< HEAD
     # 현재 연결된 Zenoh Peer 목록 조회
     connected = zenoh_peers()
+=======
+    connected = set(KNOWN_DEVICES) if ROBOT_MODE == "simulation" else zenoh_peers()
+>>>>>>> sso
 
     devices = []
 

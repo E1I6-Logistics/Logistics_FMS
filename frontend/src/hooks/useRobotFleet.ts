@@ -23,6 +23,7 @@ export type ManagedRobot = {
   y: number
   yaw: number
   updatedAt?: string | null
+  mode: 'real' | 'simulation'
 }
 
 const STORAGE_KEY = 'fms-managed-robots'
@@ -172,11 +173,15 @@ export function useRobotFleet() {
       const backendId = uiToBackendId(id)
       const device = devices.find(item => item.name === backendId)
       const state = robotStates[backendId]
+      const telemetryFresh = Boolean(
+        state?.updated_at &&
+        Date.now() - Date.parse(state.updated_at) <= 5000
+      )
       return {
         id,
         backendId,
         ip: device?.ip ?? '',
-        connected: Boolean(device?.connected && !device?.blocked),
+        connected: Boolean(device?.connected && !device?.blocked && telemetryFresh),
         blocked: Boolean(device?.blocked),
         battery: typeof state?.battery === 'number' ? state.battery : null,
         status: state?.status ?? (device?.connected ? 'ONLINE' : 'OFFLINE'),
@@ -184,6 +189,7 @@ export function useRobotFleet() {
         y: state?.y ?? 0,
         yaw: state?.yaw ?? 0,
         updatedAt: state?.updated_at ?? null,
+        mode: state?.mode ?? 'real',
       }
     })
   }, [devices, managedIds, robotStates])

@@ -746,6 +746,7 @@ export default function App() {
 
   const managedUiRobots = (managedIds as RobotId[]).map(id => getUiRobot(id))
   const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
+  const robotMode = managedRobots[0]?.mode
   const workingRobotCount = managedUiRobots.filter(robot => robot.status === '이동 중').length
   const chargingRobotCount = managedUiRobots.filter(robot => robot.status === '충전 중').length
   const waitingRobotCount = managedUiRobots.filter(robot => robot.status === '대기').length
@@ -808,6 +809,11 @@ export default function App() {
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.success, display: 'inline-block', animation: 'pulse-dot 2.4s ease-in-out infinite' }} />
               <span style={{ fontSize: 10.5, color: fleetError ? C.danger : C.success, fontWeight: 600 }}>{fleetError ? 'FMS 서버 오류' : `FMS 연결 · 로봇 ${connectedRobotCount}대 온라인`}</span>
             </div>
+            {robotMode && (
+              <span style={{ padding: '2px 6px', borderRadius: 4, background: robotMode === 'simulation' ? '#F0EBF8' : '#E9F8F3', color: robotMode === 'simulation' ? C.purple : '#147A4E', fontSize: 9, fontWeight: 800 }}>
+                {robotMode === 'simulation' ? 'SIMULATION' : 'REAL ROBOT'}
+              </span>
+            )}
             <Div />
             <button onClick={() => setIsAdmin(p => !p)} title="데모: 관리자 모드 전환"
               style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 11px', borderRadius: 6, background: isAdmin ? '#FEF3DC' : C.subtle, border: `1px solid ${isAdmin ? '#D4A842' : C.line}`, fontSize: 10, fontWeight: 700, color: isAdmin ? '#8C5E0A' : C.muted, cursor: 'pointer', outline: 'none', boxShadow: isAdmin ? '0 0 0 2px rgba(212,136,30,0.15)' : E1 }}>
@@ -991,6 +997,7 @@ export default function App() {
               graphLoading={graphLoading}
               graphError={graphError}
               visibleRobotIds={managedIds as RobotId[]}
+              robots={managedRobots}
             />
           </div>
           {/* ── DETAIL PANEL ── */}
