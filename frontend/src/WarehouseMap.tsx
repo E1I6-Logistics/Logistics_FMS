@@ -29,14 +29,6 @@ const ROBOT_COLORS: Record<RobotId, string> = {
   'R-03': '#36BD8A',
 }
 
-// 로봇 위치는 아직 telemetry 연동 전이므로 기존 UI 위치를 임시 유지한다.
-// 노드/엣지는 아래에서 backend GeoJSON 기반 props만 사용한다.
-// const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
-//   { id: 'R-01', x: 76, y: 61, color: '#2589F5', heading: 270 },
-//   { id: 'R-02', x: 37, y: 61, color: '#E5A53A', heading: 0 },
-//   { id: 'R-03', x: 86, y: 111, color: '#36BD8A', heading: 90 },
-// ]
-
 export default function WarehouseMap({
   nodes,
   edges,
@@ -155,9 +147,6 @@ export default function WarehouseMap({
           </g>
         )}
 
-        {/* 실제 로봇 경로는 추후 현재 Route/예약 Edge 데이터 연결 시 사용 */}
-        {!raw && layers.route && <g data-testid="robot-routes" />}
-
         {/* GeoJSON 기반 Node */}
         {!raw && (layers.nodeEdge || picking) && (
           <g data-testid="navigation-nodes">
@@ -215,7 +204,32 @@ export default function WarehouseMap({
           </g>
         )}
 
-        {/* 로봇 위치는 아직 demo. 다음 단계에서 /api/robots + /ws/dashboard로 교체 */}
+        {/* 로봇별 활성 경로. 도착/정지 telemetry의 route=null이면 자동 해제. */}
+        {!raw && layers.route && (
+          <g data-testid="robot-routes" pointerEvents="none">
+            {robots.filter(robot => visibleRobotIds.includes(robot.id) && robot.route).map(robot => (
+              <g key={robot.id} data-robot-route={robot.id} data-route-phase={robot.route!.phase}>
+                {robot.route!.edge_ids.map((edgeId, index) => {
+                  const from = nodes[robot.route!.node_ids[index]]
+                  const to = nodes[robot.route!.node_ids[index + 1]]
+                  if (!from || !to) return null
+                  return <path key={`${edgeId}-${index}`} data-active-edge={edgeId}
+                    d={`M${from.x} ${from.y}L${to.x} ${to.y}`} fill="none"
+                    stroke={ROBOT_COLORS[robot.id]} strokeWidth={px(5)} strokeLinecap="round" opacity={0.8} />
+                })}
+                {robot.route!.node_ids.map((nodeId, index) => {
+                  const node = nodes[nodeId]
+                  if (!node) return null
+                  return <circle key={`${nodeId}-${index}`} data-active-node={nodeId}
+                    cx={node.x} cy={node.y} r={px(6)} fill={ROBOT_COLORS[robot.id]}
+                    stroke="#fff" strokeWidth={px(1.5)} />
+                })}
+              </g>
+            ))}
+          </g>
+        )}
+
+        {/* Telemetry 좌표로 로봇 위치 갱신 */}
         {!raw && layers.robotId && (
           <g data-testid="robot-markers">
             {robots.filter(robot => visibleRobotIds.includes(robot.id)).map(robot => {

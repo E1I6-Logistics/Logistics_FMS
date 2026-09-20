@@ -1,4 +1,6 @@
-const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
+const defaultApi = new URL(window.location.href)
+defaultApi.port = '8000'
+const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? defaultApi.origin).replace(/\/$/, '')
 
 function wsBaseFromHttp(base: string) {
   if (base.startsWith('https://')) return `wss://${base.slice('https://'.length)}`
@@ -79,6 +81,13 @@ export type ConnectionDeviceDto = {
   state: 'CONNECTED' | 'OFFLINE' | 'BLOCKED' | string
 }
 
+export type RobotRoute = {
+  node_ids: string[]
+  edge_ids: string[]
+  phase: 'ready' | 'moving'
+  segment_index: number
+}
+
 export type RobotStateDto = {
   robot_id: string
   ui_id?: string
@@ -89,6 +98,7 @@ export type RobotStateDto = {
   yaw: number
   updated_at?: string | null
   mode: 'real' | 'simulation'
+  route?: RobotRoute | null
 }
 
 export function getConnections() {

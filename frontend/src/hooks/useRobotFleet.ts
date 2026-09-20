@@ -7,6 +7,7 @@ import {
   getRobots,
   type ConnectionDeviceDto,
   type RobotStateDto,
+  type RobotRoute,
 } from '../api/fmsApi'
 
 export type RobotId = 'R-01' | 'R-02' | 'R-03'
@@ -24,6 +25,7 @@ export type ManagedRobot = {
   yaw: number
   updatedAt?: string | null
   mode: 'real' | 'simulation'
+  route: RobotRoute | null
 }
 
 const STORAGE_KEY = 'fms-managed-robots'
@@ -79,7 +81,12 @@ export function useRobotFleet() {
       const rows = await getRobots()
       setRobotStates(prev => {
         const next = { ...prev }
-        rows.forEach(row => { next[row.robot_id] = row })
+        rows.forEach(row => {
+          const current = next[row.robot_id]
+          if (!current?.updated_at || !row.updated_at || Date.parse(row.updated_at) >= Date.parse(current.updated_at)) {
+            next[row.robot_id] = row
+          }
+        })
         return next
       })
     } catch (e) {
@@ -95,7 +102,10 @@ export function useRobotFleet() {
       if (!cancelled) setLoading(false)
     }
     boot()
-    const timer = window.setInterval(refreshConnections, 2000)
+    const timer = window.setInterval(() => {
+      refreshConnections()
+      refreshRobots()
+    }, 2000)
     return () => {
       cancelled = true
       window.clearInterval(timer)
@@ -114,7 +124,11 @@ export function useRobotFleet() {
           const message = JSON.parse(event.data)
           if (message?.type !== 'telemetry' || !message.data?.robot_id) return
           const data = message.data as RobotStateDto
-          setRobotStates(prev => ({ ...prev, [data.robot_id]: data }))
+          setRobotStates(prev => {
+            const current = prev[data.robot_id]
+            if (current?.updated_at && data.updated_at && Date.parse(data.updated_at) < Date.parse(current.updated_at)) return prev
+            return { ...prev, [data.robot_id]: data }
+          })
         } catch (e) {
           console.warn('dashboard telemetry parse failed:', e)
         }
@@ -190,6 +204,7 @@ export function useRobotFleet() {
         yaw: state?.yaw ?? 0,
         updatedAt: state?.updated_at ?? null,
         mode: state?.mode ?? 'real',
+        route: state?.route ?? null,
       }
     })
   }, [devices, managedIds, robotStates])

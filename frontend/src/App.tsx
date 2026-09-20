@@ -40,6 +40,7 @@ export default function App() {
   const [bottomVisible, setBottomVis]   = useState(false)
   // ── Step 3 additions ──
   const [cmdState, setCmdState]         = useState<CmdState>(null)
+  const [commandError, setCommandError] = useState<string | null>(null)
   const [pendingCmd, setPendingCmd]     = useState<string | null>(null)
   const [confirmDlg, setConfirmDlg]     = useState<string | null>(null)
   const [simCommsLost, setSimLost]      = useState(false)
@@ -71,7 +72,7 @@ export default function App() {
     const connected = Boolean(live?.connected)
     const backendStatus = String(live?.status ?? '').toUpperCase()
     const charging = backendStatus.includes('CHARG') || backendStatus.includes('충전')
-    const moving = backendStatus.includes('MOV') || backendStatus.includes('RUN') || backendStatus.includes('이동')
+    const moving = backendStatus.includes('MOV') || backendStatus.includes('RUN') || backendStatus === 'NAVIGATING' || backendStatus === 'ROUTE_READY' || backendStatus.includes('이동')
     const status = !connected ? '오프라인' : charging ? '충전 중' : moving ? '이동 중' : '대기'
     const statusColor = !connected ? C.danger : charging ? C.primary : moving ? C.success : C.warning
     const statusBg = !connected ? '#FFF0F2' : charging ? '#EDF6FF' : moving ? '#E9F8F3' : '#FFF5DF'
@@ -140,6 +141,7 @@ export default function App() {
 
   const resetCmdState = () => {
     setCmdState(null); setPendingCmd(null); setConfirmDlg(null); clearCmdTimers()
+    setCommandError(null)
     setNodeMoveTarget(null); setNodeMovePickerOpen(false)
   }
 
@@ -196,6 +198,7 @@ export default function App() {
   }
 
   const executeCmd = async (id: string) => {
+    setCommandError(null)
     setConfirmDlg(null)
     setPendingCmd(id)
     setCmdState('requesting')
@@ -212,6 +215,7 @@ export default function App() {
           setCmdState('rejected')
           return
         }
+        setLayers(current => ({ ...current, nodeEdge: true, route: true }))
         await sendGoalNode(selectedRobot, nodeMoveTarget.mapNodeId)
       } else if (id === 'stop') {
         stopRemote()
@@ -227,6 +231,7 @@ export default function App() {
       cmdTimers.current.push(t)
     } catch (error) {
       console.error('FMS command failed:', error)
+      setCommandError(error instanceof Error ? error.message : String(error))
       setCmdState('rejected')
     }
   }
@@ -477,6 +482,7 @@ export default function App() {
             </div>
 
             {isMapEdit && <div style={{ padding: '7px 14px', background: '#F4F0FF', color: '#7255CB', fontSize: 10 }}>지도 편집 미리보기 · 이 데모에서는 구조물 및 경로 변경을 저장하지 않습니다.</div>}
+            {commandError && <div role="alert" style={{ padding: '8px 14px', background: '#FFF0F2', color: C.danger }}>이동 명령 실패: {commandError}</div>}
             <WarehouseMap
               nodes={mapNodes}
               edges={mapEdges}
