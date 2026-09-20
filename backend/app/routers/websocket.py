@@ -18,9 +18,7 @@ from ..services.ros_gateway import (
     ros_gateway,
 )
 
-<<<<<<< HEAD
 # WebSocket Router 생성
-=======
 from ..services.zenoh_service import (
     manager,
     status_snapshot,
@@ -29,7 +27,6 @@ from ..config import ROBOT_MODE
 from ..services.simulation_gateway import simulation_gateway
 
 
->>>>>>> sso
 router = APIRouter(
     tags=["websocket"]
 )
@@ -155,33 +152,12 @@ async def cmd_vel_websocket(
                 # TwistStamped
                 # --------------------------------------------
 
-<<<<<<< HEAD
-                # ROS Gateway를 통해 cmd_vel 명령 전송
-                ros_gateway.send_cmd_vel(
-                    last_robot_id,
-
-                    float(
-                        data.get(
-                            "linear_x",
-                            0.0,
-                        )
-                    ),
-
-                    float(
-                        data.get(
-                            "angular_z",
-                            0.0,
-                        )
-                    ),
-                )
-=======
                 linear_x = float(data.get("linear_x", 0.0))
                 angular_z = float(data.get("angular_z", 0.0))
                 if ROBOT_MODE == "simulation":
                     simulation_gateway.send_cmd_vel(last_robot_id, linear_x, angular_z)
                 else:
                     ros_gateway.send_cmd_vel(last_robot_id, linear_x, angular_z)
->>>>>>> sso
 
             # Robot ID 또는 입력값 오류 처리
             except ValueError as exc:
@@ -238,18 +214,10 @@ async def cmd_vel_websocket(
         if last_robot_id is not None:
 
             try:
-<<<<<<< HEAD
-
-                # 연결 종료 시 마지막 Robot 정지 명령 전송
-                ros_gateway.stop_robot(
-                    last_robot_id
-                )
-=======
                 if ROBOT_MODE == "simulation":
                     simulation_gateway.stop_robot(last_robot_id)
                 else:
                     ros_gateway.stop_robot(last_robot_id)
->>>>>>> sso
 
             except Exception:
 

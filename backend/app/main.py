@@ -149,21 +149,6 @@ async def lifespan(
     # ROS Gateway
     # --------------------------------------------------------
 
-<<<<<<< HEAD
-    try:
-# ROS Gateway 시작 및 ROS2 통신 기능 활성화
-
-        ros_gateway.start()
-
-# ROS Gateway 시작 실패 예외 처리
-    except Exception as exc:
-
-        print(
-            " -> [WARN] "
-            "ROS Gateway 시작 실패: "
-            f"{exc}"
-        )
-=======
     if ROBOT_MODE == "simulation":
         simulation_gateway.start()
         print(" -> Simulation Gateway 활성화")
@@ -176,7 +161,6 @@ async def lifespan(
                 "ROS Gateway 시작 실패: "
                 f"{exc}"
             )
->>>>>>> sso
 
     # --------------------------------------------------------
     # FastAPI
@@ -190,20 +174,6 @@ async def lifespan(
 # 서버 종료 시 자원 정리 기능
     finally:
 
-<<<<<<< HEAD
-        try:
-# ROS Gateway 종료 및 ROS2 자원 정리
-
-            ros_gateway.stop()
-
-        except Exception as exc:
-
-            print(
-                " -> [WARN] "
-                "ROS Gateway 종료 오류: "
-                f"{exc}"
-            )
-=======
         # ====================================================
         # Shutdown
         # ====================================================
@@ -219,7 +189,6 @@ async def lifespan(
                     "ROS Gateway 종료 오류: "
                     f"{exc}"
                 )
->>>>>>> sso
 
         try:
 # PostgreSQL 연결 종료
