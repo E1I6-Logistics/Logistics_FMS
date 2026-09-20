@@ -19,6 +19,7 @@ from ..schemas.robot import (
     to_ui_robot_id,
 )
 from ..config import ROBOT_MODE
+from ..services.simulation_gateway import simulation_gateway
 
 
 # Robot API Router 생성
@@ -88,6 +89,9 @@ def _serialize(
 @router.get("")
 async def fetch_robots():
 
+    if ROBOT_MODE == "simulation":
+        return simulation_gateway.robot_snapshots()
+
     rows = (
         # Database에서 전체 Robot 상태 조회
         await get_all_robots()
@@ -122,6 +126,12 @@ async def fetch_robot(
             status_code=400,
             detail=str(exc),
         ) from exc
+
+    if ROBOT_MODE == "simulation":
+        try:
+            return simulation_gateway.robot_snapshot(backend_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     # Database에서 특정 Robot 상태 조회
     row = await get_robot(

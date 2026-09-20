@@ -214,9 +214,7 @@ async def send_node_goal(
         # ----------------------------------------------------
 
         if ROBOT_MODE == "simulation":
-            result = simulation_gateway.navigate_to_pose(
-                payload.robot_id, node["x"], node["y"], frame_id=node["frame"]
-            )
+            result = simulation_gateway.navigate_to_node(payload.robot_id, payload.node_id)
         else:
             result = await ros_gateway.navigate_to_pose(
                 payload.robot_id, node["x"], node["y"], frame_id=node["frame"]

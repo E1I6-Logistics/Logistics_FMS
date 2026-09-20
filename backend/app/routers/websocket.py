@@ -44,25 +44,19 @@ async def dashboard_websocket(
     websocket: WebSocket,
 ):
 
-    # WebSocket 연결 수락
-    await websocket.accept()
-
-    # 최초 ROS Gateway 시스템 상태 전송
-    await websocket.send_json(
-        {
-            "type":
-                "system",
-
-            "data":
-                {
-                    "ros":
-                        ros_gateway
-                        .status_snapshot(),
-                },
-        }
+    # WebSocket 연결을 수락하고 telemetry broadcast 대상에 등록
+    await manager.connect(
+        websocket
     )
 
     try:
+        await websocket.send_json({
+            "type": "system",
+            "data": {"ros": ros_gateway.status_snapshot(), "mode": ROBOT_MODE},
+        })
+        if ROBOT_MODE == "simulation":
+            for state in simulation_gateway.robot_snapshots():
+                await websocket.send_json({"type": "telemetry", "data": state})
 
         while True:
 
@@ -76,6 +70,13 @@ async def dashboard_websocket(
     except Exception:
 
         pass
+
+    finally:
+
+        # 연결이 종료된 Dashboard를 broadcast 대상에서 제거
+        manager.disconnect(
+            websocket
+        )
 
 # ============================================================
 # cmd_vel
@@ -215,7 +216,7 @@ async def cmd_vel_websocket(
 
             try:
                 if ROBOT_MODE == "simulation":
-                    simulation_gateway.stop_robot(last_robot_id)
+                    simulation_gateway.send_cmd_vel(last_robot_id, 0.0, 0.0)
                 else:
                     ros_gateway.stop_robot(last_robot_id)
 
