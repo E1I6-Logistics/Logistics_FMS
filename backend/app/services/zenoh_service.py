@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import logging
 
 from typing import (
     Any,
@@ -14,6 +15,7 @@ import zenoh
 from fastapi import WebSocket
 
 from ..config import (
+    ROBOT_MODE,
     ZENOH_ENDPOINT,
 )
 
@@ -382,15 +384,16 @@ async def publish_telemetry(
         "robot_id": robot_id,
         "ui_id": to_ui_robot_id(robot_id),
     }
-    await upsert_robot_state(
-        robot_id,
-        float(data["x"]),
-        float(data["y"]),
-        float(data["yaw"]),
-        float(data["battery"]),
-        str(data["status"]),
-    )
     await manager.broadcast({"type": "telemetry", "data": data})
+    if ROBOT_MODE == "real":
+        try:
+            await upsert_robot_state(
+                robot_id,
+                float(data["x"]), float(data["y"]), float(data["yaw"]),
+                float(data["battery"]), str(data["status"]),
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("Robot telemetry persistence failed: %s", robot_id)
 
     
 # ============================================================

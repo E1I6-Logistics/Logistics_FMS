@@ -11,13 +11,20 @@ from pathlib import Path
 import struct
 import os
 
+# LLM 제공자별 API 코드는 llm_providers에 두고,
+# mock_fleet에서는 공통 비교 함수만 호출한다.
+if __package__:
+    from .llm_route_comparison import compare_path_with_llm
+else:
+    from llm_route_comparison import compare_path_with_llm
+
 ROUTE_GRAPH_PATH = Path(__file__).resolve().parents[1] / "routes" / "test.geojson"
 ROBOT_IDS = ("robot1", "robot2", "robot3")
 INITIAL_POINT_IDS = {"robot1": 2, "robot2": 0, "robot3": 1}
 ROBOT_SPEED = 0.25
 TELEMETRY_PERIOD = 0.3
 
-
+#Geojson 맵 points, edges 파싱
 def load_route_graph():
     with ROUTE_GRAPH_PATH.open("r", encoding="utf-8") as route_file:
         graph = json.load(route_file)
@@ -44,7 +51,7 @@ def load_route_graph():
         raise ValueError(f"Route graph에 Point 노드가 없습니다: {ROUTE_GRAPH_PATH}")
     return points, edges
 
-
+#Node, Edge, 시작 Node, 도착 Node 를 통한 최단거리 루트 추출
 def shortest_path(points, edges, start_id, target_id):
     if start_id not in points or target_id not in points:
         raise ValueError(f"존재하지 않는 Point id입니다: {start_id}, {target_id}")
@@ -53,8 +60,8 @@ def shortest_path(points, edges, start_id, target_id):
     for start, end, cost in edges:
         if start not in points or end not in points:
             continue
-        start_x, start_y = points[start]
-        end_x, end_y = points[end]
+        start_x, start_y = points[start] #시작 노드 좌표
+        end_x, end_y = points[end] #도착 노드
         weight = cost if cost > 0 else math.hypot(end_x - start_x, end_y - start_y)
         adjacency[start].append((end, weight))
 
@@ -170,6 +177,16 @@ class FleetSimulatorNode(Node):
                 route_point_id if robot_id == self.route_robot_id else start_id
             )
             path = shortest_path(self.points, self.edges, start_id, target_id)
+
+            # 명령행에서 선택한 로봇의 초기 경로도 LLM과 비교한다.
+            if robot_id == self.route_robot_id and route_point_id is not None:
+                self.compare_route_with_llm(
+                    robot_id,
+                    start_id,
+                    target_id,
+                    path,
+                )
+
             states[robot_id] = {
                 "path": path,
                 "segment": 0,
@@ -181,6 +198,43 @@ class FleetSimulatorNode(Node):
                 f"[{robot_id}] Point {start_id} -> Point {target_id}, 최단 경로: {path}"
             )
         return states
+
+    def compare_route_with_llm(
+        self,
+        robot_id,
+        start_id,
+        target_id,
+        baseline_path,
+    ):
+        """선택된 LLM 플러그인으로 기존 최단경로 결과를 비교한다."""
+
+        # LLM_PROVIDER가 없으면 기존 Mock Fleet과 완전히 동일하게 동작한다.
+        if not os.getenv("LLM_PROVIDER"):
+            return
+
+        try:
+            comparison = compare_path_with_llm(
+                self.points,
+                self.edges,
+                start_id,
+                target_id,
+                baseline_path,
+            )
+
+            self.get_logger().info(
+                f"[{robot_id}] LLM 경로 비교 완료: "
+                f"provider={comparison['provider']}, "
+                f"model={comparison['model']}, "
+                f"LLM 경로={comparison['llm']['path']}, "
+                f"경로 일치={comparison['comparison']['same_path']}, "
+                f"거리 일치={comparison['comparison']['same_distance']}"
+            )
+
+        except Exception as exc:
+            # LLM 또는 네트워크가 실패해도 기존 로봇 이동은 중단하지 않는다.
+            self.get_logger().error(
+                f"[{robot_id}] LLM 경로 비교 실패: {exc}"
+            )
 
     def advance_robot(self, state):
         while state["segment"] < len(state["path"]) - 1:
@@ -236,6 +290,14 @@ class FleetSimulatorNode(Node):
             self.edges,
             current_point_id,
             target_point_id,
+        )
+
+        # Zenoh로 새 목표를 받은 경우에도 동일 입력으로 LLM 경로를 비교한다.
+        self.compare_route_with_llm(
+            robot_id,
+            current_point_id,
+            target_point_id,
+            new_path,
         )
 
         state["path"] = new_path

@@ -20,7 +20,7 @@ from ..services.route_graph import (
 )
 
 # ROS2 명령 전송용 ROS Gateway 사용
-from ..services.ros_gateway import (
+from ..services.control_gateway import (
     ros_gateway,
 )
 

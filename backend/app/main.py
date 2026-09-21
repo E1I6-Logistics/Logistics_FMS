@@ -62,7 +62,7 @@ from .services.route_graph import (
 )
 
 # ROS2 통신용 ROS Gateway 사용
-from .services.ros_gateway import (
+from .services.control_gateway import (
     ros_gateway,
 )
 from .services.simulation_gateway import simulation_gateway
@@ -84,11 +84,9 @@ async def lifespan(
     # --------------------------------------------------------
 
 # PostgreSQL 초기화 실행
-    await init_db()
-
-    print(
-        " -> Database 초기화 완료"
-    )
+    if ROBOT_MODE == "real":
+        await init_db()
+        print(" -> Database 초기화 완료")
 
     # --------------------------------------------------------
     # Map
@@ -190,18 +188,11 @@ async def lifespan(
                     f"{exc}"
                 )
 
-        try:
-# PostgreSQL 연결 종료
-
-            await close_db()
-
-        except Exception as exc:
-
-            print(
-                " -> [WARN] "
-                "Database 종료 오류: "
-                f"{exc}"
-            )
+        if ROBOT_MODE == "real":
+            try:
+                await close_db()
+            except Exception as exc:
+                print(f" -> [WARN] Database 종료 오류: {exc}")
 
         print(
             " -> FMS Backend 종료 완료"
