@@ -1,9 +1,6 @@
-// import { useEffect, useId, useRef, useState } from 'react'
-import { useEffect, useRef, useState } from 'react'
-
+import { useEffect, useId, useRef, useState } from 'react'
 import { getMapInfo, MAP_IMAGE_URL, type MapInfoDto } from './api/fmsApi'
-import { STRUCTURES } from './WarehouseGeometry'
-
+import { STRUCTURES, WarehouseGeometry } from './WarehouseGeometry'
 import type { MapEdge, MapPoint } from './hooks/useRouteGraph'
 import type { ManagedRobot } from './hooks/useRobotFleet'
 import './warehouse-map.css'
@@ -72,28 +69,43 @@ export default function WarehouseMap({
   const [dragging, setDragging] = useState(false)
   const [mapInfo, setMapInfo] = useState<MapInfoDto | null>(null)
   const [mapImageSrc, setMapImageSrc] = useState('')
-  // const gridId = useId().replace(/:/g, '')
+  const [mapError, setMapError] = useState<string | null>(null)
+  const gridId = useId().replace(/:/g, '')
 
   useEffect(() => {
     let cancelled = false
+    let retryTimer: number | undefined
 
-    getMapInfo()
-      .then(info => {
-        if (cancelled) return
-        setMapInfo(info)
+    const loadMap = () => {
+      getMapInfo()
+        .then(info => {
+          if (cancelled) return
+          setMapInfo(info)
 
-        // 같은 파일명으로 맵을 교체해도 새로고침 시 새 이미지를 요청
-        setMapImageSrc(`${MAP_IMAGE_URL}?v=${Date.now()}`)
-      })
-      .catch(error => console.error('맵 정보 로드 실패:', error))
+          // 같은 파일명으로 맵을 교체해도 새로고침 시 새 이미지를 요청
+          setMapImageSrc(`${MAP_IMAGE_URL}?v=${Date.now()}`)
+          setMapError(null)
+        })
+        .catch(error => {
+          if (cancelled) return
+          console.error('맵 정보 로드 실패:', error)
+          setMapError(error instanceof Error ? error.message : String(error))
+          setRaw(false)
+          retryTimer = window.setTimeout(loadMap, 2000)
+        })
+    }
 
+    loadMap()
     return () => {
       cancelled = true
+      if (retryTimer != null) window.clearTimeout(retryTimer)
     }
   }, [])
 
   const mapWidth = mapInfo?.width ?? 97
   const mapHeight = mapInfo?.height ?? 47
+  const geometryScaleX = mapWidth / 135
+  const geometryScaleY = mapHeight / 135
 
   const viewWidth = (mapWidth + 16) / zoom
   const viewHeight = (mapHeight + 16) / zoom
@@ -149,20 +161,31 @@ export default function WarehouseMap({
         onPointerCancel={() => { drag.current = null; setDragging(false) }}
         onWheel={event => adjustZoom(event.deltaY < 0 ? 1.12 : 1 / 1.12)}
       >
-        
-        {mapInfo && (
+        <defs>
+          <pattern id={gridId} width="4" height="4" patternUnits="userSpaceOnUse">
+            <path d="M4 0H0V4" fill="none" stroke="#BBC6D2" strokeWidth="0.08" opacity="0.45" />
+          </pattern>
+        </defs>
+
+        {raw && mapInfo ? (
           <image
             href={mapImageSrc}
             x="0"
             y="0"
-            width={mapInfo.width}
-            height={mapInfo.height}
+            width={mapWidth}
+            height={mapHeight}
             imageRendering="pixelated"
           />
+        ) : (
+          <g transform={`scale(${geometryScaleX} ${geometryScaleY})`}>
+            <WarehouseGeometry />
+          </g>
         )}
 
+        {!raw && <rect x="0" y="0" width={mapWidth} height={mapHeight} fill={`url(#${gridId})`} pointerEvents="none" />}
+
         {/* GeoJSON 기반 Edge */}
-        {!raw && layers.nodeEdge && (
+        {layers.nodeEdge && (
           <g data-testid="navigation-edges" fill="none" stroke="#B9C3CF" strokeWidth={px(2)} strokeLinecap="round">
             {edges.map(edge => {
               const from = nodes[edge.from]
@@ -179,7 +202,7 @@ export default function WarehouseMap({
         )}
 
         {/* GeoJSON 기반 Node */}
-        {!raw && (layers.nodeEdge || picking) && (
+        {(layers.nodeEdge || picking) && (
           <g data-testid="navigation-nodes">
             {Object.entries(nodes).map(([id, node]) => (
               <g
@@ -225,10 +248,15 @@ export default function WarehouseMap({
           </g>
         )}
 
-        {!raw && layers.station && (
+        {layers.station && (
           <g data-testid="structure-labels" fill="#697582" fontSize={px(10)} fontWeight="600">
             {STRUCTURES.map(s => (
-              <text key={s.id} x={s.x + s.w + px(6)} y={s.y + s.h / 2} dominantBaseline="middle">
+              <text
+                key={s.id}
+                x={(s.x + s.w) * geometryScaleX + px(6)}
+                y={(s.y + s.h / 2) * geometryScaleY}
+                dominantBaseline="middle"
+              >
                 {s.id}
               </text>
             ))}
@@ -236,7 +264,7 @@ export default function WarehouseMap({
         )}
 
         {/* 로봇별 활성 경로. 도착/정지 telemetry의 route=null이면 자동 해제. */}
-        {!raw && layers.route && (
+        {layers.route && (
           <g data-testid="robot-routes" pointerEvents="none">
             {robotStates.filter(robot => visibleRobotIds.includes(robot.id) && robot.route).map(robot => (
               <g key={robot.id} data-robot-route={robot.id} data-route-phase={robot.route!.phase}>
@@ -261,7 +289,7 @@ export default function WarehouseMap({
         )}
 
         {/* 로봇 위치는 아직 demo. 다음 단계에서 /api/robots + /ws/dashboard로 교체 */}
-        {!raw && layers.robotId && (
+        {layers.robotId && (
           <g data-testid="robot-markers">
             {robotsForMap.map(robot => {
               const position = { x: robot.x, y: robot.y }
@@ -328,18 +356,24 @@ export default function WarehouseMap({
         <span>{Math.round(zoom * 100)}%</span>
       </div>
 
-      <button className="warehouse-map__compare" aria-pressed={raw} onClick={() => setRaw(value => !value)}>
-        {raw ? '디자인 지도 보기' : '원본 비교'}
+      <button
+        className="warehouse-map__compare"
+        aria-pressed={raw}
+        disabled={Boolean(mapError)}
+        onClick={() => setRaw(value => !value)}
+      >
+        {raw ? '디자인 지도 보기' : '원본 지도 보기'}
       </button>
 
       {picking && (
         <div className="warehouse-map__hint">
-          {raw ? '목표를 선택하려면 디자인 지도로 전환하세요' : '지도에서 이동 목표 노드를 선택하세요'}
+          지도에서 이동 목표 노드를 선택하세요
         </div>
       )}
 
       {graphLoading && <div className="warehouse-map__hint">Route Graph 불러오는 중…</div>}
       {graphError && <div className="warehouse-map__hint">Route Graph 오류: {graphError}</div>}
+      {mapError && <div className="warehouse-map__hint">원본 지도 오류: {mapError}</div>}
 
       <div className="warehouse-map__legend">
         <span><i style={{ background: '#8192A5' }} />실제 구조</span>
@@ -348,7 +382,7 @@ export default function WarehouseMap({
       </div>
 
       <div className="warehouse-map__note">
-        노드·엣지: backend GeoJSON · 로봇 위치: telemetry
+        배경: {raw ? 'backend map image' : 'design geometry'} · 노드·엣지: backend GeoJSON · 로봇 위치: telemetry
       </div>
     </div>
   )
