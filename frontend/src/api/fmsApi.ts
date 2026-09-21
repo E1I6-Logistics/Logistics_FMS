@@ -1,4 +1,6 @@
-const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
+const DEFAULT_API_BASE = `${window.location.protocol}//${window.location.hostname}:8000`
+const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? DEFAULT_API_BASE).replace(/\/$/, '')
+
 export const MAP_IMAGE_URL = `${API_BASE}/api/map/image`
 
 function wsBaseFromHttp(base: string) {
