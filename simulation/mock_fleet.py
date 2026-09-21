@@ -6,12 +6,22 @@ import math
 import json
 import zenoh
 import argparse
-import heapq
 from pathlib import Path
 import struct
 import os
+import sys
 from urllib import error as url_error
 from urllib import request as url_request
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.app.services.route_graph import (
+    load_route_graph,
+    node_lookup,
+)
+from backend.app.services.route_planner import plan_route
 
 # LLM 제공자별 API 코드는 llm_providers에 두고,
 # mock_fleet에서는 공통 비교 함수만 호출한다.
@@ -20,27 +30,25 @@ if __package__:
 else:
     from llm_route_comparison import compare_path_with_llm
 
-ROUTE_GRAPH_PATH = Path(__file__).resolve().parents[1] / "routes" / "test.geojson"
 ROBOT_IDS = ("robot1", "robot2", "robot3")
 INITIAL_POINT_IDS = {"robot1": 0, "robot2": 1, "robot3": 2}
 ROBOT_SPEED = 0.25
 TELEMETRY_PERIOD = 0.3
 
-#Geojson 맵 points, edges 파싱
-def load_route_graph():
-    with ROUTE_GRAPH_PATH.open("r", encoding="utf-8") as route_file:
-        graph = json.load(route_file)
-
-    points = {}
+# LLM 비교와 로봇 보간에 필요한 기존 points/edges 형식으로 변환한다.
+# 그래프 파일 로딩과 노드 검증은 backend route_graph를 공통으로 사용한다.
+def build_route_inputs(graph):
+    points = {
+        int(node_id): (
+            float(feature["geometry"]["coordinates"][0]),
+            float(feature["geometry"]["coordinates"][1]),
+        )
+        for node_id, feature in node_lookup(graph).items()
+    }
     edges = []
     for feature in graph.get("features", []):
-        geometry = feature.get("geometry", {})
-        properties = feature.get("properties", {})
-        if geometry.get("type") == "Point":
-            point_id = int(properties["id"])
-            coordinates = geometry["coordinates"]
-            points[point_id] = (float(coordinates[0]), float(coordinates[1]))
-        elif properties.get("startid") is not None and properties.get("endid") is not None:
+        properties = feature.get("properties") or {}
+        if properties.get("startid") is not None and properties.get("endid") is not None:
             edges.append(
                 (
                     int(properties["startid"]),
@@ -50,49 +58,13 @@ def load_route_graph():
             )
 
     if not points:
-        raise ValueError(f"Route graph에 Point 노드가 없습니다: {ROUTE_GRAPH_PATH}")
+        raise ValueError("Route graph에 Point 노드가 없습니다.")
     return points, edges
 
-#Node, Edge, 시작 Node, 도착 Node 를 통한 최단거리 루트 추출
-def shortest_path(points, edges, start_id, target_id):
-    if start_id not in points or target_id not in points:
-        raise ValueError(f"존재하지 않는 Point id입니다: {start_id}, {target_id}")
-
-    adjacency = {point_id: [] for point_id in points}
-    for start, end, cost in edges:
-        if start not in points or end not in points:
-            continue
-        start_x, start_y = points[start] #시작 노드 좌표
-        end_x, end_y = points[end] #도착 노드
-        weight = cost if cost > 0 else math.hypot(end_x - start_x, end_y - start_y)
-        adjacency[start].append((end, weight))
-
-    distances = {point_id: math.inf for point_id in points}
-    previous = {}
-    distances[start_id] = 0.0
-    queue = [(0.0, start_id)]
-
-    while queue:
-        distance, current = heapq.heappop(queue)
-        if distance > distances[current]:
-            continue
-        if current == target_id:
-            break
-        for neighbor, weight in adjacency[current]:
-            candidate = distance + weight
-            if candidate < distances[neighbor]:
-                distances[neighbor] = candidate
-                previous[neighbor] = current
-                heapq.heappush(queue, (candidate, neighbor))
-
-    if distances[target_id] == math.inf:
-        raise ValueError(f"Point {start_id}에서 Point {target_id}로 가는 경로가 없습니다.")
-
-    path = [target_id]
-    while path[-1] != start_id:
-        path.append(previous[path[-1]])
-    path.reverse()
-    return path
+def plan_node_path(graph, start_id, target_id):
+    """backend route_planner의 결과를 기존 정수 node path 형식으로 변환한다."""
+    route = plan_route(str(start_id), str(target_id), graph)
+    return [int(node_id) for node_id in route["node_ids"]]
 
 
 def parse_route_arguments(args):
@@ -177,7 +149,8 @@ def parse_goal_payload(raw_payload):
 class FleetSimulatorNode(Node):
     def __init__(self, robot_number=None, point_id=None):
         super().__init__('fleet_simulator_node')
-        self.points, self.edges = load_route_graph()
+        self.route_graph = load_route_graph()
+        self.points, self.edges = build_route_inputs(self.route_graph)
         self.route_robot_id = (
             f"robot{robot_number}" if robot_number is not None else None
         )
@@ -216,7 +189,7 @@ class FleetSimulatorNode(Node):
             target_id = (
                 route_point_id if robot_id == self.route_robot_id else start_id
             )
-            path = shortest_path(self.points, self.edges, start_id, target_id)
+            path = plan_node_path(self.route_graph, start_id, target_id)
 
             # 명령행에서 선택한 로봇의 초기 경로도 LLM과 비교한다.
             if robot_id == self.route_robot_id and route_point_id is not None:
@@ -325,9 +298,8 @@ class FleetSimulatorNode(Node):
         state = self.robot_states[robot_id]
 
         current_point_id = state["path"][state["segment"]]
-        new_path = shortest_path(
-            self.points,
-            self.edges,
+        new_path = plan_node_path(
+            self.route_graph,
             current_point_id,
             target_point_id,
         )
