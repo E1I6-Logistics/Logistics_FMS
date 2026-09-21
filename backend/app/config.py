@@ -89,6 +89,12 @@ TELEMETRY_TIMEOUT_SECONDS = float(
     os.getenv("FMS_TELEMETRY_TIMEOUT_SECONDS", "5.0")
 )
 
+# Zenoh router endpoint used by real-robot telemetry.
+ZENOH_ENDPOINT = os.getenv(
+    "FMS_ZENOH_ENDPOINT",
+    "tcp/127.0.0.1:7447",
+).strip()
+
 # ============================================================
 # 수동주행 최대 속도
 # ============================================================
