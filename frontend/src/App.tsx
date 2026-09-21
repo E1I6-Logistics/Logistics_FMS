@@ -491,11 +491,15 @@ export default function App() {
               onSelect={handleSelect}
               picking={nodeMovePickerOpen}
               targetNode={nodeMoveTarget?.mapNodeId}
-              onPick={id => setNodeMoveTarget({ id, label: `Node ${id}`, mapNodeId: id })}
+              onPick={id => setNodeMoveTarget({
+                id,
+                label: `Node ${id}`,
+                mapNodeId: id,
+              })}
               graphLoading={graphLoading}
               graphError={graphError}
               visibleRobotIds={managedIds as RobotId[]}
-              robots={managedRobots}
+              robotStates={managedRobots}
             />
           </div>
           {/* ── DETAIL PANEL ── */}

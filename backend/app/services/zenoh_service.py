@@ -19,9 +19,9 @@ from ..config import (
     ZENOH_ENDPOINT,
 )
 
-from ..database.database import (
-    upsert_robot_state,
-)
+# from ..database.database import (
+#     upsert_robot_state,
+# )
 
 from ..schemas.robot import (
     normalize_robot_id,

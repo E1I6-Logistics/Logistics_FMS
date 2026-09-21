@@ -1,3 +1,5 @@
+# GeoJSON 그래프 읽기, Node/Edge 조회
+
 # 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 

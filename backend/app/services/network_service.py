@@ -1,3 +1,5 @@
+# Zenoh Peer / Firewall 연결 관리
+
 # 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 

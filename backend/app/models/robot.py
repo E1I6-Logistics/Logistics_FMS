@@ -139,35 +139,8 @@ class Robot:
         str
     ] = None
 
-    # ========================================================
-    # TurtleBot3 SensorState
-    # ========================================================
-
-    # TurtleBot3 Bumper 상태 저장
-    bumper: int = 0
-
-    # TurtleBot3 Cliff 센서값 저장
-    cliff: float = 0.0
-    # TurtleBot3 Sonar 센서값 저장
-    sonar: float = 0.0
-    # TurtleBot3 조도 센서값 저장
-    illumination: float = 0.0
-
-    # TurtleBot3 LED 상태 저장
-    led: int = 0
-    # TurtleBot3 Button 상태 저장
-    button: int = 0
-
-    # TurtleBot3 Motor Torque 상태 저장
-    torque: bool = False
-
-    # 왼쪽 Wheel Encoder 값 저장
-    left_encoder: int = 0
-    # 오른쪽 Wheel Encoder 값 저장
-    right_encoder: int = 0
-
-    # TurtleBot3 SensorState 배터리 값 저장
-    sensor_battery: float = 0.0
+    # Motor 활성화 상태
+    motor_enabled: bool = False
 
     # ========================================================
     # Route Graph

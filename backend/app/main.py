@@ -20,11 +20,11 @@ from .config import (
     ROBOT_MODE,
 )
 
-# Database 초기화 및 종료 기능 사용
-from .database.database import (
-    close_db,
-    init_db,
-)
+# # Database 초기화 및 종료 기능 사용
+# from .database.database import (
+#     close_db,
+#     init_db,
+# )
 
 # Command API Router 사용
 from .routers.commands import (
@@ -83,10 +83,12 @@ async def lifespan(
     # PostgreSQL
     # --------------------------------------------------------
 
-# PostgreSQL 초기화 실행
-    if ROBOT_MODE == "real":
-        await init_db()
-        print(" -> Database 초기화 완료")
+# # PostgreSQL 초기화 실행
+#     await init_db()
+
+#     print(
+#         " -> Database 초기화 완료"
+#     )
 
     # --------------------------------------------------------
     # Map
@@ -190,7 +192,8 @@ async def lifespan(
 
         if ROBOT_MODE == "real":
             try:
-                await close_db()
+                # await close_db()
+                pass
             except Exception as exc:
                 print(f" -> [WARN] Database 종료 오류: {exc}")
 

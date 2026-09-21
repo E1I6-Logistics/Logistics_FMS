@@ -1,0 +1,123 @@
+name: Slack Git Notification
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - ugie
+      - sein
+      - sso
+
+  pull_request:
+    branches:
+      - main
+      - dev
+      - ugie
+      - sein
+      - sso
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+jobs:
+  slack-notification:
+    runs-on: ubuntu-latest
+
+    steps:
+      # =========================
+      # PUSH 알림
+      # =========================
+      - name: Send Push Notification
+        if: github.event_name == 'push'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BRANCH: ${{ github.ref_name }}
+          USER: ${{ github.actor }}
+        run: |
+          COMMIT_COUNT=$(jq '.commits | length' "$GITHUB_EVENT_PATH")
+
+          LATEST_COMMIT=$(jq -r '
+            .commits[-1].message
+            | split("\n")[0]
+          ' "$GITHUB_EVENT_PATH")
+
+          COMMIT_LIST=$(jq -r '
+            .commits
+            | reverse
+            | map("- " + (.message | split("\n")[0]))
+            | join("\n")
+          ' "$GITHUB_EVENT_PATH")
+
+          if [ "$COMMIT_COUNT" -gt 1 ]; then
+            OTHER_COUNT=$((COMMIT_COUNT - 1))
+            TITLE="🟢 PUSH: ${LATEST_COMMIT} 외 ${OTHER_COUNT}건"
+          else
+            TITLE="🟢 PUSH: ${LATEST_COMMIT}"
+          fi
+
+          MESSAGE=$(cat <<EOF
+          ${TITLE}
+
+          User: ${USER} | Branch: ${BRANCH}
+
+          Commit 내역:
+          ${COMMIT_LIST}
+          EOF
+          )
+
+          jq -n \
+            --arg text "$MESSAGE" \
+            '{text: $text}' \
+            | curl -X POST \
+              -H 'Content-type: application/json' \
+              --data @- \
+              "$SLACK_WEBHOOK_URL"
+
+
+      # =========================
+      # PR 알림
+      # =========================
+      - name: Send PR Notification
+        if: github.event_name == 'pull_request'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          USER: ${{ github.actor }}
+        run: |
+          PR_TITLE=$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")
+          PR_NUMBER=$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")
+          HEAD_BRANCH=$(jq -r '.pull_request.head.ref' "$GITHUB_EVENT_PATH")
+          BASE_BRANCH=$(jq -r '.pull_request.base.ref' "$GITHUB_EVENT_PATH")
+          ACTION=$(jq -r '.action' "$GITHUB_EVENT_PATH")
+          MERGED=$(jq -r '.pull_request.merged' "$GITHUB_EVENT_PATH")
+
+          if [ "$MERGED" = "true" ]; then
+            STATUS="Merged"
+            ICON="🟣"
+          elif [ "$ACTION" = "closed" ]; then
+            STATUS="Closed"
+            ICON="🔴"
+          else
+            STATUS="Open"
+            ICON="🔵"
+          fi
+
+          MESSAGE=$(cat <<EOF
+          ${ICON} PR: ${PR_TITLE}
+
+          User: ${USER} | Branch: ${HEAD_BRANCH}
+          ${HEAD_BRANCH} merge into ${BASE_BRANCH}
+
+          PR #${PR_NUMBER} | Status: ${STATUS}
+          EOF
+          )
+
+          jq -n \
+            --arg text "$MESSAGE" \
+            '{text: $text}' \
+            | curl -X POST \
+              -H 'Content-type: application/json' \
+              --data @- \
+              "$SLACK_WEBHOOK_URL"

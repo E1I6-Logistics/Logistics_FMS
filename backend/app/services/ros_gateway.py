@@ -1,3 +1,5 @@
+# ROS Topic / Action / Service 통신
+
 # 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
@@ -112,22 +114,8 @@ def _quaternion_to_yaw(
     w: float,
 ) -> float:
 
-    siny_cosp = (
-        2.0
-        * (
-            w * z
-            + x * y
-        )
-    )
-
-    cosy_cosp = (
-        1.0
-        - 2.0
-        * (
-            y * y
-            + z * z
-        )
-    )
+    siny_cosp = (2.0 * (w * z + x * y))
+    cosy_cosp = (1.0 - 2.0 * (y * y + z * z))
 
     return math.atan2(
         siny_cosp,
@@ -176,10 +164,7 @@ def _battery_status_name(
 class FmsRosNode(Node):
 
     # ROS Node 및 Robot별 Interface 초기화
-    def __init__(
-        self,
-    ) -> None:
-
+    def __init__(self,) -> None:
         super().__init__("fms_ros_gateway")
 
         # ----------------------------------------------------
@@ -187,50 +172,26 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # FastAPI 명령 전달용 내부 Queue 생성
-        self._queue: queue.SimpleQueue[
-            _CmdVelCommand
-            | _NavigateCommand
-        ] = queue.SimpleQueue()
+        self._queue: queue.SimpleQueue[_CmdVelCommand | _NavigateCommand] = queue.SimpleQueue()
 
         # ----------------------------------------------------
         # ROS Interface
         # ----------------------------------------------------
 
         # Robot별 cmd_vel Publisher 저장소 생성
-        self._cmd_vel_publishers: dict[
-            str,
-            Any,
-        ] = {}
+        self._cmd_vel_publishers: dict[str, Any,] = {}
 
         # Robot별 NavigateToPose Action Client 저장소 생성
-        self._navigate_clients: dict[
-            str,
-            ActionClient,
-        ] = {}
+        self._navigate_clients: dict[str, ActionClient,] = {}
 
         # Robot별 Odom Subscriber 저장소 생성
-        self._odom_subscribers: dict[
-            str,
-            Any,
-        ] = {}
+        self._odom_subscribers: dict[str, Any,] = {}
 
         # Robot별 AMCL Subscriber 저장소 생성
-        self._amcl_subscribers: dict[
-            str,
-            Any,
-        ] = {}
+        self._amcl_subscribers: dict[str,Any,] = {}
 
         # Robot별 BatteryState Subscriber 저장소 생성
-        self._battery_subscribers: dict[
-            str,
-            Any,
-        ] = {}
-
-        # Robot별 TurtleBot3 SensorState Subscriber 저장소 생성
-        self._sensor_state_subscribers: dict[
-            str,
-            Any,
-        ] = {}
+        self._battery_subscribers: dict[str, Any,] = {}
 
         # ----------------------------------------------------
         # ROS Distribution
@@ -261,10 +222,7 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # 설정된 Robot 수만큼 ROS Interface 생성
-        for index in range(
-            1,
-            ROBOT_COUNT + 1,
-        ):
+        for index in range(1, ROBOT_COUNT + 1,):
 
             robot_id = (
                 f"robot{index}"
@@ -327,11 +285,6 @@ class FmsRosNode(Node):
         # Robot battery_state Topic 이름 생성
         battery_topic = (
             f"/{robot_id}/battery_state"
-        )
-
-        # Robot sensor_state Topic 이름 생성
-        sensor_state_topic = (
-            f"/{robot_id}/sensor_state"
         )
 
         # Robot NavigateToPose Action 이름 생성
@@ -420,24 +373,6 @@ class FmsRosNode(Node):
             battery_topic,
             lambda msg, rid=robot_id:
                 self._battery_callback(
-                    rid,
-                    msg,
-                ),
-            10,
-        )
-
-        # ----------------------------------------------------
-        # TurtleBot3 SensorState
-        # ----------------------------------------------------
-
-        # TurtleBot3 SensorState Subscriber 생성
-        self._sensor_state_subscribers[
-            robot_id
-        ] = self.create_subscription(
-            SensorState,
-            sensor_state_topic,
-            lambda msg, rid=robot_id:
-                self._sensor_state_callback(
                     rid,
                     msg,
                 ),
@@ -577,51 +512,13 @@ class FmsRosNode(Node):
         robot_manager.update_battery(
             robot_id,
 
-            percentage,
-            voltage,
+            round(percentage, 2),
+            round(voltage, 2),
             current,
 
             _battery_status_name(
                 msg.power_supply_status
             ),
-        )
-
-    # ========================================================
-    # TurtleBot3 SensorState Callback
-    # ========================================================
-
-    # TurtleBot3 SensorState 수신 시 센서 상태 갱신 기능
-    def _sensor_state_callback(
-        self,
-        robot_id: str,
-        msg: SensorState,
-    ) -> None:
-
-        robot_manager.update_sensor_state(
-            robot_id,
-
-            bumper=msg.bumper,
-
-            cliff=msg.cliff,
-
-            sonar=msg.sonar,
-
-            illumination=
-                msg.illumination,
-
-            led=msg.led,
-
-            button=msg.button,
-
-            torque=msg.torque,
-
-            left_encoder=
-                msg.left_encoder,
-
-            right_encoder=
-                msg.right_encoder,
-
-            battery=msg.battery,
         )
 
     # ========================================================
@@ -663,12 +560,12 @@ class FmsRosNode(Node):
                 result_future=result_future,
             )
         )
-
+ 
     # ========================================================
     # Queue
     # ========================================================
 
-    # 내부 Queue의 ROS 명령 분류 및 실행 기능
+   # 내부 Queue의 ROS 명령 분류 및 실행 기능
     def _process_queue(
         self,
     ) -> None:
@@ -713,20 +610,9 @@ class FmsRosNode(Node):
                     f"{exc}"
                 )
 
-                if isinstance(
-                    command,
-                    _NavigateCommand,
-                ):
-
-                    if (
-                        not command
-                        .result_future
-                        .done()
-                    ):
-
-                        command.result_future.set_exception(
-                            exc
-                        )
+                if isinstance(command, _NavigateCommand, ):
+                    if (not command.result_future.done()):
+                        command.result_future.set_exception(exc)
 
     # ========================================================
     # cmd_vel
@@ -738,12 +624,7 @@ class FmsRosNode(Node):
         command: _CmdVelCommand,
     ) -> None:
 
-        publisher = (
-            self._cmd_vel_publishers
-            .get(
-                command.robot_id
-            )
-        )
+        publisher = (self._cmd_vel_publishers.get(command.robot_id))
 
         if publisher is None:
 
@@ -754,9 +635,7 @@ class FmsRosNode(Node):
 
         if self._use_twist_stamped:
 
-            msg = (
-                TwistStamped()
-            )
+            msg = (TwistStamped())
 
             msg.header.stamp = (
                 self.get_clock()
@@ -765,15 +644,11 @@ class FmsRosNode(Node):
             )
 
             msg.twist.linear.x = (
-                float(
-                    command.linear_x
-                )
+                float(command.linear_x)
             )
 
             msg.twist.angular.z = (
-                float(
-                    command.angular_z
-                )
+                float(command.angular_z)
             )
 
         else:
@@ -781,20 +656,14 @@ class FmsRosNode(Node):
             msg = Twist()
 
             msg.linear.x = (
-                float(
-                    command.linear_x
-                )
+                float(command.linear_x)
             )
 
             msg.angular.z = (
-                float(
-                    command.angular_z
-                )
+                float(command.angular_z)
             )
 
-        publisher.publish(
-            msg
-        )
+        publisher.publish(msg)
 
     # ========================================================
     # NavigateToPose
@@ -1202,24 +1071,13 @@ class FmsRosNode(Node):
 # FastAPI와 ROS2 Node 사이 실행 환경 관리 기능
 class RosGateway:
 
-    def __init__(
-        self,
-    ) -> None:
+    def __init__(self,) -> None:
 
-        self._node: (
-            FmsRosNode
-            | None
-        ) = None
+        self._node: (FmsRosNode | None) = None
 
-        self._executor: (
-            MultiThreadedExecutor
-            | None
-        ) = None
+        self._executor: (MultiThreadedExecutor | None) = None
 
-        self._thread: (
-            threading.Thread
-            | None
-        ) = None
+        self._thread: (threading.Thread | None) = None
 
         self._started = False
 
@@ -1228,23 +1086,17 @@ class RosGateway:
     # ========================================================
 
     # ROS2 초기화 및 FmsRosNode 실행 기능
-    def start(
-        self,
-    ) -> None:
+    def start(self,) -> None:
 
         if self._started:
-
             return
 
         if not rclpy.ok():
-
             rclpy.init(
                 args=None
             )
 
-        self._node = (
-            FmsRosNode()
-        )
+        self._node = (FmsRosNode())
 
         self._executor = (
             MultiThreadedExecutor(

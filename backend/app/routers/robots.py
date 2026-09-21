@@ -7,11 +7,13 @@ from fastapi import (
     HTTPException,
 )
 
-# Database Robot 상태 조회 기능 사용
-from ..database.database import (
-    get_all_robots,
-    get_robot,
-)
+# # Database Robot 상태 조회 기능 사용
+# from ..database.database import (
+#     get_all_robots,
+#     get_robot,
+# )
+
+from ..services.robot_manager import robot_manager
 
 # Robot ID 변환 기능 사용
 from ..schemas.robot import (
@@ -20,6 +22,10 @@ from ..schemas.robot import (
 )
 from ..config import ROBOT_MODE
 from ..services.simulation_gateway import simulation_gateway
+
+from ..services.map_service import (
+    world_to_pixel,
+)
 
 
 # Robot API Router 생성
@@ -43,6 +49,23 @@ def _serialize(
         row
     )
 
+    # Robot Pose의 ROS Map 좌표를 Web Map Pixel 좌표로 변환
+    if (
+        result.get("map_pose_received", False)
+        and result.get("x") is not None
+        and result.get("y") is not None
+    ):
+        pixel_x, pixel_y = world_to_pixel(
+            result["x"],
+            result["y"],
+        )
+
+        result["pixel_x"] = pixel_x
+        result["pixel_y"] = pixel_y
+    else:
+        result["pixel_x"] = None
+        result["pixel_y"] = None
+
     # Robot ID를 backend 표준 형식으로 변환
     robot_id = normalize_robot_id(
         str(
@@ -62,21 +85,15 @@ def _serialize(
     )
     result["mode"] = ROBOT_MODE
 
-    # 상태 갱신 시간이 존재하는 경우 처리
-    if (
-        result.get(
-            "updated_at"
-        )
-        is not None
-    ):
+    result["updated_at"] = result.get("last_update")
 
-        result[
-            "updated_at"
-        ] = (
-            result[
-                "updated_at"
-            ].isoformat()
-        )
+    result["map_pose_received"] = bool(
+        result.get("map_pose_received", False)
+    )
+
+    result["connection_state"] = result.get(
+        "connection_state", "OFFLINE",
+    )
 
     return result
 
@@ -94,7 +111,8 @@ async def fetch_robots():
 
     rows = (
         # Database에서 전체 Robot 상태 조회
-        await get_all_robots()
+        # await get_all_robots()
+        robot_manager.snapshots()
     )
 
     return [
@@ -134,9 +152,11 @@ async def fetch_robot(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     # Database에서 특정 Robot 상태 조회
-    row = await get_robot(
-        backend_id
-    )
+    # row = await get_robot(
+    #     backend_id
+    # )
+
+    row = robot_manager.snapshot(backend_id)
 
     # Robot 상태 미존재 예외 처리
     if row is None:

@@ -1,3 +1,5 @@
+# Robot 객체 상태 저장 및 갱신
+
 # 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
@@ -29,9 +31,7 @@ from ..schemas.robot import (
 class RobotManager:
 
     # RobotManager 초기 상태 생성
-    def __init__(
-        self,
-    ) -> None:
+    def __init__(self,) -> None:
 
         # Robot 상태 동시 접근 보호용 재진입 Lock 생성
         self._lock = (
@@ -261,84 +261,26 @@ class RobotManager:
                 robot
             )
 
+
     # ========================================================
-    # TurtleBot3 SensorState
+    # Motor 상태 확인
     # ========================================================
 
-    # TurtleBot3 SensorState 기반 센서 상태 갱신 기능
-    def update_sensor_state(
+    # Motor 상태 및 결과 정보 갱신 기능
+    def update_motor_enabled(
         self,
         robot_id: str,
-        *,
-        bumper: int,
-        cliff: float,
-        sonar: float,
-        illumination: float,
-        led: int,
-        button: int,
-        torque: bool,
-        left_encoder: int,
-        right_encoder: int,
-        battery: float,
+        enabled: bool,
     ) -> None:
 
         with self._lock:
 
-            robot = self.get(
-                robot_id
-            )
+            robot = self.get(robot_id)
 
-            robot.bumper = int(
-                bumper
-            )
+            robot.motor_enabled = bool(enabled)
 
-            robot.cliff = float(
-                cliff
-            )
+            self._touch(robot)
 
-            robot.sonar = float(
-                sonar
-            )
-
-            robot.illumination = (
-                float(
-                    illumination
-                )
-            )
-
-            robot.led = int(
-                led
-            )
-
-            robot.button = int(
-                button
-            )
-
-            robot.torque = bool(
-                torque
-            )
-
-            robot.left_encoder = (
-                int(
-                    left_encoder
-                )
-            )
-
-            robot.right_encoder = (
-                int(
-                    right_encoder
-                )
-            )
-
-            robot.sensor_battery = (
-                float(
-                    battery
-                )
-            )
-
-            self._touch(
-                robot
-            )
 
     # ========================================================
     # Navigation

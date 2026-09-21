@@ -23,6 +23,10 @@ export type ManagedRobot = {
   x: number
   y: number
   yaw: number
+  pixelX: number | null
+  pixelY: number | null
+  hasPose: boolean
+  connectionState: string
   updatedAt?: string | null
   mode: 'real' | 'simulation'
   route: RobotRoute | null
@@ -111,13 +115,20 @@ export function useRobotFleet() {
       if (!cancelled) setLoading(false)
     }
     boot()
-    const timer = window.setInterval(() => {
-      refreshConnections()
-      refreshRobots()
-    }, 2000)
+    const connectionTimer = window.setInterval(
+      refreshConnections,
+      2000,
+    )
+
+    const robotTimer = window.setInterval(
+      refreshRobots,
+      500,
+    )
+
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      window.clearInterval(connectionTimer)
+      window.clearInterval(robotTimer)
     }
   }, [refreshConnections, refreshRobots])
 
@@ -183,7 +194,7 @@ export function useRobotFleet() {
     if (!device) throw new Error(`${id}의 연결 IP를 찾을 수 없습니다.`)
     const result = await blockConnection(device.ip)
     setDevices(result.devices)
-    setManagedIds(prev => prev.filter(item => item !== id))
+    // setManagedIds(prev => prev.filter(item => item !== id))
   }, [devices])
 
   const allowRobot = useCallback(async (device: ConnectionDeviceDto) => {
@@ -214,6 +225,10 @@ export function useRobotFleet() {
         updatedAt: state?.updated_at ?? null,
         mode: state?.mode ?? 'real',
         route: state?.route ?? null,
+        pixelX: state?.pixel_x ?? null,
+        pixelY: state?.pixel_y ?? null,
+        hasPose: state?.map_pose_received === true,
+        connectionState: state?.connection_state ?? 'OFFLINE',
       }
     })
   }, [devices, managedIds, robotStates])
