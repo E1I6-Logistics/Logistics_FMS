@@ -202,20 +202,42 @@ fi
 echo ""
 echo "===== ZENOH ====="
 
+# ------------------------------------------------------------
+# Zenoh Router
+#
+# Main PC may use:
+#   1. native/snap zenohd
+#   2. Docker fms-zenoh-router
+# ------------------------------------------------------------
+
 if command -v zenohd >/dev/null 2>&1; then
 
+    echo "zenohd path: $(command -v zenohd)"
     zenohd --version
+    ok "Zenoh Router (native/snap zenohd)"
+
+elif command -v docker >/dev/null 2>&1 &&
+     sudo docker ps -a \
+        --format '{{.Names}}' \
+        | grep -qx "fms-zenoh-router"; then
+
+    ok "Zenoh Router (Docker: fms-zenoh-router)"
 
 else
 
-    fail "zenohd"
+    fail "Zenoh Router"
 
 fi
 
 
+# ------------------------------------------------------------
+# ROS2DDS Bridge
+# ------------------------------------------------------------
+
 if command -v zenoh-bridge-ros2dds >/dev/null 2>&1; then
 
     zenoh-bridge-ros2dds --version
+    ok "zenoh-bridge-ros2dds"
 
 else
 
