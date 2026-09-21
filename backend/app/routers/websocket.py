@@ -23,8 +23,8 @@ from ..services.zenoh_service import (
     manager,
     status_snapshot,
 )
-from ..config import ROBOT_MODE
 from ..services.simulation_gateway import simulation_gateway
+from ..services.mode_service import mode_manager
 
 
 router = APIRouter(
@@ -52,9 +52,9 @@ async def dashboard_websocket(
     try:
         await websocket.send_json({
             "type": "system",
-            "data": {"ros": ros_gateway.status_snapshot(), "mode": ROBOT_MODE},
+            "data": {"ros": ros_gateway.status_snapshot(), "mode": mode_manager.mode},
         })
-        if ROBOT_MODE == "simulation":
+        if mode_manager.mode == "simulation":
             for state in simulation_gateway.robot_snapshots():
                 await websocket.send_json({"type": "telemetry", "data": state})
 
@@ -155,7 +155,7 @@ async def cmd_vel_websocket(
 
                 linear_x = float(data.get("linear_x", 0.0))
                 angular_z = float(data.get("angular_z", 0.0))
-                if ROBOT_MODE == "simulation":
+                if mode_manager.mode == "simulation":
                     simulation_gateway.send_cmd_vel(last_robot_id, linear_x, angular_z)
                 else:
                     ros_gateway.send_cmd_vel(last_robot_id, linear_x, angular_z)
@@ -215,7 +215,7 @@ async def cmd_vel_websocket(
         if last_robot_id is not None:
 
             try:
-                if ROBOT_MODE == "simulation":
+                if mode_manager.mode == "simulation":
                     simulation_gateway.send_cmd_vel(last_robot_id, 0.0, 0.0)
                 else:
                     ros_gateway.stop_robot(last_robot_id)

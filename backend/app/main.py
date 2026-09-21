@@ -17,7 +17,6 @@ from fastapi.middleware.cors import (
 # CORS 설정값 사용
 from .config import (
     CORS_ORIGINS,
-    ROBOT_MODE,
 )
 
 # # Database 초기화 및 종료 기능 사용
@@ -39,6 +38,10 @@ from .routers.connections import (
 # Map API Router 사용
 from .routers.map import (
     router as map_router,
+)
+
+from .routers.mode import (
+    router as mode_router,
 )
 
 # Robot API Router 사용
@@ -66,6 +69,7 @@ from .services.control_gateway import (
     ros_gateway,
 )
 from .services.simulation_gateway import simulation_gateway
+from .services.mode_service import mode_manager
 
 
 # ============================================================
@@ -149,18 +153,19 @@ async def lifespan(
     # ROS Gateway
     # --------------------------------------------------------
 
-    if ROBOT_MODE == "simulation":
+    try:
+        ros_gateway.start()
+        print(" -> ROS Gateway 활성화")
+    except Exception as exc:
+        print(
+            " -> [WARN] "
+            "ROS Gateway 시작 실패: "
+            f"{exc}"
+        )
+
+    if mode_manager.mode == "simulation":
         simulation_gateway.start()
         print(" -> Simulation Gateway 활성화")
-    else:
-        try:
-            ros_gateway.start()
-        except Exception as exc:
-            print(
-                " -> [WARN] "
-                "ROS Gateway 시작 실패: "
-                f"{exc}"
-            )
 
     # --------------------------------------------------------
     # FastAPI
@@ -178,24 +183,17 @@ async def lifespan(
         # Shutdown
         # ====================================================
 
-        if ROBOT_MODE == "simulation":
+        if simulation_gateway.active:
             await simulation_gateway.stop()
-        else:
-            try:
-                ros_gateway.stop()
-            except Exception as exc:
-                print(
-                    " -> [WARN] "
-                    "ROS Gateway 종료 오류: "
-                    f"{exc}"
-                )
 
-        if ROBOT_MODE == "real":
-            try:
-                # await close_db()
-                pass
-            except Exception as exc:
-                print(f" -> [WARN] Database 종료 오류: {exc}")
+        try:
+            ros_gateway.stop()
+        except Exception as exc:
+            print(
+                " -> [WARN] "
+                "ROS Gateway 종료 오류: "
+                f"{exc}"
+            )
 
         print(
             " -> FMS Backend 종료 완료"
@@ -251,6 +249,11 @@ app.add_middleware(
 # Map Router 등록
 app.include_router(
     map_router
+)
+
+# Runtime Robot Mode Router 등록
+app.include_router(
+    mode_router
 )
 
 # Robot Router 등록
@@ -318,4 +321,10 @@ async def health():
         "ros_gateway":
             ros_gateway
             .status_snapshot(),
+
+        "mode":
+            mode_manager.mode,
+
+        "simulation_gateway":
+            simulation_gateway.status_snapshot(),
     }

@@ -20,8 +20,8 @@ from ..schemas.robot import (
     normalize_robot_id,
     to_ui_robot_id,
 )
-from ..config import ROBOT_MODE
 from ..services.simulation_gateway import simulation_gateway
+from ..services.mode_service import mode_manager
 
 from ..services.map_service import (
     world_to_pixel,
@@ -83,7 +83,7 @@ def _serialize(
     ] = to_ui_robot_id(
         robot_id
     )
-    result["mode"] = ROBOT_MODE
+    result["mode"] = mode_manager.mode
 
     result["updated_at"] = result.get("last_update")
 
@@ -106,7 +106,7 @@ def _serialize(
 @router.get("")
 async def fetch_robots():
 
-    if ROBOT_MODE == "simulation":
+    if mode_manager.mode == "simulation":
         return simulation_gateway.robot_snapshots()
 
     rows = (
@@ -145,7 +145,7 @@ async def fetch_robot(
             detail=str(exc),
         ) from exc
 
-    if ROBOT_MODE == "simulation":
+    if mode_manager.mode == "simulation":
         try:
             return simulation_gateway.robot_snapshot(backend_id)
         except ValueError as exc:

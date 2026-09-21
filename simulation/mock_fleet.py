@@ -10,6 +10,8 @@ import heapq
 from pathlib import Path
 import struct
 import os
+from urllib import error as url_error
+from urllib import request as url_request
 
 # LLM 제공자별 API 코드는 llm_providers에 두고,
 # mock_fleet에서는 공통 비교 함수만 호출한다.
@@ -20,7 +22,7 @@ else:
 
 ROUTE_GRAPH_PATH = Path(__file__).resolve().parents[1] / "routes" / "test.geojson"
 ROBOT_IDS = ("robot1", "robot2", "robot3")
-INITIAL_POINT_IDS = {"robot1": 2, "robot2": 0, "robot3": 1}
+INITIAL_POINT_IDS = {"robot1": 0, "robot2": 1, "robot3": 2}
 ROBOT_SPEED = 0.25
 TELEMETRY_PERIOD = 0.3
 
@@ -106,10 +108,48 @@ def parse_route_arguments(args):
         type=int,
         help="선택한 로봇이 이동할 Route Graph Point id",
     )
+    parser.add_argument(
+        "--fms-url",
+        default=os.getenv("FMS_API_URL", "http://127.0.0.1:8000"),
+        help="현재 모드에 따라 명령을 분기할 FMS Backend URL",
+    )
     parsed, ros_args = parser.parse_known_args(args)
     if (parsed.robot_number is None) != (parsed.point_id is None):
         parser.error("--robot-number와 --point-id는 함께 지정해야 합니다.")
     return parsed, ros_args
+
+
+def dispatch_goal_command(fms_url, robot_number, point_id):
+    """Send the same node command used by the frontend and real robots."""
+    endpoint = f"{fms_url.rstrip('/')}/api/command/goal-node"
+    body = json.dumps({
+        "robot_id": f"robot{robot_number}",
+        "node_id": point_id,
+    }).encode("utf-8")
+    command = url_request.Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with url_request.urlopen(command, timeout=10) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except url_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"FMS 명령 실패 ({exc.code}): {detail}") from exc
+    except url_error.URLError as exc:
+        raise RuntimeError(f"FMS Backend 연결 실패: {endpoint} ({exc.reason})") from exc
+
+    print(
+        "FMS 이동 명령 완료: "
+        f"mode={result.get('mode', 'unknown')}, "
+        f"robot={result.get('robot_id', f'robot{robot_number}')}, "
+        f"node={point_id}, "
+        f"status={result.get('status', 'unknown')}"
+    )
+    return result
 
 
 def parse_goal_payload(raw_payload):
@@ -358,6 +398,17 @@ class FleetSimulatorNode(Node):
 
 def main(args=None):
     route_args, ros_args = parse_route_arguments(args)
+
+    # 목적지가 주어진 실행은 simulator를 하나 더 띄우지 않고 FMS에 명령만 전달한다.
+    # 실제 로봇/시뮬레이션 분기는 프론트에서 선택한 Backend 현재 모드가 담당한다.
+    if route_args.robot_number is not None:
+        dispatch_goal_command(
+            route_args.fms_url,
+            route_args.robot_number,
+            route_args.point_id,
+        )
+        return
+
     rclpy.init(args=ros_args)
     node = FleetSimulatorNode(route_args.robot_number, route_args.point_id)
     try:

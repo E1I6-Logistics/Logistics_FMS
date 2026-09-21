@@ -105,30 +105,6 @@ export default function WarehouseMap({
   const px = (n: number) => n / scale
   const adjustZoom = (factor: number) => setZoom(value => Math.max(0.75, Math.min(4, value * factor)))
   const reset = () => { setZoom(1); setPan({ x: 0, y: 0 }) }
-  const worldPoints = Object.values(nodes)
-  const worldBounds = worldPoints.reduce((bounds, node) => ({
-    minX: Math.min(bounds.minX, node.worldX),
-    maxX: Math.max(bounds.maxX, node.worldX),
-    minY: Math.min(bounds.minY, node.worldY),
-    maxY: Math.max(bounds.maxY, node.worldY),
-    minPixelX: Math.min(bounds.minPixelX, node.x),
-    maxPixelX: Math.max(bounds.maxPixelX, node.x),
-    minPixelY: Math.min(bounds.minPixelY, node.y),
-    maxPixelY: Math.max(bounds.maxPixelY, node.y),
-  }), {
-    minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity,
-    minPixelX: Infinity, maxPixelX: -Infinity, minPixelY: Infinity, maxPixelY: -Infinity,
-  })
-  const toMapPosition = (x: number, y: number) => {
-    if (!worldPoints.length) return { x: 67.5, y: 67.5 }
-    const xRatio = (x - worldBounds.minX) / Math.max(worldBounds.maxX - worldBounds.minX, 0.001)
-    const yRatio = (y - worldBounds.minY) / Math.max(worldBounds.maxY - worldBounds.minY, 0.001)
-    return {
-      x: worldBounds.minPixelX + xRatio * (worldBounds.maxPixelX - worldBounds.minPixelX),
-      y: worldBounds.maxPixelY - yRatio * (worldBounds.maxPixelY - worldBounds.minPixelY),
-    }
-  }
-
   const robotsForMap = robotStates
   .filter(robot =>
     visibleRobotIds.includes(robot.id)
@@ -142,7 +118,8 @@ export default function WarehouseMap({
     y: robot.pixelY as number,
     color: robotColors[robot.id],
     heading: 90 - robot.yaw * 180 / Math.PI,
-    stale: robot.connectionState !== 'ONLINE',
+    // 시뮬레이션 로봇은 가상 Fleet 자체가 연결 주체이므로 항상 활성 표시한다.
+    stale: robot.mode === 'real' && !robot.connected,
   }))
 
   return (
@@ -287,7 +264,7 @@ export default function WarehouseMap({
         {!raw && layers.robotId && (
           <g data-testid="robot-markers">
             {robotsForMap.map(robot => {
-              const position = toMapPosition(robot.x, robot.y)
+              const position = { x: robot.x, y: robot.y }
               const color = ROBOT_COLORS[robot.id]
               const selected = selectedRobot === robot.id
               return (
@@ -296,7 +273,8 @@ export default function WarehouseMap({
                   role="button"
                   tabIndex={0}
                   aria-label={`${robot.id} 로봇 선택`}
-                  style={{ cursor: 'pointer' }}
+                  opacity={robot.stale ? 0.42 : 1}
+                  style={{ cursor: 'pointer', filter: robot.stale ? 'grayscale(1)' : 'none' }}
                   onPointerDown={event => event.stopPropagation()}
                   onClick={() => onSelect(robot.id)}
                   onKeyDown={event => {
@@ -312,7 +290,7 @@ export default function WarehouseMap({
                     cx={position.x}
                     cy={position.y}
                     r={px(13)}
-                    fill={selected ? '#E8F4FF' : '#1f1818'}
+                    fill={robot.stale ? '#C7CDD4' : robot.color}
                     stroke={
                       selected ? '#2589F5' : robot.stale ? '#9AA4B0' : robot.color
                     }
@@ -321,7 +299,7 @@ export default function WarehouseMap({
                   <path
                     d={`M${position.x} ${position.y - px(9)}v${-px(8)}`}
                     transform={`rotate(${robot.heading} ${position.x} ${position.y})`}
-                    stroke="#273444"
+                    stroke={robot.stale ? '#7D8792' : '#273444'}
                     strokeWidth={px(2)}
                     strokeLinecap="round"
                   />
@@ -332,7 +310,7 @@ export default function WarehouseMap({
                     dominantBaseline="middle"
                     fontSize={px(8.5)}
                     fontWeight="800"
-                    fill="#263545"
+                    fill={robot.stale ? '#69737E' : '#FFFFFF'}
                   >
                     {robot.id}
                   </text>

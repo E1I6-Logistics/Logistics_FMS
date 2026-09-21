@@ -15,9 +15,9 @@ import zenoh
 from fastapi import WebSocket
 
 from ..config import (
-    ROBOT_MODE,
     ZENOH_ENDPOINT,
 )
+from .mode_service import mode_manager
 
 # from ..database.database import (
 #     upsert_robot_state,
@@ -385,7 +385,7 @@ async def publish_telemetry(
         "ui_id": to_ui_robot_id(robot_id),
     }
     await manager.broadcast({"type": "telemetry", "data": data})
-    if ROBOT_MODE == "real":
+    if mode_manager.mode == "real":
         try:
             await upsert_robot_state(
                 robot_id,

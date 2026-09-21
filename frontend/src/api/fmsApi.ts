@@ -11,6 +11,14 @@ function wsBaseFromHttp(base: string) {
 
 export const WS_BASE = (import.meta.env.VITE_FMS_WS_BASE ?? wsBaseFromHttp(API_BASE)).replace(/\/$/, '')
 
+export type RobotMode = 'real' | 'simulation'
+
+export type RobotModeDto = {
+  mode: RobotMode
+  real_available: boolean
+  simulation_active: boolean
+}
+
 export type RouteNodeDto = {
   id: string | number
   x: number
@@ -45,6 +53,18 @@ export type MapInfoDto = {
 
 export function getMapInfo() {
   return request<MapInfoDto>('/api/map/info')
+}
+
+export function getRobotMode() {
+  return request<RobotModeDto>('/api/mode')
+}
+
+export function setRobotMode(mode: RobotMode) {
+  return request<RobotModeDto>('/api/mode', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

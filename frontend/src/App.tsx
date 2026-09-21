@@ -53,11 +53,13 @@ export default function App() {
   const {
     availableDevices,
     managedIds,
+    mapRobotIds,
     managedRobots,
+    mode: robotMode,
+    modeSwitching,
     loading: fleetLoading,
     error: fleetError,
-    addRobot,
-    removeRobot,
+    changeMode,
     disconnectRobot,
     allowRobot,
   } = useRobotFleet()
@@ -73,7 +75,7 @@ export default function App() {
     const backendStatus = String(live?.status ?? '').toUpperCase()
     const charging = backendStatus.includes('CHARG') || backendStatus.includes('충전')
     const moving = backendStatus.includes('MOV') || backendStatus.includes('RUN') || backendStatus === 'NAVIGATING' || backendStatus === 'ROUTE_READY' || backendStatus.includes('이동')
-    const status = !connected ? '오프라인' : charging ? '충전 중' : moving ? '이동 중' : '대기'
+    const status = !connected ? '연결 끊김 (Disconnected)' : charging ? '충전 중' : moving ? '이동 중' : '대기'
     const statusColor = !connected ? C.danger : charging ? C.primary : moving ? C.success : C.warning
     const statusBg = !connected ? '#FFF0F2' : charging ? '#EDF6FF' : moving ? '#E9F8F3' : '#FFF5DF'
 
@@ -83,7 +85,7 @@ export default function App() {
       status,
       statusColor,
       statusBg,
-      comms: connected ? '연결됨' : '끊김',
+      comms: connected ? '연결됨' : '연결 끊김',
     }
   }
 
@@ -157,16 +159,11 @@ export default function App() {
     setSimLost(false); resetCmdState()
   }
 
-  const handleAddRobot = async (device: (typeof availableDevices)[number]) => {
-    try {
-      setRobotManagerBusy(device.ip)
-      await addRobot(device)
-    } catch (error) {
-      console.error('robot add failed:', error)
-    } finally {
-      setRobotManagerBusy(null)
+  useEffect(() => {
+    if (selectedRobot && !(managedIds as RobotId[]).includes(selectedRobot)) {
+      handleClose()
     }
-  }
+  }, [managedIds, selectedRobot])
 
   const handleAllowRobot = async (device: (typeof availableDevices)[number]) => {
     try {
@@ -177,11 +174,6 @@ export default function App() {
     } finally {
       setRobotManagerBusy(null)
     }
-  }
-
-  const handleRemoveRobot = (id: RobotId) => {
-    if (selectedRobot === id) handleClose()
-    removeRobot(id as FleetRobotId)
   }
 
   const handleDisconnectRobot = async (id: RobotId) => {
@@ -243,7 +235,6 @@ export default function App() {
 
   const managedUiRobots = (managedIds as RobotId[]).map(id => getUiRobot(id))
   const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
-  const robotMode = managedRobots[0]?.mode
   const workingRobotCount = managedUiRobots.filter(robot => robot.status === '이동 중').length
   const chargingRobotCount = managedUiRobots.filter(robot => robot.status === '충전 중').length
   const waitingRobotCount = managedUiRobots.filter(robot => robot.status === '대기').length
@@ -306,11 +297,20 @@ export default function App() {
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.success, display: 'inline-block', animation: 'pulse-dot 2.4s ease-in-out infinite' }} />
               <span style={{ fontSize: 10.5, color: fleetError ? C.danger : C.success, fontWeight: 600 }}>{fleetError ? 'FMS 서버 오류' : `FMS 연결 · 로봇 ${connectedRobotCount}대 온라인`}</span>
             </div>
-            {robotMode && (
-              <span style={{ padding: '2px 6px', borderRadius: 4, background: robotMode === 'simulation' ? '#F0EBF8' : '#E9F8F3', color: robotMode === 'simulation' ? C.purple : '#147A4E', fontSize: 9, fontWeight: 800 }}>
-                {robotMode === 'simulation' ? 'SIMULATION' : 'REAL ROBOT'}
-              </span>
-            )}
+            <div role="group" aria-label="로봇 운용 모드" style={{ display: 'flex', padding: 2, borderRadius: 7, background: '#EEF1F5', border: `1px solid ${C.line}` }}>
+              {([
+                ['real', '실제 로봇'],
+                ['simulation', '시뮬레이션'],
+              ] as const).map(([mode, label]) => {
+                const active = robotMode === mode
+                return (
+                  <button key={mode} disabled={modeSwitching} onClick={() => { void changeMode(mode).catch(error => console.error('mode switch failed:', error)) }}
+                    style={{ padding: '3px 8px', border: 'none', borderRadius: 5, background: active ? (mode === 'simulation' ? '#7352B8' : '#16845A') : 'transparent', color: active ? '#fff' : C.muted, fontSize: 9, fontWeight: 800, cursor: modeSwitching ? 'wait' : 'pointer' }}>
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
             <Div />
             <button onClick={() => setIsAdmin(p => !p)} title="데모: 관리자 모드 전환"
               style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 11px', borderRadius: 6, background: isAdmin ? '#FEF3DC' : C.subtle, border: `1px solid ${isAdmin ? '#D4A842' : C.line}`, fontSize: 10, fontWeight: 700, color: isAdmin ? '#8C5E0A' : C.muted, cursor: 'pointer', outline: 'none', boxShadow: isAdmin ? '0 0 0 2px rgba(212,136,30,0.15)' : E1 }}>
@@ -380,13 +380,13 @@ export default function App() {
                     <span style={{ fontWeight: 800, fontSize: 12 }}>TurtleBot 목록</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: 9, color: C.muted, fontWeight: 600 }}>{managedIds.length} 대</span>
-                      <button onClick={() => setRobotManagerOpen(v => !v)}
+                      {robotMode === 'real' && <button onClick={() => setRobotManagerOpen(v => !v)}
                         style={{ border: '1px solid #B9DAFB', background: '#EDF6FF', color: C.primary, borderRadius: 5, fontSize: 9, fontWeight: 800, padding: '3px 7px', cursor: 'pointer' }}>
-                        + 로봇 추가
-                      </button>
+                        연결 관리
+                      </button>}
                     </div>
                   </div>
-                  {robotManagerOpen && (
+                  {robotMode === 'real' && robotManagerOpen && (
                     <div style={{ padding: 7, marginBottom: 7, background: '#F8FAFC', border: `1px solid ${C.line}`, borderRadius: 7 }}>
                       <div style={{ fontSize: 9, fontWeight: 800, color: C.text, marginBottom: 5 }}>Zenoh 연결 로봇</div>
                       {fleetLoading && <div style={{ fontSize: 9, color: C.muted }}>검색 중…</div>}
@@ -394,7 +394,6 @@ export default function App() {
                       {!fleetLoading && availableDevices.length === 0 && <div style={{ fontSize: 9, color: C.muted }}>검색된 로봇 없음</div>}
                       {availableDevices.map(device => {
                         const uiId = (`R-${String(Number(device.name.replace(/\D/g, ''))).padStart(2, '0')}`) as RobotId
-                        const isManaged = (managedIds as RobotId[]).includes(uiId)
                         const busy = robotManagerBusy === device.ip || robotManagerBusy === uiId
                         return (
                           <div key={device.ip} style={{ padding: '6px 0', borderTop: `1px solid ${C.line}` }}>
@@ -408,13 +407,8 @@ export default function App() {
                               <div style={{ display: 'flex', gap: 4 }}>
                                 {device.blocked ? (
                                   <button disabled={busy} onClick={() => handleAllowRobot(device)} style={{ fontSize: 8.5, padding: '3px 6px', cursor: 'pointer' }}>허용</button>
-                                ) : !isManaged ? (
-                                  <button disabled={busy || !device.connected} onClick={() => handleAddRobot(device)} style={{ fontSize: 8.5, padding: '3px 6px', cursor: device.connected ? 'pointer' : 'not-allowed' }}>추가</button>
                                 ) : (
-                                  <>
-                                    <button disabled={busy} onClick={() => handleRemoveRobot(uiId)} style={{ fontSize: 8.5, padding: '3px 6px', cursor: 'pointer' }}>제거</button>
-                                    <button disabled={busy} onClick={() => handleDisconnectRobot(uiId)} style={{ fontSize: 8.5, padding: '3px 6px', color: C.danger, cursor: 'pointer' }}>끊기</button>
-                                  </>
+                                  <button disabled={busy || !device.connected} onClick={() => handleDisconnectRobot(uiId)} style={{ fontSize: 8.5, padding: '3px 6px', color: C.danger, cursor: device.connected ? 'pointer' : 'not-allowed' }}>끊기</button>
                                 )}
                               </div>
                             </div>
@@ -425,7 +419,9 @@ export default function App() {
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: '#F7F9FB', border: '1px solid #E4E8ED', borderRadius: 7 }}>
                     <SearchIcon />
-                    <span style={{ fontSize: 10, color: '#C0C8D0' }}>추가한 로봇만 목록에 표시</span>
+                    <span style={{ fontSize: 10, color: '#C0C8D0' }}>
+                      {robotMode === 'simulation' ? '시뮬레이션 대상 로봇 표시' : '연결된 실제 로봇만 표시'}
+                    </span>
                   </div>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
@@ -435,7 +431,9 @@ export default function App() {
                   })}
                   {managedIds.length === 0 && (
                     <div style={{ padding: '24px 10px', textAlign: 'center', color: C.muted, fontSize: 10, lineHeight: 1.6 }}>
-                      등록된 로봇이 없습니다.<br />상단의 <b>+ 로봇 추가</b>에서 연결된 로봇을 추가하세요.
+                      {robotMode === 'simulation'
+                        ? '시뮬레이션 로봇을 불러오는 중입니다.'
+                        : <>연결된 로봇이 없습니다.<br />로봇의 Zenoh 연결 상태를 확인하세요.</>}
                     </div>
                   )}
                 </div>
@@ -498,7 +496,7 @@ export default function App() {
               })}
               graphLoading={graphLoading}
               graphError={graphError}
-              visibleRobotIds={managedIds as RobotId[]}
+              visibleRobotIds={mapRobotIds as RobotId[]}
               robotStates={managedRobots}
             />
           </div>

@@ -13,6 +13,7 @@ from ..config import (
     ROBOT_COUNT,
 )
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
+from .map_service import world_to_pixel
 from .route_graph import get_node, list_nodes
 from .route_planner import plan_route
 
@@ -54,7 +55,8 @@ class SimulationGateway:
     def start(self) -> None:
         if self._started:
             return
-        initial_nodes = (2, 0, 1)
+        # robot1 -> N0, robot2 -> N1, robot3 -> N2
+        initial_nodes = (0, 1, 2)
         self._robots = {}
         for index in range(1, ROBOT_COUNT + 1):
             robot_id = f"robot{index}"
@@ -198,6 +200,7 @@ class SimulationGateway:
 
     def robot_snapshot(self, robot_id: str) -> dict[str, Any]:
         robot = self._get_robot(robot_id)
+        pixel_x, pixel_y = world_to_pixel(robot.x, robot.y)
         return {
             "robot_id": robot.robot_id,
             "ui_id": to_ui_robot_id(robot.robot_id),
@@ -205,6 +208,11 @@ class SimulationGateway:
             "battery": round(robot.battery, 1), "status": robot.status,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "mode": "simulation", "source": "simulation",
+            "pixel_x": pixel_x,
+            "pixel_y": pixel_y,
+            "map_pose_received": True,
+            "pose_source": "SIMULATION",
+            "connection_state": "ONLINE",
             "route": {
                 "node_ids": list(robot.route_nodes),
                 "edge_ids": list(robot.route_edges),

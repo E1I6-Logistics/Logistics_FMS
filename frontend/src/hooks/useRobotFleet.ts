@@ -4,8 +4,11 @@ import {
   blockConnection,
   dashboardWsUrl,
   getConnections,
+  getRobotMode,
   getRobots,
+  setRobotMode,
   type ConnectionDeviceDto,
+  type RobotMode,
   type RobotStateDto,
   type RobotRoute,
 } from '../api/fmsApi'
@@ -32,9 +35,6 @@ export type ManagedRobot = {
   route: RobotRoute | null
 }
 
-const STORAGE_KEY = 'fms-managed-robots'
-const SIMULATION_BOOTSTRAP_KEY = 'fms-simulation-fleet-bootstrap-v1'
-
 function backendToUiId(value: string): RobotId | null {
   const match = /^robot0*([1-9][0-9]*)$/i.exec(value.trim())
   if (!match) return null
@@ -47,29 +47,20 @@ function uiToBackendId(id: RobotId) {
   return `robot${Number(id.replace('R-', ''))}`
 }
 
-function loadManagedIds(): RobotId[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((v): v is RobotId => /^R-0[1-3]$/.test(String(v)))
-  } catch {
-    return []
-  }
-}
-
 export function useRobotFleet() {
   const [devices, setDevices] = useState<ConnectionDeviceDto[]>([])
-  const [managedIds, setManagedIds] = useState<RobotId[]>(loadManagedIds)
   const [robotStates, setRobotStates] = useState<Record<string, RobotStateDto>>({})
+  const [mode, setModeState] = useState<RobotMode>('simulation')
+  const [modeSwitching, setModeSwitching] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const reconnectTimer = useRef<number | null>(null)
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(managedIds))
-  }, [managedIds])
+  const refreshMode = useCallback(async () => {
+    const result = await getRobotMode()
+    setModeState(result.mode)
+    return result.mode
+  }, [])
 
   const refreshConnections = useCallback(async () => {
     try {
@@ -84,24 +75,7 @@ export function useRobotFleet() {
   const refreshRobots = useCallback(async () => {
     try {
       const rows = await getRobots()
-      const simulationIds = rows
-        .filter(row => row.mode === 'simulation')
-        .map(row => backendToUiId(row.robot_id))
-        .filter((id): id is RobotId => id !== null)
-      if (simulationIds.length && localStorage.getItem(SIMULATION_BOOTSTRAP_KEY) !== 'done') {
-        setManagedIds(prev => prev.length ? prev : simulationIds)
-        localStorage.setItem(SIMULATION_BOOTSTRAP_KEY, 'done')
-      }
-      setRobotStates(prev => {
-        const next = { ...prev }
-        rows.forEach(row => {
-          const current = next[row.robot_id]
-          if (!current?.updated_at || !row.updated_at || Date.parse(row.updated_at) >= Date.parse(current.updated_at)) {
-            next[row.robot_id] = row
-          }
-        })
-        return next
-      })
+      setRobotStates(Object.fromEntries(rows.map(row => [row.robot_id, row])))
     } catch (e) {
       console.warn('robot state refresh failed:', e)
     }
@@ -111,7 +85,7 @@ export function useRobotFleet() {
     let cancelled = false
     const boot = async () => {
       setLoading(true)
-      await Promise.all([refreshConnections(), refreshRobots()])
+      await Promise.all([refreshMode(), refreshConnections(), refreshRobots()])
       if (!cancelled) setLoading(false)
     }
     boot()
@@ -130,7 +104,7 @@ export function useRobotFleet() {
       window.clearInterval(connectionTimer)
       window.clearInterval(robotTimer)
     }
-  }, [refreshConnections, refreshRobots])
+  }, [refreshConnections, refreshMode, refreshRobots])
 
   useEffect(() => {
     let socket: WebSocket | null = null
@@ -142,8 +116,14 @@ export function useRobotFleet() {
       socket.onmessage = event => {
         try {
           const message = JSON.parse(event.data)
+          if (message?.type === 'system' && message.data?.mode) {
+            setModeState(message.data.mode as RobotMode)
+            void refreshRobots()
+            return
+          }
           if (message?.type !== 'telemetry' || !message.data?.robot_id) return
           const data = message.data as RobotStateDto
+          if (data.mode && data.mode !== mode) return
           setRobotStates(prev => {
             const current = prev[data.robot_id]
             if (current?.updated_at && data.updated_at && Date.parse(data.updated_at) < Date.parse(current.updated_at)) return prev
@@ -169,24 +149,24 @@ export function useRobotFleet() {
       if (reconnectTimer.current !== null) window.clearTimeout(reconnectTimer.current)
       socket?.close()
     }
-  }, [])
+  }, [mode, refreshRobots])
 
-  const addRobot = useCallback(async (device: ConnectionDeviceDto) => {
-    const uiId = backendToUiId(device.name)
-    if (!uiId) throw new Error(`지원하지 않는 로봇 이름: ${device.name}`)
-
-    if (device.blocked) {
-      const result = await allowConnection(device.ip)
-      setDevices(result.devices)
+  const changeMode = useCallback(async (nextMode: RobotMode) => {
+    if (nextMode === mode) return
+    setModeSwitching(true)
+    try {
+      const result = await setRobotMode(nextMode)
+      setModeState(result.mode)
+      setRobotStates({})
+      await refreshRobots()
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      throw e
+    } finally {
+      setModeSwitching(false)
     }
-
-    setManagedIds(prev => prev.includes(uiId) ? prev : [...prev, uiId])
-    await refreshRobots()
-  }, [refreshRobots])
-
-  const removeRobot = useCallback((id: RobotId) => {
-    setManagedIds(prev => prev.filter(item => item !== id))
-  }, [])
+  }, [mode, refreshRobots])
 
   const disconnectRobot = useCallback(async (id: RobotId) => {
     const backendId = uiToBackendId(id)
@@ -194,7 +174,6 @@ export function useRobotFleet() {
     if (!device) throw new Error(`${id}의 연결 IP를 찾을 수 없습니다.`)
     const result = await blockConnection(device.ip)
     setDevices(result.devices)
-    // setManagedIds(prev => prev.filter(item => item !== id))
   }, [devices])
 
   const allowRobot = useCallback(async (device: ConnectionDeviceDto) => {
@@ -202,8 +181,13 @@ export function useRobotFleet() {
     setDevices(result.devices)
   }, [])
 
+  const robotIds = useMemo(() => Object.values(robotStates)
+    .filter(state => state.mode === mode)
+    .map(state => backendToUiId(state.robot_id))
+    .filter((id): id is RobotId => id !== null), [mode, robotStates])
+
   const managedRobots = useMemo<ManagedRobot[]>(() => {
-    return managedIds.map(id => {
+    return robotIds.map(id => {
       const backendId = uiToBackendId(id)
       const device = devices.find(item => item.name === backendId)
       const state = robotStates[backendId]
@@ -215,7 +199,12 @@ export function useRobotFleet() {
         id,
         backendId,
         ip: device?.ip ?? '',
-        connected: Boolean(device?.connected && !device?.blocked && telemetryFresh),
+        connected: mode === 'simulation'
+          ? Boolean(state && telemetryFresh)
+          : Boolean(
+              state?.connection_state === 'ONLINE'
+              && telemetryFresh
+            ),
         blocked: Boolean(device?.blocked),
         battery: typeof state?.battery === 'number' ? state.battery : null,
         status: state?.status ?? (device?.connected ? 'ONLINE' : 'OFFLINE'),
@@ -223,7 +212,7 @@ export function useRobotFleet() {
         y: state?.y ?? 0,
         yaw: state?.yaw ?? 0,
         updatedAt: state?.updated_at ?? null,
-        mode: state?.mode ?? 'real',
+        mode: state?.mode ?? mode,
         route: state?.route ?? null,
         pixelX: state?.pixel_x ?? null,
         pixelY: state?.pixel_y ?? null,
@@ -231,21 +220,36 @@ export function useRobotFleet() {
         connectionState: state?.connection_state ?? 'OFFLINE',
       }
     })
-  }, [devices, managedIds, robotStates])
+  }, [devices, mode, robotIds, robotStates])
+
+  const managedIds = useMemo(() => mode === 'simulation'
+    ? robotIds
+    : managedRobots.filter(robot => robot.connected).map(robot => robot.id),
+  [managedRobots, mode, robotIds])
+
+  const mapRobotIds = useMemo(() => mode === 'simulation'
+    ? robotIds
+    : managedRobots.filter(robot => robot.hasPose).map(robot => robot.id),
+  [managedRobots, mode, robotIds])
 
   const availableDevices = useMemo(() => {
-    return devices.filter(device => backendToUiId(device.name) !== null)
+    return devices.filter(device =>
+      backendToUiId(device.name) !== null
+      && (device.connected || device.blocked)
+    )
   }, [devices])
 
   return {
     availableDevices,
     managedIds,
+    mapRobotIds,
     managedRobots,
+    mode,
+    modeSwitching,
     loading,
     error,
     refreshConnections,
-    addRobot,
-    removeRobot,
+    changeMode,
     disconnectRobot,
     allowRobot,
   }

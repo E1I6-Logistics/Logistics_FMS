@@ -27,7 +27,7 @@ from ..services.control_gateway import (
 from ..services.simulation_gateway import (
     simulation_gateway,
 )
-from ..config import ROBOT_MODE
+from ..services.mode_service import mode_manager
 
 from ..services.zenoh_service import (
     status_snapshot as zenoh_status_snapshot,
@@ -48,7 +48,7 @@ def _require_control() -> None:
 
     active = (
         simulation_gateway.active
-        if ROBOT_MODE == "simulation"
+        if mode_manager.mode == "simulation"
         else ros_gateway.active
     )
     if not active:
@@ -70,7 +70,7 @@ async def command_status():
     return {
         "ros":
             ros_gateway.status_snapshot(),
-        "mode": ROBOT_MODE,
+        "mode": mode_manager.mode,
         "simulation":
             simulation_gateway.status_snapshot(),
 
@@ -130,9 +130,9 @@ async def command_capabilities():
         # ----------------------------------------------------
 
         "rosGateway":
-            ROBOT_MODE == "real",
+            mode_manager.mode == "real",
         "simulationGateway":
-            ROBOT_MODE == "simulation",
+            mode_manager.mode == "simulation",
 
         "nativeZenohTelemetry":
             True,
@@ -153,16 +153,19 @@ async def send_coordinate_goal(
 
     try:
 
-        if ROBOT_MODE == "simulation":
-            return simulation_gateway.navigate_to_pose(
+        if mode_manager.mode == "simulation":
+            result = simulation_gateway.navigate_to_pose(
                 payload.robot_id, payload.target_x, payload.target_y, frame_id="map"
             )
-        return await ros_gateway.navigate_to_pose(
-            payload.robot_id,
-            payload.target_x,
-            payload.target_y,
-            frame_id="map",
-        )
+        else:
+            result = await ros_gateway.navigate_to_pose(
+                payload.robot_id,
+                payload.target_x,
+                payload.target_y,
+                frame_id="map",
+            )
+        result["mode"] = mode_manager.mode
+        return result
 
     except ValueError as exc:
 
@@ -213,7 +216,7 @@ async def send_node_goal(
         # Node 좌표 -> Nav2 NavigateToPose
         # ----------------------------------------------------
 
-        if ROBOT_MODE == "simulation":
+        if mode_manager.mode == "simulation":
             result = simulation_gateway.navigate_to_node(payload.robot_id, payload.node_id)
         else:
             result = await ros_gateway.navigate_to_pose(
@@ -239,6 +242,8 @@ async def send_node_goal(
             "frame":
                 node["frame"],
         }
+
+        result["mode"] = mode_manager.mode
 
         return result
 
@@ -285,9 +290,12 @@ async def stop_robot(
 
     try:
 
-        if ROBOT_MODE == "simulation":
-            return simulation_gateway.stop_robot(payload.robot_id)
-        return ros_gateway.stop_robot(payload.robot_id)
+        if mode_manager.mode == "simulation":
+            result = simulation_gateway.stop_robot(payload.robot_id)
+        else:
+            result = ros_gateway.stop_robot(payload.robot_id)
+        result["mode"] = mode_manager.mode
+        return result
 
     except ValueError as exc:
 
