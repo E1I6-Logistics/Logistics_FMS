@@ -29,6 +29,7 @@ export type ManagedRobot = {
 }
 
 const STORAGE_KEY = 'fms-managed-robots'
+const SIMULATION_BOOTSTRAP_KEY = 'fms-simulation-fleet-bootstrap-v1'
 
 function backendToUiId(value: string): RobotId | null {
   const match = /^robot0*([1-9][0-9]*)$/i.exec(value.trim())
@@ -79,6 +80,14 @@ export function useRobotFleet() {
   const refreshRobots = useCallback(async () => {
     try {
       const rows = await getRobots()
+      const simulationIds = rows
+        .filter(row => row.mode === 'simulation')
+        .map(row => backendToUiId(row.robot_id))
+        .filter((id): id is RobotId => id !== null)
+      if (simulationIds.length && localStorage.getItem(SIMULATION_BOOTSTRAP_KEY) !== 'done') {
+        setManagedIds(prev => prev.length ? prev : simulationIds)
+        localStorage.setItem(SIMULATION_BOOTSTRAP_KEY, 'done')
+      }
       setRobotStates(prev => {
         const next = { ...prev }
         rows.forEach(row => {
