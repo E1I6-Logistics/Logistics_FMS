@@ -1,38 +1,323 @@
 #!/usr/bin/env bash
+
 set +e
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+
+# ============================================================
+# Path
+# ============================================================
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+
 VENV_DIR="$HOME/venv/robot"
 
+FAIL=0
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+ok() {
+    echo "[OK] $1"
+}
+
+
+fail() {
+    echo "[FAIL] $1"
+    FAIL=1
+}
+
+
+echo "========================================"
+echo " Logistics_FMS Environment Verification"
+echo "========================================"
+echo "Project : $PROJECT_DIR"
+echo "Arch    : $(uname -m)"
+echo "========================================"
+
+
+# ============================================================
+# OS
+# ============================================================
+
+echo ""
 echo "===== OS ====="
-grep -E '^(NAME|VERSION|VERSION_ID)=' /etc/os-release
 
+grep -E '^(NAME|VERSION|VERSION_ID)=' \
+    /etc/os-release
+
+if grep -q 'VERSION_ID="24.04"' /etc/os-release; then
+    ok "Ubuntu 24.04"
+else
+    fail "Ubuntu 24.04 required"
+fi
+
+
+# ============================================================
+# Jetson
+# ============================================================
+
+echo ""
+echo "===== PLATFORM ====="
+
+if [ -f /etc/nv_tegra_release ] ||
+   dpkg-query -W nvidia-l4t-core >/dev/null 2>&1; then
+
+    echo "Platform: NVIDIA Jetson"
+
+else
+
+    echo "Platform: Standard PC / Linux"
+
+fi
+
+
+# ============================================================
+# ROS 2
+# ============================================================
+
+echo ""
 echo "===== ROS 2 ====="
-source /opt/ros/jazzy/setup.bash 2>/dev/null
-echo "ROS_DISTRO=$ROS_DISTRO"
-which ros2
-ros2 pkg prefix nav2_bringup
-ros2 pkg prefix nav2_route
-ros2 pkg prefix robot_localization
 
+if [ -f /opt/ros/jazzy/setup.bash ]; then
+
+    source /opt/ros/jazzy/setup.bash
+
+    ok "ROS 2 Jazzy"
+
+else
+
+    fail "ROS 2 Jazzy"
+
+fi
+
+
+echo "ROS_DISTRO=${ROS_DISTRO:-NOT SET}"
+
+
+for PKG in \
+    nav2_bringup \
+    nav2_route \
+    robot_localization \
+    rmw_cyclonedds_cpp \
+    rmw_fastrtps_cpp \
+    turtlebot3_msgs
+
+do
+
+    if ros2 pkg prefix "$PKG" >/dev/null 2>&1; then
+
+        ok "$PKG"
+
+    else
+
+        fail "$PKG"
+
+    fi
+
+done
+
+
+# ============================================================
+# Python
+# ============================================================
+
+echo ""
 echo "===== PYTHON ====="
-source "$VENV_DIR/bin/activate"
-python --version
+
+if [ -f "$VENV_DIR/bin/activate" ]; then
+
+    source "$VENV_DIR/bin/activate"
+
+    ok "Python venv"
+
+else
+
+    fail "Python venv: $VENV_DIR"
+
+fi
+
+
+python --version 2>/dev/null || fail "Python"
+
+
 python - <<'PY'
-import fastapi, uvicorn, asyncpg, zenoh, yaml, PIL, pydantic, rclpy
-from geometry_msgs.msg import Pose
-from std_msgs.msg import String
-print("Python imports: OK")
+
+import sys
+
+modules = [
+    "fastapi",
+    "uvicorn",
+    "asyncpg",
+    "zenoh",
+    "yaml",
+    "PIL",
+    "pydantic",
+    "rclpy",
+]
+
+failed = []
+
+for module in modules:
+
+    try:
+        __import__(module)
+
+    except Exception as exc:
+        failed.append((module, str(exc)))
+
+
+try:
+    from geometry_msgs.msg import Pose
+    from std_msgs.msg import String
+    from turtlebot3_msgs.msg import SensorState
+
+except Exception as exc:
+    failed.append(("ROS message imports", str(exc)))
+
+
+if failed:
+
+    for module, error in failed:
+        print(f"[FAIL] {module}: {error}")
+
+    sys.exit(1)
+
+print("[OK] Python / ROS imports")
+
 PY
 
+
+if [ $? -ne 0 ]; then
+    FAIL=1
+fi
+
+
+# ============================================================
+# Zenoh
+# ============================================================
+
+echo ""
+echo "===== ZENOH ====="
+
+if command -v zenohd >/dev/null 2>&1; then
+
+    zenohd --version
+
+else
+
+    fail "zenohd"
+
+fi
+
+
+if command -v zenoh-bridge-ros2dds >/dev/null 2>&1; then
+
+    zenoh-bridge-ros2dds --version
+
+else
+
+    fail "zenoh-bridge-ros2dds"
+
+fi
+
+
+# ============================================================
+# Node.js
+# ============================================================
+
+echo ""
 echo "===== NODE ====="
+
 export NVM_DIR="$HOME/.nvm"
-source "$NVM_DIR/nvm.sh" 2>/dev/null
-node --version
-npm --version
 
+# NVM이 있으면 로드
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+    source "$NVM_DIR/nvm.sh"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    echo "Node: $(node --version)"
+    ok "node"
+else
+    fail "node"
+fi
+
+if command -v npm >/dev/null 2>&1; then
+    echo "npm : $(npm --version)"
+    ok "npm"
+else
+    fail "npm"
+fi
+
+
+# ============================================================
+# Docker
+# ============================================================
+
+echo ""
 echo "===== DOCKER ====="
-docker --version
-docker compose version
 
+if command -v docker >/dev/null 2>&1; then
+
+    docker --version
+
+    docker compose version
+
+else
+
+    fail "Docker"
+
+fi
+
+
+# ============================================================
+# Frontend
+# ============================================================
+
+echo ""
 echo "===== FRONTEND ====="
-test -d "$PROJECT_DIR/frontend/node_modules" && echo "node_modules: OK" || echo "node_modules: MISSING"
+
+if [ -d "$PROJECT_DIR/frontend/node_modules" ]; then
+
+    ok "node_modules"
+
+else
+
+    fail "node_modules"
+
+fi
+
+
+# ============================================================
+# Network
+# ============================================================
+
+echo ""
+echo "===== NETWORK ====="
+
+ip -br -4 addr
+
+
+# ============================================================
+# Result
+# ============================================================
+
+echo ""
+echo "========================================"
+
+if [ "$FAIL" -eq 0 ]; then
+
+    echo " Environment Verification: PASS"
+
+else
+
+    echo " Environment Verification: FAIL"
+
+fi
+
+echo "========================================"
+
+exit "$FAIL"
