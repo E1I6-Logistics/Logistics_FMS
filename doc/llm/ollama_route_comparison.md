@@ -74,6 +74,7 @@ OLLAMA_MODEL=qwen3:4b
 OLLAMA_HOST=http://localhost:11434
 LLM_ROUTE_GRAPH=test_compact_graph.geojson
 LLM_TIMEOUT_SECONDS=60
+PATH_DECISION_DEADLINE_SECONDS=0.15
 LLM_MAX_ATTEMPTS=1
 ```
 
@@ -89,6 +90,7 @@ unset OLLAMA_MODEL
 unset OLLAMA_HOST
 unset LLM_ROUTE_GRAPH
 unset LLM_TIMEOUT_SECONDS
+unset PATH_DECISION_DEADLINE_SECONDS
 unset LLM_MAX_ATTEMPTS
 unset FMS_ROUTE_GRAPH
 ```
@@ -216,6 +218,8 @@ metrics.shortest_path_match
 metrics.shortest_distance_match
 metrics.absolute_distance_error
 metrics.response_time_seconds
+metrics.realtime_deadline_seconds
+metrics.meets_realtime_deadline
 metrics.timed_out
 metrics.first_attempt_success
 metrics.retry_success
@@ -236,6 +240,7 @@ simulation/llm_route_summary.json
 - 최단 경로·최단 거리 일치율
 - 평균 절대 거리 오차
 - 평균 응답 시간
+- 실시간 기준 시간과 충족률
 - 타임아웃 비율
 - 최초 성공률과 재시도 성공률
 - 평균 입력 문자 수와 추정 토큰 수
