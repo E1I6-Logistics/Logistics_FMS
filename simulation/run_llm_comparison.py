@@ -43,14 +43,34 @@ def build_route_inputs(graph: dict) -> tuple[dict[int, tuple[float, float]], lis
     return points, edges
 
 
+def selected_provider_config() -> tuple[str, str]:
+    """Validate only the credentials needed by the selected provider."""
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in {"openai", "anthropic", "ollama"}:
+        raise ValueError(
+            "simulation/.env에 LLM_PROVIDER를 openai, anthropic 또는 ollama로 설정하세요."
+        )
+
+    model_name = f"{provider.upper()}_MODEL"
+    model = os.getenv(model_name, "").strip()
+    if not model:
+        raise ValueError(f"simulation/.env에 {model_name}을 설정하세요.")
+
+    if provider != "ollama":
+        key_name = f"{provider.upper()}_API_KEY"
+        if not os.getenv(key_name):
+            raise ValueError(f"simulation/.env에 {key_name}를 설정하세요.")
+    return provider, model
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="코드 최단 경로와 OpenAI 경로를 한 번 비교합니다."
+        description="코드 최단 경로와 선택한 LLM 경로를 한 번 비교합니다."
     )
     parser.add_argument("--start", type=int, default=2, help="시작 노드 ID (기본값: 2)")
     parser.add_argument("--goal", type=int, default=10, help="도착 노드 ID (기본값: 10)")
     parser.add_argument(
-        "--dry-run", action="store_true", help="OpenAI 호출 없이 코드 경로만 확인"
+        "--dry-run", action="store_true", help="LLM 호출 없이 코드 경로만 확인"
     )
     args = parser.parse_args()
 
@@ -71,18 +91,13 @@ def main() -> int:
         print(f"코드 경로: {baseline}", flush=True)
 
         if args.dry_run:
-            print("드라이런 완료: OpenAI API는 호출하지 않았습니다.", flush=True)
+            print("드라이런 완료: LLM은 호출하지 않았습니다.", flush=True)
             return 0
 
-        if os.getenv("LLM_PROVIDER", "").strip().lower() != "openai":
-            raise ValueError("simulation/.env에 LLM_PROVIDER=openai를 설정하세요.")
-        if not os.getenv("OPENAI_MODEL"):
-            raise ValueError("simulation/.env에 OPENAI_MODEL을 설정하세요.")
-        if not os.getenv("OPENAI_API_KEY"):
-            raise ValueError("simulation/.env에 OPENAI_API_KEY를 설정하세요. 이 파일은 Git에서 제외됩니다.")
-
-        print(f"OpenAI 모델 {os.environ['OPENAI_MODEL']}에 요청 중...", flush=True)
+        provider, model = selected_provider_config()
+        print(f"{provider} 모델 {model}에 요청 중...", flush=True)
         started = monotonic()
+        #LLM과 알고리즘 경로 비교
         result = compare_path_with_llm(
             points, edges, args.start, args.goal, baseline
         )
