@@ -4,6 +4,7 @@ import math
 import unittest
 
 from backend.app.services.route_comparison_service import (
+    build_compact_route_graph,
     build_edge_weight_lookup,
     compare_path_metrics,
     validate_and_calculate_path_distance,
@@ -55,6 +56,32 @@ class RouteComparisonServiceTest(unittest.TestCase):
     def test_parallel_edges_use_lowest_cost(self):
         weights = build_edge_weight_lookup(self.points, self.edges + [(1, 3, 1.5)])
         self.assertEqual(weights[(1, 3)], 1.5)
+
+    def test_compact_graph_precomputes_edge_weights(self):
+        graph = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    "properties": {"id": 1},
+                },
+                {
+                    "geometry": {"type": "Point", "coordinates": [3, 4]},
+                    "properties": {"id": 2},
+                },
+                {
+                    "geometry": {"type": "MultiLineString"},
+                    "properties": {"startid": 1, "endid": 2, "cost": 0},
+                },
+            ],
+        }
+
+        compact = build_compact_route_graph(graph, "test.geojson")
+
+        self.assertEqual(compact["type"], "CompactRouteGraph")
+        self.assertEqual(compact["source_graph"], "test.geojson")
+        self.assertEqual(compact["nodes"], [1, 2])
+        self.assertEqual(compact["edges"], [{"from": 1, "to": 2, "weight": 5.0}])
 
 
 if __name__ == "__main__":

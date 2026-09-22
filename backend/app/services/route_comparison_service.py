@@ -8,6 +8,46 @@ from __future__ import annotations
 import math
 
 
+def build_compact_route_graph(
+    graph: dict,
+    source_graph: str,
+) -> dict:
+    """Convert route GeoJSON into the smaller graph format sent to an LLM."""
+    points: dict[int, tuple[float, float]] = {}
+    edges: list[tuple[int, int, float]] = []
+
+    for feature in graph.get("features", []):
+        geometry = feature.get("geometry") or {}
+        properties = feature.get("properties") or {}
+        if geometry.get("type") == "Point" and properties.get("id") is not None:
+            coordinates = geometry.get("coordinates") or []
+            if len(coordinates) >= 2:
+                points[int(properties["id"])] = (
+                    float(coordinates[0]),
+                    float(coordinates[1]),
+                )
+        elif properties.get("startid") is not None and properties.get("endid") is not None:
+            edges.append((
+                int(properties["startid"]),
+                int(properties["endid"]),
+                float(properties.get("cost", 0.0)),
+            ))
+
+    edge_weights = build_edge_weight_lookup(points, edges)
+    return {
+        "type": "CompactRouteGraph",
+        "source_graph": source_graph,
+        "directed": True,
+        "weight_rule": "positive cost, otherwise Euclidean node distance",
+        # Coordinates are omitted because every edge weight is already calculated.
+        "nodes": sorted(points),
+        "edges": [
+            {"from": start, "to": end, "weight": weight}
+            for (start, end), weight in sorted(edge_weights.items())
+        ],
+    }
+
+
 def build_edge_weight_lookup(
     points: dict[int, tuple[float, float]],
     edges: list[tuple[int, int, float]],
