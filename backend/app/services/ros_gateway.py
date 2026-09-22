@@ -5,12 +5,16 @@ from __future__ import annotations
 
 # FastAPI 비동기 처리와 ROS 결과 연결 기능 사용
 import asyncio
+
 # Quaternion 및 수치 계산 기능 사용
 import math
+
 # ROS 배포판 환경변수 조회 기능 사용
 import os
+
 # FastAPI 명령을 ROS Thread로 전달하기 위한 Queue 사용
 import queue
+
 # ROS Executor 별도 Thread 실행 기능 사용
 import threading
 
@@ -25,12 +29,14 @@ from action_msgs.msg import (
 )
 
 from geometry_msgs.msg import (
+    PoseStamped,
     PoseWithCovarianceStamped,
     Twist,
     TwistStamped,
 )
 
 from nav2_msgs.action import (
+    FollowWaypoints,
     NavigateToPose,
 )
 
@@ -73,10 +79,10 @@ from .robot_manager import (
     robot_manager,
 )
 
-
 # ============================================================
 # 내부 Command
 # ============================================================
+
 
 # 내부 ROS 명령 데이터 객체 생성 기능 사용
 @dataclass
@@ -102,9 +108,18 @@ class _NavigateCommand:
     result_future: Future
 
 
+@dataclass
+class _FollowWaypointsCommand:
+    robot_id: str
+    waypoints: list[tuple[float, float, float]]
+    frame_id: str
+    result_future: Future
+
+
 # ============================================================
 # Quaternion -> Yaw
 # ============================================================
+
 
 # Quaternion 자세 값을 Yaw 각도로 변환 기능
 def _quaternion_to_yaw(
@@ -114,8 +129,8 @@ def _quaternion_to_yaw(
     w: float,
 ) -> float:
 
-    siny_cosp = (2.0 * (w * z + x * y))
-    cosy_cosp = (1.0 - 2.0 * (y * y + z * z))
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
 
     return math.atan2(
         siny_cosp,
@@ -127,27 +142,18 @@ def _quaternion_to_yaw(
 # Battery Status
 # ============================================================
 
+
 # BatteryState 상태 코드를 문자열 상태로 변환 기능
 def _battery_status_name(
     value: int,
 ) -> str:
 
     status_map = {
-
-        BatteryState.POWER_SUPPLY_STATUS_UNKNOWN:
-            "UNKNOWN",
-
-        BatteryState.POWER_SUPPLY_STATUS_CHARGING:
-            "CHARGING",
-
-        BatteryState.POWER_SUPPLY_STATUS_DISCHARGING:
-            "DISCHARGING",
-
-        BatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING:
-            "NOT_CHARGING",
-
-        BatteryState.POWER_SUPPLY_STATUS_FULL:
-            "FULL",
+        BatteryState.POWER_SUPPLY_STATUS_UNKNOWN: "UNKNOWN",
+        BatteryState.POWER_SUPPLY_STATUS_CHARGING: "CHARGING",
+        BatteryState.POWER_SUPPLY_STATUS_DISCHARGING: "DISCHARGING",
+        BatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING: "NOT_CHARGING",
+        BatteryState.POWER_SUPPLY_STATUS_FULL: "FULL",
     }
 
     return status_map.get(
@@ -160,11 +166,14 @@ def _battery_status_name(
 # ROS Node
 # ============================================================
 
+
 # FMS용 ROS2 Node 생성 및 Robot별 ROS Interface 관리 기능
 class FmsRosNode(Node):
 
     # ROS Node 및 Robot별 Interface 초기화
-    def __init__(self,) -> None:
+    def __init__(
+        self,
+    ) -> None:
         super().__init__("fms_ros_gateway")
 
         # ----------------------------------------------------
@@ -172,26 +181,45 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # FastAPI 명령 전달용 내부 Queue 생성
-        self._queue: queue.SimpleQueue[_CmdVelCommand | _NavigateCommand] = queue.SimpleQueue()
+        self._queue: queue.SimpleQueue[
+            _CmdVelCommand | _NavigateCommand | _FollowWaypointsCommand
+        ] = queue.SimpleQueue()
 
         # ----------------------------------------------------
         # ROS Interface
         # ----------------------------------------------------
 
         # Robot별 cmd_vel Publisher 저장소 생성
-        self._cmd_vel_publishers: dict[str, Any,] = {}
+        self._cmd_vel_publishers: dict[
+            str,
+            Any,
+        ] = {}
 
         # Robot별 NavigateToPose Action Client 저장소 생성
-        self._navigate_clients: dict[str, ActionClient,] = {}
+        self._navigate_clients: dict[
+            str,
+            ActionClient,
+        ] = {}
+
+        self._follow_waypoints_clients: dict[str, ActionClient] = {}
 
         # Robot별 Odom Subscriber 저장소 생성
-        self._odom_subscribers: dict[str, Any,] = {}
+        self._odom_subscribers: dict[
+            str,
+            Any,
+        ] = {}
 
         # Robot별 AMCL Subscriber 저장소 생성
-        self._amcl_subscribers: dict[str,Any,] = {}
+        self._amcl_subscribers: dict[
+            str,
+            Any,
+        ] = {}
 
         # Robot별 BatteryState Subscriber 저장소 생성
-        self._battery_subscribers: dict[str, Any,] = {}
+        self._battery_subscribers: dict[
+            str,
+            Any,
+        ] = {}
 
         # ----------------------------------------------------
         # ROS Distribution
@@ -212,25 +240,21 @@ class FmsRosNode(Node):
         # Humble = Twist
         # Jazzy  = TwistStamped
         # ROS 배포판에 따라 Twist 또는 TwistStamped 사용
-        self._use_twist_stamped = (
-            self._ros_distro
-            != "humble"
-        )
+        self._use_twist_stamped = self._ros_distro != "humble"
 
         # ----------------------------------------------------
         # Robot별 Interface
         # ----------------------------------------------------
 
         # 설정된 Robot 수만큼 ROS Interface 생성
-        for index in range(1, ROBOT_COUNT + 1,):
+        for index in range(
+            1,
+            ROBOT_COUNT + 1,
+        ):
 
-            robot_id = (
-                f"robot{index}"
-            )
+            robot_id = f"robot{index}"
 
-            self._create_robot_interfaces(
-                robot_id
-            )
+            self._create_robot_interfaces(robot_id)
 
         # ----------------------------------------------------
         # Command Queue
@@ -268,45 +292,31 @@ class FmsRosNode(Node):
     ) -> None:
 
         # Robot cmd_vel Topic 이름 생성
-        cmd_vel_topic = (
-            f"/{robot_id}/cmd_vel"
-        )
+        cmd_vel_topic = f"/{robot_id}/cmd_vel"
 
         # Robot odom Topic 이름 생성
-        odom_topic = (
-            f"/{robot_id}/odom"
-        )
+        odom_topic = f"/{robot_id}/odom"
 
         # Robot AMCL pose Topic 이름 생성
-        amcl_topic = (
-            f"/{robot_id}/amcl_pose"
-        )
+        amcl_topic = f"/{robot_id}/amcl_pose"
 
         # Robot battery_state Topic 이름 생성
-        battery_topic = (
-            f"/{robot_id}/battery_state"
-        )
+        battery_topic = f"/{robot_id}/battery_state"
 
         # Robot NavigateToPose Action 이름 생성
-        navigate_action = (
-            f"/{robot_id}/navigate_to_pose"
-        )
+        navigate_action = f"/{robot_id}/navigate_to_pose"
+
+        follow_waypoints_action = f"/{robot_id}/follow_waypoints"
 
         # ----------------------------------------------------
         # cmd_vel Publisher
         # ----------------------------------------------------
 
         # ROS 배포판 기준 cmd_vel 메시지 타입 선택
-        cmd_type = (
-            TwistStamped
-            if self._use_twist_stamped
-            else Twist
-        )
+        cmd_type = TwistStamped if self._use_twist_stamped else Twist
 
         # cmd_vel Publisher 생성
-        self._cmd_vel_publishers[
-            robot_id
-        ] = self.create_publisher(
+        self._cmd_vel_publishers[robot_id] = self.create_publisher(
             cmd_type,
             cmd_vel_topic,
             10,
@@ -317,12 +327,16 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # NavigateToPose Action Client 생성
-        self._navigate_clients[
-            robot_id
-        ] = ActionClient(
+        self._navigate_clients[robot_id] = ActionClient(
             self,
             NavigateToPose,
             navigate_action,
+        )
+
+        self._follow_waypoints_clients[robot_id] = ActionClient(
+            self,
+            FollowWaypoints,
+            follow_waypoints_action,
         )
 
         # ----------------------------------------------------
@@ -330,16 +344,13 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # Odometry Subscriber 생성
-        self._odom_subscribers[
-            robot_id
-        ] = self.create_subscription(
+        self._odom_subscribers[robot_id] = self.create_subscription(
             Odometry,
             odom_topic,
-            lambda msg, rid=robot_id:
-                self._odom_callback(
-                    rid,
-                    msg,
-                ),
+            lambda msg, rid=robot_id: self._odom_callback(
+                rid,
+                msg,
+            ),
             10,
         )
 
@@ -348,16 +359,13 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # AMCL Pose Subscriber 생성
-        self._amcl_subscribers[
-            robot_id
-        ] = self.create_subscription(
+        self._amcl_subscribers[robot_id] = self.create_subscription(
             PoseWithCovarianceStamped,
             amcl_topic,
-            lambda msg, rid=robot_id:
-                self._amcl_callback(
-                    rid,
-                    msg,
-                ),
+            lambda msg, rid=robot_id: self._amcl_callback(
+                rid,
+                msg,
+            ),
             10,
         )
 
@@ -366,22 +374,17 @@ class FmsRosNode(Node):
         # ----------------------------------------------------
 
         # BatteryState Subscriber 생성
-        self._battery_subscribers[
-            robot_id
-        ] = self.create_subscription(
+        self._battery_subscribers[robot_id] = self.create_subscription(
             BatteryState,
             battery_topic,
-            lambda msg, rid=robot_id:
-                self._battery_callback(
-                    rid,
-                    msg,
-                ),
+            lambda msg, rid=robot_id: self._battery_callback(
+                rid,
+                msg,
+            ),
             10,
         )
 
-        self.get_logger().info(
-            f"{robot_id} interfaces created"
-        )
+        self.get_logger().info(f"{robot_id} interfaces created")
 
     # ========================================================
     # Odom Callback
@@ -394,13 +397,9 @@ class FmsRosNode(Node):
         msg: Odometry,
     ) -> None:
 
-        pose = (
-            msg.pose.pose
-        )
+        pose = msg.pose.pose
 
-        twist = (
-            msg.twist.twist
-        )
+        twist = msg.twist.twist
 
         yaw = _quaternion_to_yaw(
             pose.orientation.x,
@@ -411,11 +410,9 @@ class FmsRosNode(Node):
 
         robot_manager.update_odom(
             robot_id,
-
             pose.position.x,
             pose.position.y,
             yaw,
-
             twist.linear.x,
             twist.angular.z,
         )
@@ -433,9 +430,7 @@ class FmsRosNode(Node):
         msg: PoseWithCovarianceStamped,
     ) -> None:
 
-        pose = (
-            msg.pose.pose
-        )
+        pose = msg.pose.pose
 
         yaw = _quaternion_to_yaw(
             pose.orientation.x,
@@ -446,7 +441,6 @@ class FmsRosNode(Node):
 
         robot_manager.update_map_pose(
             robot_id,
-
             pose.position.x,
             pose.position.y,
             yaw,
@@ -465,60 +459,30 @@ class FmsRosNode(Node):
 
         percentage = None
 
-        raw_percentage = (
-            float(
-                msg.percentage
-            )
-        )
+        raw_percentage = float(msg.percentage)
 
-        if (
-            math.isfinite(
-                raw_percentage
-            )
-            and raw_percentage >= 0.0
-        ):
+        if math.isfinite(raw_percentage) and raw_percentage >= 0.0:
 
             # sensor_msgs/BatteryState 표준은
             # 0.0 ~ 1.0
             if raw_percentage <= 1.0:
 
-                percentage = (
-                    raw_percentage
-                    * 100.0
-                )
+                percentage = raw_percentage * 100.0
 
             else:
 
-                percentage = (
-                    raw_percentage
-                )
+                percentage = raw_percentage
 
-        voltage = (
-            float(msg.voltage)
-            if math.isfinite(
-                float(msg.voltage)
-            )
-            else None
-        )
+        voltage = float(msg.voltage) if math.isfinite(float(msg.voltage)) else None
 
-        current = (
-            float(msg.current)
-            if math.isfinite(
-                float(msg.current)
-            )
-            else None
-        )
+        current = float(msg.current) if math.isfinite(float(msg.current)) else None
 
         robot_manager.update_battery(
             robot_id,
-
             round(percentage, 2),
             round(voltage, 2),
             current,
-
-            _battery_status_name(
-                msg.power_supply_status
-            ),
+            _battery_status_name(msg.power_supply_status),
         )
 
     # ========================================================
@@ -560,12 +524,28 @@ class FmsRosNode(Node):
                 result_future=result_future,
             )
         )
- 
+
+    def enqueue_follow_waypoints(
+        self,
+        robot_id: str,
+        waypoints: list[tuple[float, float, float]],
+        frame_id: str,
+        result_future: Future,
+    ) -> None:
+        self._queue.put(
+            _FollowWaypointsCommand(
+                robot_id=robot_id,
+                waypoints=waypoints,
+                frame_id=frame_id,
+                result_future=result_future,
+            )
+        )
+
     # ========================================================
     # Queue
     # ========================================================
 
-   # 내부 Queue의 ROS 명령 분류 및 실행 기능
+    # 내부 Queue의 ROS 명령 분류 및 실행 기능
     def _process_queue(
         self,
     ) -> None:
@@ -574,10 +554,7 @@ class FmsRosNode(Node):
 
             try:
 
-                command = (
-                    self._queue
-                    .get_nowait()
-                )
+                command = self._queue.get_nowait()
 
             except queue.Empty:
 
@@ -589,29 +566,26 @@ class FmsRosNode(Node):
                     command,
                     _CmdVelCommand,
                 ):
-
-                    self._publish_cmd_vel(
-                        command
-                    )
+                    self._publish_cmd_vel(command)
 
                 elif isinstance(
                     command,
                     _NavigateCommand,
                 ):
+                    self._send_navigation_goal(command)
 
-                    self._send_navigation_goal(
-                        command
-                    )
+                elif isinstance(command, _FollowWaypointsCommand):
+                    self._send_follow_waypoints(command)
 
             except Exception as exc:
 
-                self.get_logger().error(
-                    f"ROS command error: "
-                    f"{exc}"
-                )
+                self.get_logger().error(f"ROS command error: " f"{exc}")
 
-                if isinstance(command, _NavigateCommand, ):
-                    if (not command.result_future.done()):
+                if isinstance(
+                    command,
+                    _NavigateCommand,
+                ):
+                    if not command.result_future.done():
                         command.result_future.set_exception(exc)
 
     # ========================================================
@@ -624,44 +598,29 @@ class FmsRosNode(Node):
         command: _CmdVelCommand,
     ) -> None:
 
-        publisher = (self._cmd_vel_publishers.get(command.robot_id))
+        publisher = self._cmd_vel_publishers.get(command.robot_id)
 
         if publisher is None:
 
-            raise ValueError(
-                "Unknown robot: "
-                f"{command.robot_id}"
-            )
+            raise ValueError("Unknown robot: " f"{command.robot_id}")
 
         if self._use_twist_stamped:
 
-            msg = (TwistStamped())
+            msg = TwistStamped()
 
-            msg.header.stamp = (
-                self.get_clock()
-                .now()
-                .to_msg()
-            )
+            msg.header.stamp = self.get_clock().now().to_msg()
 
-            msg.twist.linear.x = (
-                float(command.linear_x)
-            )
+            msg.twist.linear.x = float(command.linear_x)
 
-            msg.twist.angular.z = (
-                float(command.angular_z)
-            )
+            msg.twist.angular.z = float(command.angular_z)
 
         else:
 
             msg = Twist()
 
-            msg.linear.x = (
-                float(command.linear_x)
-            )
+            msg.linear.x = float(command.linear_x)
 
-            msg.angular.z = (
-                float(command.angular_z)
-            )
+            msg.angular.z = float(command.angular_z)
 
         publisher.publish(msg)
 
@@ -675,117 +634,68 @@ class FmsRosNode(Node):
         command: _NavigateCommand,
     ) -> None:
 
-        client = (
-            self._navigate_clients
-            .get(
-                command.robot_id
-            )
-        )
+        client = self._navigate_clients.get(command.robot_id)
 
         if client is None:
 
-            raise ValueError(
-                "Unknown robot: "
-                f"{command.robot_id}"
-            )
+            raise ValueError("Unknown robot: " f"{command.robot_id}")
 
         if not client.server_is_ready():
 
             robot_manager.update_navigation(
                 command.robot_id,
-
-                navigation_state=
-                    "UNAVAILABLE",
-
+                navigation_state="UNAVAILABLE",
                 status="ERROR",
-
-                error_code=
-                    "NAV_SERVER_UNAVAILABLE",
-
-                error_message=
-                    "NavigateToPose server unavailable",
+                error_code="NAV_SERVER_UNAVAILABLE",
+                error_message="NavigateToPose server unavailable",
             )
 
-            if (
-                not command
-                .result_future
-                .done()
-            ):
+            if not command.result_future.done():
 
                 command.result_future.set_result(
                     {
-                        "status":
-                            "ACTION_SERVER_UNAVAILABLE",
-
-                        "robot_id":
-                            command.robot_id,
-
-                        "ui_id":
-                            to_ui_robot_id(
-                                command.robot_id
-                            ),
+                        "status": "ACTION_SERVER_UNAVAILABLE",
+                        "robot_id": command.robot_id,
+                        "ui_id": to_ui_robot_id(command.robot_id),
                     }
                 )
 
             return
 
-        goal = (
-            NavigateToPose.Goal()
-        )
+        goal = NavigateToPose.Goal()
 
-        goal.pose.header.stamp = (
-            self.get_clock()
-            .now()
-            .to_msg()
-        )
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
 
-        goal.pose.header.frame_id = (
-            command.frame_id
-        )
+        goal.pose.header.frame_id = command.frame_id
 
-        goal.pose.pose.position.x = (
-            float(command.x)
-        )
+        goal.pose.pose.position.x = float(command.x)
 
-        goal.pose.pose.position.y = (
-            float(command.y)
-        )
+        goal.pose.pose.position.y = float(command.y)
 
-        goal.pose.pose.orientation.w = (
-            1.0
-        )
+        goal.pose.pose.orientation.w = 1.0
 
         robot_manager.update_navigation(
             command.robot_id,
-
-            navigation_state=
-                "GOAL_SENT",
-
+            navigation_state="GOAL_SENT",
             goal_reached=False,
-
             status="TASK_ASSIGNED",
         )
 
-        send_future = (
-            client.send_goal_async(
-                goal,
-
-                feedback_callback=(
-                    lambda feedback:
-                        self._navigation_feedback(
-                            command.robot_id,
-                            feedback,
-                        )
-                ),
-            )
+        send_future = client.send_goal_async(
+            goal,
+            feedback_callback=(
+                lambda feedback: self._navigation_feedback(
+                    command.robot_id,
+                    feedback,
+                )
+            ),
         )
 
         send_future.add_done_callback(
-            lambda future:
-                self._goal_response(
-                    command,
-                    future,
-                )
+            lambda future: self._goal_response(
+                command,
+                future,
+            )
         )
 
     # ========================================================
@@ -801,40 +711,24 @@ class FmsRosNode(Node):
 
         try:
 
-            goal_handle = (
-                future.result()
-            )
+            goal_handle = future.result()
 
             if not goal_handle.accepted:
 
                 robot_manager.update_navigation(
                     command.robot_id,
-
-                    navigation_state=
-                        "REJECTED",
-
+                    navigation_state="REJECTED",
                     status="ERROR",
-
-                    error_code=
-                        "NAV_GOAL_REJECTED",
-
-                    error_message=
-                        "Navigation goal rejected",
+                    error_code="NAV_GOAL_REJECTED",
+                    error_message="Navigation goal rejected",
                 )
 
-                if (
-                    not command
-                    .result_future
-                    .done()
-                ):
+                if not command.result_future.done():
 
                     command.result_future.set_result(
                         {
-                            "status":
-                                "REJECTED",
-
-                            "robot_id":
-                                command.robot_id,
+                            "status": "REJECTED",
+                            "robot_id": command.robot_id,
                         }
                     )
 
@@ -842,93 +736,49 @@ class FmsRosNode(Node):
 
             robot_manager.update_navigation(
                 command.robot_id,
-
-                navigation_state=
-                    "MOVING",
-
+                navigation_state="MOVING",
                 goal_reached=False,
-
                 status="MOVING",
             )
 
-            if (
-                not command
-                .result_future
-                .done()
-            ):
+            if not command.result_future.done():
 
                 command.result_future.set_result(
                     {
-                        "status":
-                            "ACCEPTED",
-
-                        "robot_id":
-                            command.robot_id,
-
-                        "ui_id":
-                            to_ui_robot_id(
-                                command.robot_id
-                            ),
-
-                        "action":
-                            (
-                                f"/{command.robot_id}"
-                                "/navigate_to_pose"
-                            ),
-
-                        "target":
-                            {
-                                "x":
-                                    command.x,
-
-                                "y":
-                                    command.y,
-
-                                "frame":
-                                    command.frame_id,
-                            },
+                        "status": "ACCEPTED",
+                        "robot_id": command.robot_id,
+                        "ui_id": to_ui_robot_id(command.robot_id),
+                        "action": (f"/{command.robot_id}" "/navigate_to_pose"),
+                        "target": {
+                            "x": command.x,
+                            "y": command.y,
+                            "frame": command.frame_id,
+                        },
                     }
                 )
 
-            result_future = (
-                goal_handle
-                .get_result_async()
-            )
+            result_future = goal_handle.get_result_async()
 
             result_future.add_done_callback(
-                lambda result:
-                    self._navigation_result(
-                        command.robot_id,
-                        result,
-                    )
+                lambda result: self._navigation_result(
+                    command.robot_id,
+                    result,
+                )
             )
 
         except Exception as exc:
 
             robot_manager.update_navigation(
                 command.robot_id,
-
-                navigation_state=
-                    "ERROR",
-
+                navigation_state="ERROR",
                 status="ERROR",
-
-                error_code=
-                    "NAV_GOAL_ERROR",
-
-                error_message=
-                    str(exc),
+                error_code="NAV_GOAL_ERROR",
+                error_message=str(exc),
             )
 
-            if (
-                not command
-                .result_future
-                .done()
-            ):
+            if not command.result_future.done():
 
-                command.result_future.set_exception(
-                    exc
-                )
+                command.result_future.set_exception(exc)
 
     # ========================================================
     # Feedback
@@ -943,25 +793,15 @@ class FmsRosNode(Node):
 
         try:
 
-            feedback = (
-                feedback_msg.feedback
-            )
+            feedback = feedback_msg.feedback
 
-            distance_remaining = float(
-                feedback.distance_remaining
-            )
+            distance_remaining = float(feedback.distance_remaining)
 
             robot_manager.update_navigation(
                 robot_id,
-
-                navigation_state=
-                    "MOVING",
-
+                navigation_state="MOVING",
                 goal_reached=False,
-
-                distance_remaining=
-                    distance_remaining,
-
+                distance_remaining=distance_remaining,
                 status="MOVING",
             )
 
@@ -982,46 +822,26 @@ class FmsRosNode(Node):
 
         try:
 
-            wrapped_result = (
-                future.result()
-            )
+            wrapped_result = future.result()
 
-            result_status = (
-                wrapped_result.status
-            )
+            result_status = wrapped_result.status
 
-            if (
-                result_status
-                == GoalStatus.STATUS_SUCCEEDED
-            ):
+            if result_status == GoalStatus.STATUS_SUCCEEDED:
 
                 robot_manager.update_navigation(
                     robot_id,
-
-                    navigation_state=
-                        "SUCCEEDED",
-
+                    navigation_state="SUCCEEDED",
                     goal_reached=True,
-
-                    distance_remaining=
-                        0.0,
-
+                    distance_remaining=0.0,
                     status="COMPLETED",
                 )
 
-            elif (
-                result_status
-                == GoalStatus.STATUS_CANCELED
-            ):
+            elif result_status == GoalStatus.STATUS_CANCELED:
 
                 robot_manager.update_navigation(
                     robot_id,
-
-                    navigation_state=
-                        "CANCELED",
-
+                    navigation_state="CANCELED",
                     goal_reached=False,
-
                     status="IDLE",
                 )
 
@@ -1029,38 +849,21 @@ class FmsRosNode(Node):
 
                 robot_manager.update_navigation(
                     robot_id,
-
-                    navigation_state=
-                        "FAILED",
-
+                    navigation_state="FAILED",
                     goal_reached=False,
-
                     status="ERROR",
-
-                    error_code=
-                        "NAV_FAILED",
-
-                    error_message=(
-                        "NavigateToPose failed "
-                        f"(status={result_status})"
-                    ),
+                    error_code="NAV_FAILED",
+                    error_message=("NavigateToPose failed " f"(status={result_status})"),
                 )
 
         except Exception as exc:
 
             robot_manager.update_navigation(
                 robot_id,
-
-                navigation_state=
-                    "ERROR",
-
+                navigation_state="ERROR",
                 status="ERROR",
-
-                error_code=
-                    "NAV_RESULT_ERROR",
-
-                error_message=
-                    str(exc),
+                error_code="NAV_RESULT_ERROR",
+                error_message=str(exc),
             )
 
 
@@ -1068,16 +871,19 @@ class FmsRosNode(Node):
 # ROS Gateway
 # ============================================================
 
+
 # FastAPI와 ROS2 Node 사이 실행 환경 관리 기능
 class RosGateway:
 
-    def __init__(self,) -> None:
+    def __init__(
+        self,
+    ) -> None:
 
-        self._node: (FmsRosNode | None) = None
+        self._node: FmsRosNode | None = None
 
-        self._executor: (MultiThreadedExecutor | None) = None
+        self._executor: MultiThreadedExecutor | None = None
 
-        self._thread: (threading.Thread | None) = None
+        self._thread: threading.Thread | None = None
 
         self._started = False
 
@@ -1086,43 +892,33 @@ class RosGateway:
     # ========================================================
 
     # ROS2 초기화 및 FmsRosNode 실행 기능
-    def start(self,) -> None:
+    def start(
+        self,
+    ) -> None:
 
         if self._started:
             return
 
         if not rclpy.ok():
-            rclpy.init(
-                args=None
-            )
+            rclpy.init(args=None)
 
-        self._node = (FmsRosNode())
+        self._node = FmsRosNode()
 
-        self._executor = (
-            MultiThreadedExecutor(
-                num_threads=4
-            )
-        )
+        self._executor = MultiThreadedExecutor(num_threads=4)
 
-        self._executor.add_node(
-            self._node
-        )
+        self._executor.add_node(self._node)
 
-        self._thread = (
-            threading.Thread(
-                target=self._spin,
-                name="fms-ros-gateway",
-                daemon=True,
-            )
+        self._thread = threading.Thread(
+            target=self._spin,
+            name="fms-ros-gateway",
+            daemon=True,
         )
 
         self._started = True
 
         self._thread.start()
 
-        print(
-            " -> ROS Gateway 활성화 완료"
-        )
+        print(" -> ROS Gateway 활성화 완료")
 
     # ========================================================
     # Spin
@@ -1135,10 +931,7 @@ class RosGateway:
 
         try:
 
-            if (
-                self._executor
-                is not None
-            ):
+            if self._executor is not None:
 
                 self._executor.spin()
 
@@ -1146,10 +939,7 @@ class RosGateway:
 
             if self._started:
 
-                print(
-                    " -> [ROS ERROR] "
-                    f"Executor: {exc}"
-                )
+                print(" -> [ROS ERROR] " f"Executor: {exc}")
 
     # ========================================================
     # Stop
@@ -1170,9 +960,7 @@ class RosGateway:
 
             if self._executor is not None:
 
-                self._executor.shutdown(
-                    timeout_sec=2.0
-                )
+                self._executor.shutdown(timeout_sec=2.0)
 
         except Exception:
 
@@ -1180,14 +968,9 @@ class RosGateway:
 
         try:
 
-            if (
-                self._thread is not None
-                and self._thread.is_alive()
-            ):
+            if self._thread is not None and self._thread.is_alive():
 
-                self._thread.join(
-                    timeout=2.0
-                )
+                self._thread.join(timeout=2.0)
 
         except Exception:
 
@@ -1195,15 +978,9 @@ class RosGateway:
 
         try:
 
-            if (
-                self._node is not None
-                and self._executor
-                is not None
-            ):
+            if self._node is not None and self._executor is not None:
 
-                self._executor.remove_node(
-                    self._node
-                )
+                self._executor.remove_node(self._node)
 
         except Exception:
 
@@ -1233,9 +1010,7 @@ class RosGateway:
 
             pass
 
-        print(
-            " -> ROS Gateway 종료"
-        )
+        print(" -> ROS Gateway 종료")
 
     # ========================================================
     # Active
@@ -1247,11 +1022,7 @@ class RosGateway:
         self,
     ) -> bool:
 
-        return (
-            self._started
-            and self._node
-            is not None
-        )
+        return self._started and self._node is not None
 
     # ========================================================
     # 상태
@@ -1263,35 +1034,15 @@ class RosGateway:
     ) -> dict[str, Any]:
 
         return {
-
-            "active":
-                self.active,
-
-            "node":
-                (
-                    "fms_ros_gateway"
-                    if self.active
-                    else None
-                ),
-
-            "robots":
-                robot_manager.snapshots(),
-
+            "active": self.active,
+            "node": ("fms_ros_gateway" if self.active else None),
+            "robots": robot_manager.snapshots(),
             "interfaces": {
-                "pose":
-                    "amcl_pose",
-
-                "odom":
-                    "odom",
-
-                "battery":
-                    "battery_state",
-
-                "sensor":
-                    "sensor_state",
-
-                "navigation":
-                    "navigate_to_pose",
+                "pose": "amcl_pose",
+                "odom": "odom",
+                "battery": "battery_state",
+                "sensor": "sensor_state",
+                "navigation": "navigate_to_pose",
             },
         }
 
@@ -1305,20 +1056,14 @@ class RosGateway:
         robot_id: str,
     ) -> dict:
 
-        return (
-            robot_manager.snapshot(
-                robot_id
-            )
-        )
+        return robot_manager.snapshot(robot_id)
 
     # 전체 Robot 상태 조회 기능
     def robot_states(
         self,
     ) -> list[dict]:
 
-        return (
-            robot_manager.snapshots()
-        )
+        return robot_manager.snapshots()
 
     # ========================================================
     # cmd_vel
@@ -1334,15 +1079,9 @@ class RosGateway:
 
         if not self.active:
 
-            raise RuntimeError(
-                "ROS Gateway inactive"
-            )
+            raise RuntimeError("ROS Gateway inactive")
 
-        backend_id = (
-            normalize_robot_id(
-                robot_id
-            )
-        )
+        backend_id = normalize_robot_id(robot_id)
 
         linear = max(
             -CMD_VEL_MAX_LINEAR,
@@ -1360,9 +1099,7 @@ class RosGateway:
             ),
         )
 
-        assert (
-            self._node is not None
-        )
+        assert self._node is not None
 
         self._node.enqueue_cmd_vel(
             backend_id,
@@ -1371,26 +1108,12 @@ class RosGateway:
         )
 
         return {
-
-            "status":
-                "SUCCESS",
-
-            "robot_id":
-                backend_id,
-
-            "ui_id":
-                to_ui_robot_id(
-                    backend_id
-                ),
-
-            "topic":
-                f"/{backend_id}/cmd_vel",
-
-            "linear_x":
-                linear,
-
-            "angular_z":
-                angular,
+            "status": "SUCCESS",
+            "robot_id": backend_id,
+            "ui_id": to_ui_robot_id(backend_id),
+            "topic": f"/{backend_id}/cmd_vel",
+            "linear_x": linear,
+            "angular_z": angular,
         }
 
     # ========================================================
@@ -1403,19 +1126,13 @@ class RosGateway:
         robot_id: str,
     ) -> dict[str, Any]:
 
-        result = (
-            self.send_cmd_vel(
-                robot_id,
-                0.0,
-                0.0,
-            )
+        result = self.send_cmd_vel(
+            robot_id,
+            0.0,
+            0.0,
         )
 
-        result[
-            "message"
-        ] = (
-            "정지 cmd_vel 전송 완료"
-        )
+        result["message"] = "정지 cmd_vel 전송 완료"
 
         return result
 
@@ -1435,23 +1152,13 @@ class RosGateway:
 
         if not self.active:
 
-            raise RuntimeError(
-                "ROS Gateway inactive"
-            )
+            raise RuntimeError("ROS Gateway inactive")
 
-        backend_id = (
-            normalize_robot_id(
-                robot_id
-            )
-        )
+        backend_id = normalize_robot_id(robot_id)
 
-        result_future: Future = (
-            Future()
-        )
+        result_future: Future = Future()
 
-        assert (
-            self._node is not None
-        )
+        assert self._node is not None
 
         self._node.enqueue_navigate(
             backend_id,
@@ -1463,45 +1170,22 @@ class RosGateway:
 
         try:
 
-            return (
-                await asyncio.wait_for(
-                    asyncio.wrap_future(
-                        result_future
-                    ),
-                    timeout=timeout,
-                )
+            return await asyncio.wait_for(
+                asyncio.wrap_future(result_future),
+                timeout=timeout,
             )
 
         except asyncio.TimeoutError:
 
             return {
-
-                "status":
-                    "TIMEOUT",
-
-                "robot_id":
-                    backend_id,
-
-                "ui_id":
-                    to_ui_robot_id(
-                        backend_id
-                    ),
-
-                "action":
-                    (
-                        f"/{backend_id}"
-                        "/navigate_to_pose"
-                    ),
-
+                "status": "TIMEOUT",
+                "robot_id": backend_id,
+                "ui_id": to_ui_robot_id(backend_id),
+                "action": (f"/{backend_id}" "/navigate_to_pose"),
                 "target": {
-                    "x":
-                        float(x),
-
-                    "y":
-                        float(y),
-
-                    "frame":
-                        frame_id,
+                    "x": float(x),
+                    "y": float(y),
+                    "frame": frame_id,
                 },
             }
 
@@ -1511,6 +1195,4 @@ class RosGateway:
 # ============================================================
 
 # 전체 애플리케이션에서 공유할 RosGateway 객체 생성
-ros_gateway = (
-    RosGateway()
-)
+ros_gateway = RosGateway()
