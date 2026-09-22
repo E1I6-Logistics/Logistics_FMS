@@ -3,7 +3,8 @@
 Provider 인스턴스를 만들어 반환한다.
 
 사용 예:
-    export LLM_PROVIDER=openai      # 또는 anthropic / ollama
+    cp simulation/.env.example simulation/.env
+    # simulation/.env에서 LLM_PROVIDER, 모델, API 키를 설정한다.
     # LLM_PROVIDER가 설정된 별도 Mock Fleet을 실행하고 Zenoh goal을 보내야
     # 비교가 실행된다. --robot-number/--point-id CLI는 FMS API 명령만 보낸다.
     python simulation/mock_fleet.py
@@ -16,8 +17,17 @@ Provider 인스턴스를 만들어 반환한다.
 
 import os
 from importlib import import_module
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .base import LLMPathProvider
+
+
+# 두 진입점(mock_fleet, run_llm_comparison)이 registry를 import한다.
+# 이 시점에 한 번 로드해야 Mock Fleet의 LLM_PROVIDER 활성화 검사에도 반영된다.
+# 이미 셸에 설정된 값은 덮어쓰지 않는다.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 # 선택한 provider 모듈만 import하기 위한 지연 로딩 정보다.
