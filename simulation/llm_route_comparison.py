@@ -30,17 +30,10 @@ else:
     from llm_providers import get_provider
 
 # [LLM 추가] 경로 비교 결과를 DB 대신 JSONL 파일로 누적 저장
-LLM_RESULT_PATH = (
-    Path(__file__).resolve().parent
-    / "llm_route_comparisons.jsonl"
-)
+LLM_RESULT_PATH = Path(__file__).resolve().parent / "llm_route_comparisons.jsonl"
 
 # mock_fleet.py와 동일한 원본 Route Graph를 사용한다.
-ROUTE_GRAPH_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "routes"
-    / "test.geojson"
-)
+ROUTE_GRAPH_PATH = Path(__file__).resolve().parents[1] / "routes" / "test.geojson"
 
 
 def build_edge_weight_lookup(points, edges):
@@ -107,22 +100,14 @@ def validate_and_calculate_path_distance(
     normalized_path = [int(node_id) for node_id in path]
 
     if normalized_path[0] != start_id:
-        raise ValueError(
-            f"시작 노드 불일치: "
-            f"{normalized_path[0]} != {start_id}"
-        )
+        raise ValueError(f"시작 노드 불일치: " f"{normalized_path[0]} != {start_id}")
 
     if normalized_path[-1] != target_id:
-        raise ValueError(
-            f"도착 노드 불일치: "
-            f"{normalized_path[-1]} != {target_id}"
-        )
+        raise ValueError(f"도착 노드 불일치: " f"{normalized_path[-1]} != {target_id}")
 
     for node_id in normalized_path:
         if node_id not in points:
-            raise ValueError(
-                f"존재하지 않는 노드입니다: {node_id}"
-            )
+            raise ValueError(f"존재하지 않는 노드입니다: {node_id}")
 
     edge_weights = build_edge_weight_lookup(
         points,
@@ -139,10 +124,7 @@ def validate_and_calculate_path_distance(
         edge_key = (start, end)
 
         if edge_key not in edge_weights:
-            raise ValueError(
-                f"존재하지 않는 방향성 edge입니다: "
-                f"{start} -> {end}"
-            )
+            raise ValueError(f"존재하지 않는 방향성 edge입니다: " f"{start} -> {end}")
 
         total_distance += edge_weights[edge_key]
 
@@ -185,14 +167,12 @@ def compare_path_with_llm(
         raw_graph = json.load(route_file)
 
     # 기존 알고리즘의 path도 동일한 방식으로 거리를 계산한다.
-    baseline_path, baseline_distance = (
-        validate_and_calculate_path_distance(
-            points,
-            edges,
-            baseline_path,
-            start_id,
-            target_id,
-        )
+    baseline_path, baseline_distance = validate_and_calculate_path_distance(
+        points,
+        edges,
+        baseline_path,
+        start_id,
+        target_id,
     )
 
     # 원본 그래프와 동일한 시작/도착 노드를 LLM에 전달한다.
@@ -203,63 +183,42 @@ def compare_path_with_llm(
     )
 
     # LLM이 반환한 path를 검증하고 거리를 직접 재계산한다.
-    llm_path, llm_recalculated_distance = (
-        validate_and_calculate_path_distance(
-            points,
-            edges,
-            llm_answer["path"],
-            start_id,
-            target_id,
-        )
+    llm_path, llm_recalculated_distance = validate_and_calculate_path_distance(
+        points,
+        edges,
+        llm_answer["path"],
+        start_id,
+        target_id,
     )
 
     provider_key = os.getenv("LLM_PROVIDER", "openai").lower()
     model_env_name = f"{provider_key.upper()}_MODEL"
 
     result = {
-        "timestamp": datetime.now(
-            timezone.utc
-        ).isoformat(),
-
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         # [추가] 어떤 벤더였는지 반드시 남긴다 — 5종 비교 시 필수
         "provider": provider_key,
         "model": os.getenv(model_env_name),
-
         "input": {
             "start_node": start_id,
             "target_node": target_id,
-
             # 실험 재현을 위해 당시 입력 그래프도 함께 저장한다.
             "route_graph": raw_graph,
         },
-
         "baseline": {
             "path": baseline_path,
-            "recalculated_total_distance": (
-                baseline_distance
-            ),
+            "recalculated_total_distance": (baseline_distance),
         },
-
         "llm": {
             "path": llm_path,
-
             # LLM이 직접 말한 값으로 비교하지 않는다.
-            "reported_total_distance": (
-                llm_answer["reported_total_distance"]
-            ),
-
+            "reported_total_distance": (llm_answer["reported_total_distance"]),
             # 실제 비교에는 로컬에서 재계산한 값만 사용한다.
-            "recalculated_total_distance": (
-                llm_recalculated_distance
-            ),
+            "recalculated_total_distance": (llm_recalculated_distance),
         },
-
         "comparison": {
             # 노드 순서가 완전히 같은지 비교한다.
-            "same_path": (
-                baseline_path == llm_path
-            ),
-
+            "same_path": (baseline_path == llm_path),
             # 부동소수점 오차를 고려해 거리를 비교한다.
             "same_distance": math.isclose(
                 baseline_distance,
@@ -267,12 +226,8 @@ def compare_path_with_llm(
                 rel_tol=1e-9,
                 abs_tol=1e-9,
             ),
-
             # LLM 경로가 기준 경로보다 얼마나 길거나 짧은지 기록한다.
-            "distance_difference": (
-                llm_recalculated_distance
-                - baseline_distance
-            ),
+            "distance_difference": (llm_recalculated_distance - baseline_distance),
         },
     }
 

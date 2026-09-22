@@ -26,34 +26,30 @@ from ..services.zenoh_service import (
 from ..services.simulation_gateway import simulation_gateway
 from ..services.mode_service import mode_manager
 
-
-router = APIRouter(
-    tags=["websocket"]
-)
+router = APIRouter(tags=["websocket"])
 
 
 # ============================================================
 # Dashboard Telemetry
 # ============================================================
 
+
 # Dashboard WebSocket Endpoint 생성
-@router.websocket(
-    "/ws/dashboard"
-)
+@router.websocket("/ws/dashboard")
 async def dashboard_websocket(
     websocket: WebSocket,
 ):
 
     # WebSocket 연결을 수락하고 telemetry broadcast 대상에 등록
-    await manager.connect(
-        websocket
-    )
+    await manager.connect(websocket)
 
     try:
-        await websocket.send_json({
-            "type": "system",
-            "data": {"ros": ros_gateway.status_snapshot(), "mode": mode_manager.mode},
-        })
+        await websocket.send_json(
+            {
+                "type": "system",
+                "data": {"ros": ros_gateway.status_snapshot(), "mode": mode_manager.mode},
+            }
+        )
         if mode_manager.mode == "simulation":
             for state in simulation_gateway.robot_snapshots():
                 await websocket.send_json({"type": "telemetry", "data": state})
@@ -74,17 +70,15 @@ async def dashboard_websocket(
     finally:
 
         # 연결이 종료된 Dashboard를 broadcast 대상에서 제거
-        manager.disconnect(
-            websocket
-        )
+        manager.disconnect(websocket)
+
 
 # ============================================================
 # cmd_vel
 # ============================================================
 
-@router.websocket(
-    "/ws/cmd_vel"
-)
+
+@router.websocket("/ws/cmd_vel")
 # 실시간 cmd_vel 제어용 WebSocket 기능
 async def cmd_vel_websocket(
     websocket: WebSocket,
@@ -93,19 +87,14 @@ async def cmd_vel_websocket(
     await websocket.accept()
 
     # 마지막 제어 Robot ID 저장
-    last_robot_id: (
-        str | None
-    ) = None
+    last_robot_id: str | None = None
 
     try:
 
         while True:
 
             # Frontend에서 cmd_vel JSON 데이터 수신
-            data = (
-                await websocket
-                .receive_json()
-            )
+            data = await websocket.receive_json()
 
             # ------------------------------------------------
             # Robot ID
@@ -124,11 +113,8 @@ async def cmd_vel_websocket(
 
                 await websocket.send_json(
                     {
-                        "type":
-                            "error",
-
-                        "message":
-                            "robot_id required",
+                        "type": "error",
+                        "message": "robot_id required",
                     }
                 )
 
@@ -137,11 +123,7 @@ async def cmd_vel_websocket(
             try:
 
                 # Robot ID를 backend 표준 형식으로 변환
-                last_robot_id = (
-                    normalize_robot_id(
-                        raw_robot_id
-                    )
-                )
+                last_robot_id = normalize_robot_id(raw_robot_id)
 
                 # --------------------------------------------
                 # FastAPI
@@ -165,11 +147,8 @@ async def cmd_vel_websocket(
 
                 await websocket.send_json(
                     {
-                        "type":
-                            "error",
-
-                        "message":
-                            str(exc),
+                        "type": "error",
+                        "message": str(exc),
                     }
                 )
 
@@ -178,11 +157,8 @@ async def cmd_vel_websocket(
 
                 await websocket.send_json(
                     {
-                        "type":
-                            "error",
-
-                        "message":
-                            str(exc),
+                        "type": "error",
+                        "message": str(exc),
                     }
                 )
 
@@ -192,11 +168,7 @@ async def cmd_vel_websocket(
 
     except Exception as exc:
 
-        print(
-            " -> [WARN] "
-            "CMD_VEL WebSocket 오류: "
-            f"{exc}"
-        )
+        print(" -> [WARN] " "CMD_VEL WebSocket 오류: " f"{exc}")
 
     # WebSocket 종료 시 안전 정지 처리
     finally:

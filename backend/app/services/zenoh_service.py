@@ -28,10 +28,10 @@ from ..schemas.robot import (
     to_ui_robot_id,
 )
 
-
 # ============================================================
 # Dashboard WebSocket Manager
 # ============================================================
+
 
 class ConnectionManager:
 
@@ -39,9 +39,7 @@ class ConnectionManager:
         self,
     ) -> None:
 
-        self.active_connections: list[
-            WebSocket
-        ] = []
+        self.active_connections: list[WebSocket] = []
 
     async def connect(
         self,
@@ -50,9 +48,7 @@ class ConnectionManager:
 
         await websocket.accept()
 
-        self.active_connections.append(
-            websocket
-        )
+        self.active_connections.append(websocket)
 
     def disconnect(
         self,
@@ -61,38 +57,28 @@ class ConnectionManager:
 
         if websocket in self.active_connections:
 
-            self.active_connections.remove(
-                websocket
-            )
+            self.active_connections.remove(websocket)
 
     async def broadcast(
         self,
         message: dict[str, Any],
     ) -> None:
 
-        dead: list[
-            WebSocket
-        ] = []
+        dead: list[WebSocket] = []
 
         for connection in self.active_connections:
 
             try:
 
-                await connection.send_json(
-                    message
-                )
+                await connection.send_json(message)
 
             except Exception:
 
-                dead.append(
-                    connection
-                )
+                dead.append(connection)
 
         for connection in dead:
 
-            self.disconnect(
-                connection
-            )
+            self.disconnect(connection)
 
 
 manager = ConnectionManager()
@@ -106,40 +92,26 @@ _session = None
 
 _subscriber = None
 
-_loop: Optional[
-    asyncio.AbstractEventLoop
-] = None
+_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 # ============================================================
 # 상태
 # ============================================================
 
+
 def is_ready() -> bool:
 
-    return (
-        _session is not None
-    )
+    return _session is not None
 
 
 def status_snapshot() -> dict[str, Any]:
 
     return {
-
-        "connected":
-            is_ready(),
-
-        "endpoint":
-            ZENOH_ENDPOINT,
-
-        "dashboard_clients":
-            len(
-                manager.active_connections
-            ),
-
-        "role":
-            "fms_native_data",
-
+        "connected": is_ready(),
+        "endpoint": ZENOH_ENDPOINT,
+        "dashboard_clients": len(manager.active_connections),
+        "role": "fms_native_data",
         "subscriptions": [
             "**/telemetry",
         ],
@@ -150,10 +122,10 @@ def status_snapshot() -> dict[str, Any]:
 # Telemetry Payload Parsing
 # ============================================================
 
+
 def _extract_json(
     payload: bytes,
 ) -> Optional[dict[str, Any]]:
-
     """
     Native JSON payload와
     ROS std_msgs/String이 ROS2DDS를 통해 전달된
@@ -166,18 +138,11 @@ def _extract_json(
 
     try:
 
-        text = payload.decode(
-            "utf-8"
-        ).strip()
+        text = payload.decode("utf-8").strip()
 
-        if (
-            text.startswith("{")
-            and text.endswith("}")
-        ):
+        if text.startswith("{") and text.endswith("}"):
 
-            return json.loads(
-                text
-            )
+            return json.loads(text)
 
     except Exception:
 
@@ -201,9 +166,7 @@ def _extract_json(
 
         if match:
 
-            return json.loads(
-                match.group(0)
-            )
+            return json.loads(match.group(0))
 
     except Exception:
 
@@ -216,23 +179,18 @@ def _extract_json(
 # Telemetry Callback
 # ============================================================
 
+
 def _telemetry_listener(
     sample,
 ) -> None:
 
     try:
 
-        topic = str(
-            sample.key_expr
-        )
+        topic = str(sample.key_expr)
 
-        payload = (
-            sample.payload.to_bytes()
-        )
+        payload = sample.payload.to_bytes()
 
-        data = _extract_json(
-            payload
-        )
+        data = _extract_json(payload)
 
         if not data:
 
@@ -244,28 +202,14 @@ def _telemetry_listener(
         # 둘 다 대응
         # ----------------------------------------------------
 
-        parts = [
-            part
-            for part
-            in topic.split("/")
-            if (
-                part
-                and part != "rt"
-            )
-        ]
+        parts = [part for part in topic.split("/") if (part and part != "rt")]
 
         raw_robot_id = data.get(
             "robot_id",
-            (
-                parts[0]
-                if parts
-                else "robot1"
-            ),
+            (parts[0] if parts else "robot1"),
         )
 
-        robot_id = normalize_robot_id(
-            str(raw_robot_id)
-        )
+        robot_id = normalize_robot_id(str(raw_robot_id))
 
         x = float(
             data.get(
@@ -303,29 +247,13 @@ def _telemetry_listener(
         )
 
         telemetry = {
-
-            "robot_id":
-                robot_id,
-
-            "ui_id":
-                to_ui_robot_id(
-                    robot_id
-                ),
-
-            "x":
-                x,
-
-            "y":
-                y,
-
-            "yaw":
-                yaw,
-
-            "battery":
-                battery,
-
-            "status":
-                status,
+            "robot_id": robot_id,
+            "ui_id": to_ui_robot_id(robot_id),
+            "x": x,
+            "y": y,
+            "yaw": yaw,
+            "battery": battery,
+            "status": status,
         }
 
         if _loop is None:
@@ -355,11 +283,8 @@ def _telemetry_listener(
         asyncio.run_coroutine_threadsafe(
             manager.broadcast(
                 {
-                    "type":
-                        "telemetry",
-
-                    "data":
-                        telemetry,
+                    "type": "telemetry",
+                    "data": telemetry,
                 }
             ),
             _loop,
@@ -367,11 +292,7 @@ def _telemetry_listener(
 
     except Exception as exc:
 
-        print(
-            " -> [WARN] "
-            "Zenoh telemetry 파싱 실패: "
-            f"{exc}"
-        )
+        print(" -> [WARN] " "Zenoh telemetry 파싱 실패: " f"{exc}")
 
 
 async def publish_telemetry(
@@ -389,20 +310,25 @@ async def publish_telemetry(
         try:
             await upsert_robot_state(
                 robot_id,
-                float(data["x"]), float(data["y"]), float(data["yaw"]),
-                float(data["battery"]), str(data["status"]),
+                float(data["x"]),
+                float(data["y"]),
+                float(data["yaw"]),
+                float(data["battery"]),
+                str(data["status"]),
             )
         except Exception:
-            logging.getLogger(__name__).exception("Robot telemetry persistence failed: %s", robot_id)
+            logging.getLogger(__name__).exception(
+                "Robot telemetry persistence failed: %s", robot_id
+            )
 
-    
+
 # ============================================================
 # Zenoh Startup
 # ============================================================
 
+
 def start_zenoh(
-    event_loop:
-        asyncio.AbstractEventLoop,
+    event_loop: asyncio.AbstractEventLoop,
 ) -> None:
 
     global _loop
@@ -430,11 +356,7 @@ def start_zenoh(
 
         config.insert_json5(
             "connect/endpoints",
-            json.dumps(
-                [
-                    ZENOH_ENDPOINT
-                ]
-            ),
+            json.dumps([ZENOH_ENDPOINT]),
         )
 
         # ----------------------------------------------------
@@ -451,19 +373,15 @@ def start_zenoh(
             "false",
         )
 
-        _session = zenoh.open(
-            config
-        )
+        _session = zenoh.open(config)
 
         # ----------------------------------------------------
         # FMS Telemetry
         # ----------------------------------------------------
 
-        _subscriber = (
-            _session.declare_subscriber(
-                "**/telemetry",
-                _telemetry_listener,
-            )
+        _subscriber = _session.declare_subscriber(
+            "**/telemetry",
+            _telemetry_listener,
         )
 
         print(
@@ -477,17 +395,13 @@ def start_zenoh(
         _session = None
         _subscriber = None
 
-        print(
-            " -> [WARN] "
-            "Native Zenoh 연결 실패. "
-            "Map/API는 계속 실행: "
-            f"{exc}"
-        )
+        print(" -> [WARN] " "Native Zenoh 연결 실패. " "Map/API는 계속 실행: " f"{exc}")
 
 
 # ============================================================
 # Zenoh Shutdown
 # ============================================================
+
 
 def stop_zenoh() -> None:
 
@@ -519,6 +433,4 @@ def stop_zenoh() -> None:
     _session = None
     _loop = None
 
-    print(
-        " -> FMS Native Zenoh 종료"
-    )
+    print(" -> FMS Native Zenoh 종료")

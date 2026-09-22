@@ -26,7 +26,8 @@ INITIAL_POINT_IDS = {"robot1": 0, "robot2": 1, "robot3": 2}
 ROBOT_SPEED = 0.25
 TELEMETRY_PERIOD = 0.3
 
-#Geojson 맵 points, edges 파싱
+
+# Geojson 맵 points, edges 파싱
 def load_route_graph():
     with ROUTE_GRAPH_PATH.open("r", encoding="utf-8") as route_file:
         graph = json.load(route_file)
@@ -53,7 +54,8 @@ def load_route_graph():
         raise ValueError(f"Route graph에 Point 노드가 없습니다: {ROUTE_GRAPH_PATH}")
     return points, edges
 
-#Node, Edge, 시작 Node, 도착 Node 를 통한 최단거리 루트 추출
+
+# Node, Edge, 시작 Node, 도착 Node 를 통한 최단거리 루트 추출
 def shortest_path(points, edges, start_id, target_id):
     if start_id not in points or target_id not in points:
         raise ValueError(f"존재하지 않는 Point id입니다: {start_id}, {target_id}")
@@ -62,8 +64,8 @@ def shortest_path(points, edges, start_id, target_id):
     for start, end, cost in edges:
         if start not in points or end not in points:
             continue
-        start_x, start_y = points[start] #시작 노드 좌표
-        end_x, end_y = points[end] #도착 노드
+        start_x, start_y = points[start]  # 시작 노드 좌표
+        end_x, end_y = points[end]  # 도착 노드
         weight = cost if cost > 0 else math.hypot(end_x - start_x, end_y - start_y)
         adjacency[start].append((end, weight))
 
@@ -122,10 +124,12 @@ def parse_route_arguments(args):
 def dispatch_goal_command(fms_url, robot_number, point_id):
     """Send the same node command used by the frontend and real robots."""
     endpoint = f"{fms_url.rstrip('/')}/api/command/goal-node"
-    body = json.dumps({
-        "robot_id": f"robot{robot_number}",
-        "node_id": point_id,
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "robot_id": f"robot{robot_number}",
+            "node_id": point_id,
+        }
+    ).encode("utf-8")
     command = url_request.Request(
         endpoint,
         data=body,
@@ -176,34 +180,31 @@ def parse_goal_payload(raw_payload):
 
 class FleetSimulatorNode(Node):
     def __init__(self, robot_number=None, point_id=None):
-        super().__init__('fleet_simulator_node')
+        super().__init__("fleet_simulator_node")
         self.points, self.edges = load_route_graph()
-        self.route_robot_id = (
-            f"robot{robot_number}" if robot_number is not None else None
-        )
+        self.route_robot_id = f"robot{robot_number}" if robot_number is not None else None
         self.robot_states = self.build_robot_states(point_id)
-        
+
         # 1. Zenoh 세션 초기화 (기존 인프라 7447 포트 연동)
         conf = zenoh.Config()
         conf.insert_json5("connect/endpoints", '["tcp/127.0.0.1:7447"]')
         # conf.insert_json5("connect/endpoints", '["tcp/10.10.141.15:7447"]')
         self.zenoh_session = zenoh.open(conf)
         self.get_logger().info("-> Zenoh 세션 연결 완료 (fms-zenoh-router:7447)")
-        
 
         # 2. 관제 시스템에서 보내는 Goal 명령 구독 (robot1/goal 예시)
         self.zenoh_session.declare_subscriber("*/goal", self.on_zenoh_goal_received)
 
         # 3. ROS 2 퍼블리셔 선언 (필요시 내부 ROS 2 노드들과 통신용)
         self.goal_publishers = {
-            "robot1": self.create_publisher(PoseStamped, '/robot1/goal_pose', 10),
-            "robot2": self.create_publisher(PoseStamped, '/robot2/goal_pose', 10),
-            "robot3": self.create_publisher(PoseStamped, '/robot3/goal_pose', 10),
+            "robot1": self.create_publisher(PoseStamped, "/robot1/goal_pose", 10),
+            "robot2": self.create_publisher(PoseStamped, "/robot2/goal_pose", 10),
+            "robot3": self.create_publisher(PoseStamped, "/robot3/goal_pose", 10),
         }
 
         # 4. 주기적 텔레메트리 발행을 위한 타이머 설정 (0.3초 주기)
         self.timer = self.create_timer(TELEMETRY_PERIOD, self.publish_telemetry_callback)
-        
+
         self.get_logger().info(
             f"-> [fleet]로봇 3대 ROS 2 시뮬레이터 노드 구동 시작 "
             f"(route={self.route_robot_id or 'none'}:{point_id if point_id is not None else '-'})"
@@ -213,9 +214,7 @@ class FleetSimulatorNode(Node):
         states = {}
         for robot_id in ROBOT_IDS:
             start_id = INITIAL_POINT_IDS[robot_id]
-            target_id = (
-                route_point_id if robot_id == self.route_robot_id else start_id
-            )
+            target_id = route_point_id if robot_id == self.route_robot_id else start_id
             path = shortest_path(self.points, self.edges, start_id, target_id)
 
             # 명령행에서 선택한 로봇의 초기 경로도 LLM과 비교한다.
@@ -234,9 +233,7 @@ class FleetSimulatorNode(Node):
                 "status": "NAVIGATING" if len(path) > 1 else "IDLE",
                 "battery": {"robot1": 95.0, "robot2": 82.5, "robot3": 45.0}[robot_id],
             }
-            self.get_logger().info(
-                f"[{robot_id}] Point {start_id} -> Point {target_id}, 최단 경로: {path}"
-            )
+            self.get_logger().info(f"[{robot_id}] Point {start_id} -> Point {target_id}, 최단 경로: {path}")
         return states
 
     def compare_route_with_llm(
@@ -272,9 +269,7 @@ class FleetSimulatorNode(Node):
 
         except Exception as exc:
             # LLM 또는 네트워크가 실패해도 기존 로봇 이동은 중단하지 않는다.
-            self.get_logger().error(
-                f"[{robot_id}] LLM 경로 비교 실패: {exc}"
-            )
+            self.get_logger().error(f"[{robot_id}] LLM 경로 비교 실패: {exc}")
 
     def advance_robot(self, state):
         while state["segment"] < len(state["path"]) - 1:
@@ -313,8 +308,7 @@ class FleetSimulatorNode(Node):
     def find_nearest_point_id(self, x, y):
         return min(
             self.points,
-            key=lambda point_id: (self.points[point_id][0] - x) ** 2
-            + (self.points[point_id][1] - y) ** 2,
+            key=lambda point_id: (self.points[point_id][0] - x) ** 2 + (self.points[point_id][1] - y) ** 2,
         )
 
     def update_robot_goal(self, robot_id, target_x, target_y):
@@ -346,19 +340,17 @@ class FleetSimulatorNode(Node):
         state["status"] = "NAVIGATING" if len(new_path) > 1 else "IDLE"
 
         self.get_logger().info(
-            f"[{robot_id}] 목표 경로 갱신: "
-            f"Point {current_point_id} -> Point {target_point_id}, "
-            f"경로={new_path}"
+            f"[{robot_id}] 목표 경로 갱신: " f"Point {current_point_id} -> Point {target_point_id}, " f"경로={new_path}"
         )
 
     def on_zenoh_goal_received(self, sample):
         """관제 웹에서 Zenoh로 보낸 주행 목표를 수신하여 ROS 2 토픽으로 전환"""
         try:
             topic = str(sample.key_expr)
-            robot_id = topic.split('/')[0]
+            robot_id = topic.split("/")[0]
             payload = parse_goal_payload(sample.payload.to_bytes())
-            target_x = float(payload['x'])
-            target_y = float(payload['y'])            
+            target_x = float(payload["x"])
+            target_y = float(payload["y"])
             self.get_logger().info(f"[{robot_id}] Zenoh Goal 수신 -> X: {target_x}, Y: {target_y}")
             self.update_robot_goal(robot_id, target_x, target_y)
 
@@ -366,7 +358,7 @@ class FleetSimulatorNode(Node):
             if robot_id in self.goal_publishers:
                 msg = PoseStamped()
                 msg.header.stamp = self.get_clock().now().to_msg()
-                msg.header.frame_id = 'map'
+                msg.header.frame_id = "map"
                 msg.pose.position.x = target_x
                 msg.pose.position.y = target_y
                 msg.pose.orientation.w = 1.0
@@ -388,13 +380,14 @@ class FleetSimulatorNode(Node):
                 "battery": state["battery"],
                 "status": state["status"],
             }
-            
+
             # Zenoh를 통해 중앙 관제 서버로 위치 전송
-            self.zenoh_session.put(f"{robot_id}/telemetry", json.dumps(payload).encode('utf-8'))
+            self.zenoh_session.put(f"{robot_id}/telemetry", json.dumps(payload).encode("utf-8"))
 
     def destroy_node(self):
         self.zenoh_session.close()
         super().destroy_node()
+
 
 def main(args=None):
     route_args, ros_args = parse_route_arguments(args)
@@ -419,5 +412,6 @@ def main(args=None):
         node.destroy_node()
         rclpy.shutdown()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

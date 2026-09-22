@@ -1,5 +1,3 @@
-# Robot 객체 상태 저장 및 갱신
-
 # 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
@@ -31,12 +29,12 @@ from ..schemas.robot import (
 class RobotManager:
 
     # RobotManager 초기 상태 생성
-    def __init__(self,) -> None:
+    def __init__(
+        self,
+    ) -> None:
 
         # Robot 상태 동시 접근 보호용 재진입 Lock 생성
-        self._lock = (
-            RLock()
-        )
+        self._lock = RLock()
 
         # robot_id 기준 Robot 객체 저장소 생성
         self.robots: dict[
@@ -50,9 +48,7 @@ class RobotManager:
             ROBOT_COUNT + 1,
         ):
 
-            robot_id = (
-                f"robot{index}"
-            )
+            robot_id = f"robot{index}"
 
             self.robots[robot_id] = Robot(robot_id=robot_id)
 
@@ -66,13 +62,9 @@ class RobotManager:
         robot: Robot,
     ) -> None:
 
-        robot.last_update = (
-            datetime.now(
-                timezone.utc
-            )
-        )
+        robot.last_update = datetime.now(timezone.utc)
 
-        robot.connection_state = ("ONLINE")
+        robot.connection_state = "ONLINE"
 
         if robot.status == "OFFLINE":
             robot.status = "IDLE"
@@ -88,26 +80,15 @@ class RobotManager:
     ) -> Robot:
 
         # 입력 robot_id를 내부 표준 형식으로 변환
-        backend_id = (
-            normalize_robot_id(
-                robot_id
-            )
-        )
+        backend_id = normalize_robot_id(robot_id)
 
         with self._lock:
 
-            robot = (
-                self.robots.get(
-                    backend_id
-                )
-            )
+            robot = self.robots.get(backend_id)
 
             if robot is None:
 
-                raise KeyError(
-                    "Unknown robot: "
-                    f"{backend_id}"
-                )
+                raise KeyError("Unknown robot: " f"{backend_id}")
 
             return robot
 
@@ -127,26 +108,18 @@ class RobotManager:
 
         with self._lock:
 
-            robot = self.get(
-                robot_id
-            )
+            robot = self.get(robot_id)
 
             robot.x = float(x)
             robot.y = float(y)
             robot.yaw = float(yaw)
 
             # 현재 위치 정보 출처를 AMCL로 설정
-            robot.pose_source = (
-                "AMCL"
-            )
+            robot.pose_source = "AMCL"
 
-            robot.map_pose_received = (
-                True
-            )
+            robot.map_pose_received = True
 
-            self._touch(
-                robot
-            )
+            self._touch(robot)
 
     # ========================================================
     # Odom
@@ -165,33 +138,17 @@ class RobotManager:
 
         with self._lock:
 
-            robot = self.get(
-                robot_id
-            )
+            robot = self.get(robot_id)
 
-            robot.odom_x = (
-                float(x)
-            )
+            robot.odom_x = float(x)
 
-            robot.odom_y = (
-                float(y)
-            )
+            robot.odom_y = float(y)
 
-            robot.odom_yaw = (
-                float(yaw)
-            )
+            robot.odom_yaw = float(yaw)
 
-            robot.linear_velocity = (
-                float(
-                    linear_velocity
-                )
-            )
+            robot.linear_velocity = float(linear_velocity)
 
-            robot.angular_velocity = (
-                float(
-                    angular_velocity
-                )
-            )
+            robot.angular_velocity = float(angular_velocity)
 
             # 아직 AMCL map pose를
             # 한 번도 못 받았다면
@@ -199,25 +156,15 @@ class RobotManager:
             # AMCL 위치 미수신 시 Odom 위치를 임시 위치로 사용
             if not robot.map_pose_received:
 
-                robot.x = (
-                    robot.odom_x
-                )
+                robot.x = robot.odom_x
 
-                robot.y = (
-                    robot.odom_y
-                )
+                robot.y = robot.odom_y
 
-                robot.yaw = (
-                    robot.odom_yaw
-                )
+                robot.yaw = robot.odom_yaw
 
-                robot.pose_source = (
-                    "ODOM"
-                )
+                robot.pose_source = "ODOM"
 
-            self._touch(
-                robot
-            )
+            self._touch(robot)
 
     # ========================================================
     # BatteryState
@@ -235,32 +182,19 @@ class RobotManager:
 
         with self._lock:
 
-            robot = self.get(
-                robot_id
-            )
+            robot = self.get(robot_id)
 
             if percentage is not None:
 
-                robot.battery = (
-                    float(percentage)
-                )
+                robot.battery = float(percentage)
 
-            robot.battery_voltage = (
-                voltage
-            )
+            robot.battery_voltage = voltage
 
-            robot.battery_current = (
-                current
-            )
+            robot.battery_current = current
 
-            robot.battery_status = (
-                status
-            )
+            robot.battery_status = status
 
-            self._touch(
-                robot
-            )
-
+            self._touch(robot)
 
     # ========================================================
     # Motor 상태 확인
@@ -281,7 +215,6 @@ class RobotManager:
 
             self._touch(robot)
 
-
     # ========================================================
     # Navigation
     # ========================================================
@@ -292,65 +225,36 @@ class RobotManager:
         robot_id: str,
         *,
         navigation_state: str,
-        goal_reached: Optional[
-            bool
-        ] = None,
-        distance_remaining: Optional[
-            float
-        ] = None,
-        status: Optional[
-            str
-        ] = None,
-        error_code: Optional[
-            str
-        ] = None,
-        error_message: Optional[
-            str
-        ] = None,
+        goal_reached: Optional[bool] = None,
+        distance_remaining: Optional[float] = None,
+        status: Optional[str] = None,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
     ) -> None:
 
         with self._lock:
 
-            robot = self.get(
-                robot_id
-            )
+            robot = self.get(robot_id)
 
-            robot.navigation_state = (
-                navigation_state
-            )
+            robot.navigation_state = navigation_state
 
             if goal_reached is not None:
 
-                robot.goal_reached = (
-                    goal_reached
-                )
+                robot.goal_reached = goal_reached
 
-            if (
-                distance_remaining
-                is not None
-            ):
+            if distance_remaining is not None:
 
-                robot.distance_remaining = (
-                    float(
-                        distance_remaining
-                    )
-                )
+                robot.distance_remaining = float(distance_remaining)
 
             if status is not None:
 
                 robot.status = status
 
-            robot.error_code = (
-                error_code
-            )
+            robot.error_code = error_code
 
-            robot.error_message = (
-                error_message
-            )
+            robot.error_message = error_message
 
-            self._touch(
-                robot
-            )
+            self._touch(robot)
 
     # ========================================================
     # Offline 판단
@@ -361,45 +265,26 @@ class RobotManager:
         self,
     ) -> None:
 
-        now = datetime.now(
-            timezone.utc
-        )
+        now = datetime.now(timezone.utc)
 
         with self._lock:
 
-            for robot in (
-                self.robots.values()
-            ):
+            for robot in self.robots.values():
 
-                if (
-                    robot.last_update
-                    is None
-                ):
+                if robot.last_update is None:
 
-                    robot.connection_state = (
-                        "OFFLINE"
-                    )
+                    robot.connection_state = "OFFLINE"
 
                     continue
 
                 # 마지막 상태 수신 후 경과 시간 계산
-                elapsed = (
-                    now
-                    - robot.last_update
-                ).total_seconds()
+                elapsed = (now - robot.last_update).total_seconds()
 
-                if (
-                    elapsed
-                    > ROBOT_OFFLINE_TIMEOUT_SEC
-                ):
+                if elapsed > ROBOT_OFFLINE_TIMEOUT_SEC:
 
-                    robot.connection_state = (
-                        "OFFLINE"
-                    )
+                    robot.connection_state = "OFFLINE"
 
-                    robot.status = (
-                        "OFFLINE"
-                    )
+                    robot.status = "OFFLINE"
 
     # ========================================================
     # Snapshot
@@ -415,11 +300,7 @@ class RobotManager:
 
         with self._lock:
 
-            return (
-                self.get(
-                    robot_id
-                ).to_dict()
-            )
+            return self.get(robot_id).to_dict()
 
     # 전체 Robot 현재 상태 목록 생성 기능
     def snapshots(
@@ -430,14 +311,8 @@ class RobotManager:
 
         with self._lock:
 
-            return [
-                robot.to_dict()
-                for robot
-                in self.robots.values()
-            ]
+            return [robot.to_dict() for robot in self.robots.values()]
 
 
 # 전체 애플리케이션에서 공유할 RobotManager 객체 생성
-robot_manager = (
-    RobotManager()
-)
+robot_manager = RobotManager()
