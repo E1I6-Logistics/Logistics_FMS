@@ -1,54 +1,93 @@
-"""코드 최단 경로와 LLM 계산 경로를 같은 그래프 기준으로 비교한다.
+"""Compare code and LLM routes and record reproducible evaluation metrics."""
 
-순서: GeoJSON 확보 → baseline 거리 재계산 → provider로 LLM 요청 →
-LLM 경로 유효성/거리 재계산 → 두 결과 비교 → JSONL 저장.
-모델 선택은 LLM_PROVIDER와 각 벤더의 *_MODEL 환경변수로 제어한다.
-이 파일의 결과는 실험 기록용이며 로봇의 실제 주행 경로를 바꾸지 않는다.
-"""
+from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 from backend.app.services.route_comparison_service import (
-    build_edge_weight_lookup,
     compare_path_metrics,
     validate_and_calculate_path_distance,
 )
 
-# mock_fleet.py를 직접 실행하는 경우와 simulation 패키지로 실행하는 경우를
-# 모두 지원한다.
 if __package__:
     from .llm_providers import get_provider
+    from .llm_providers.base import LLMPathProvider
+    from .summarize_llm_comparisons import write_summary
 else:
     from llm_providers import get_provider
+    from llm_providers.base import LLMPathProvider
+    from summarize_llm_comparisons import write_summary
 
-# 비교 결과는 DB 의존 없이 실험별 한 줄씩 JSONL에 누적한다.
-LLM_RESULT_PATH = (
-    Path(__file__).resolve().parent
-    / "llm_route_comparisons.jsonl"
-)
 
-# 현재 LLM 입력 그래프는 test.geojson으로 고정되어 있다. Mock Fleet의
-# baseline은 FMS_ROUTE_GRAPH를 따르므로 다른 그래프를 지정하면 일치하지 않는다.
-ROUTE_GRAPH_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "routes"
-    / "test.geojson"
-)
+SIMULATION_DIR = Path(__file__).resolve().parent
+LLM_RESULT_PATH = SIMULATION_DIR / "llm_route_comparisons.jsonl"
+LLM_SUMMARY_PATH = SIMULATION_DIR / "llm_route_summary.json"
+ROUTE_DIR = Path(__file__).resolve().parents[1] / "routes"
+
+
+def resolve_llm_route_graph_path(value: str | Path | None = None) -> Path:
+    """Resolve a raw or compact LLM graph under the routes directory."""
+    selected = Path(value or os.getenv("LLM_ROUTE_GRAPH", "test.geojson"))
+    if not selected.is_absolute():
+        selected = ROUTE_DIR / selected
+    selected = selected.resolve()
+    if selected.parent != ROUTE_DIR.resolve():
+        raise ValueError("LLM 입력 그래프는 routes 폴더의 파일만 선택할 수 있습니다.")
+    if not selected.is_file():
+        raise FileNotFoundError(f"LLM 입력 그래프를 찾을 수 없습니다: {selected}")
+    return selected
+
+
+ROUTE_GRAPH_PATH = resolve_llm_route_graph_path()
 
 
 def request_llm_shortest_path(raw_graph, start_id, target_id):
-    """
-    registry가 LLM_PROVIDER에 맞는 구현을 고른 뒤 경로 계산을 요청한다.
-
-    provider 쪽에서 raw_graph, start_id, target_id를 그대로 받아
-    기존과 동일한 스키마({"path": [...], "reported_total_distance": ...})로
-    응답을 돌려준다.
-    """
+    """Ask the provider selected by LLM_PROVIDER for one route."""
     provider = get_provider()
     return provider.compute_shortest_path(raw_graph, start_id, target_id)
+
+
+def _input_metrics(raw_graph: dict, start_id: int, target_id: int) -> dict:
+    payload = {
+        "route_graph": raw_graph,
+        "start_node": start_id,
+        "target_node": target_id,
+        "required_path_endpoints": {"first": start_id, "last": target_id},
+    }
+    prompt = (
+        LLMPathProvider.COMPACT_INSTRUCTIONS
+        if raw_graph.get("type") == "CompactRouteGraph"
+        else LLMPathProvider.INSTRUCTIONS
+    )
+    input_text = prompt + json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    )
+    character_count = len(input_text)
+    return {
+        "input_character_count": character_count,
+        "estimated_input_tokens": math.ceil(character_count / 4),
+    }
+
+
+def _is_timeout_error(error: Exception) -> bool:
+    error_name = type(error).__name__.lower()
+    error_text = str(error).lower()
+    return (
+        isinstance(error, TimeoutError)
+        or "timeout" in error_name
+        or "timed out" in error_text
+    )
+
+
+def _append_result(result: dict) -> None:
+    with LLM_RESULT_PATH.open("a", encoding="utf-8") as result_file:
+        result_file.write(json.dumps(result, ensure_ascii=False) + "\n")
+    write_summary(LLM_RESULT_PATH, LLM_SUMMARY_PATH)
 
 
 def compare_path_with_llm(
@@ -57,109 +96,154 @@ def compare_path_with_llm(
     start_id,
     target_id,
     baseline_path,
+    route_graph_path: str | Path | None = None,
+    max_attempts: int | None = None,
 ):
-    """
-    코드 baseline과 LLM 경로를 검증·비교해 JSONL 한 줄로 저장한다.
-
-    points/edges와 baseline_path는 같은 그래프에서 나온 값이어야 한다.
-    """
-
-    # 1. LLM에는 가공하지 않은 node/edge GeoJSON을 전달한다.
-    with ROUTE_GRAPH_PATH.open(
-        "r",
-        encoding="utf-8",
-    ) as route_file:
-        raw_graph = json.load(route_file)
-
-    # 2. 코드 baseline의 거리도 로컬에서 재계산해 비교 기준을 만든다.
-    baseline_path, baseline_distance = (
-        validate_and_calculate_path_distance(
-            points,
-            edges,
-            baseline_path,
-            start_id,
-            target_id,
-        )
+    """Run the LLM harness and save both successful and failed evaluations."""
+    selected_graph_path = (
+        resolve_llm_route_graph_path(route_graph_path)
+        if route_graph_path is not None
+        else ROUTE_GRAPH_PATH
     )
-
-    # 3. 같은 시작/도착 노드와 그래프를 선택한 LLM provider에 보낸다.
-    llm_answer = request_llm_shortest_path(
-        raw_graph,
+    raw_graph = json.loads(selected_graph_path.read_text(encoding="utf-8"))
+    baseline_path, baseline_distance = validate_and_calculate_path_distance(
+        points, edges, baseline_path, start_id, target_id
+    )
+    print(
+        baseline_path,
+        "   |   ",
+        baseline_distance,
+        "   |   ",
         start_id,
+        "   |   ",
         target_id,
     )
 
-    # 4. LLM 경로가 실제 방향성 edge를 따르는지 확인하고 거리를 재계산한다.
-    llm_path, llm_recalculated_distance = (
-        validate_and_calculate_path_distance(
-            points,
-            edges,
-            llm_answer["path"],
-            start_id,
-            target_id,
-        )
-    )
-
-    provider_key = os.getenv("LLM_PROVIDER", "openai").lower()
+    provider_key = os.getenv("LLM_PROVIDER", "openai").strip().lower()
     model_env_name = f"{provider_key.upper()}_MODEL"
+    attempt_limit = max_attempts or int(os.getenv("LLM_MAX_ATTEMPTS", "1"))
+    if attempt_limit < 1:
+        raise ValueError("LLM_MAX_ATTEMPTS는 1 이상이어야 합니다.")
+
+    attempts: list[dict] = []
+    llm_answer: dict | None = None
+    llm_path: list[int] | None = None
+    llm_distance: float | None = None
+    last_error: Exception | None = None
+
+    for attempt_number in range(1, attempt_limit + 1):
+        started = monotonic()
+        attempt = {
+            "attempt": attempt_number,
+            "json_response_success": False,
+            "valid_path": False,
+            "timed_out": False,
+        }
+        try:
+            llm_answer = request_llm_shortest_path(raw_graph, start_id, target_id)
+            attempt["json_response_success"] = isinstance(llm_answer, dict)
+            llm_path, llm_distance = validate_and_calculate_path_distance(
+                points,
+                edges,
+                llm_answer["path"],
+                start_id,
+                target_id,
+            )
+            attempt["valid_path"] = True
+        except Exception as error:
+            last_error = error
+            attempt["timed_out"] = _is_timeout_error(error)
+            attempt["error_type"] = type(error).__name__
+            attempt["error_message"] = str(error)
+        finally:
+            attempt["response_time_seconds"] = round(monotonic() - started, 6)
+            attempts.append(attempt)
+
+        if attempt["valid_path"]:
+            break
+
+    successful_attempt = next(
+        (item["attempt"] for item in attempts if item["valid_path"]), None
+    )
+    comparison = None
+    if llm_path is not None and llm_distance is not None:
+        comparison = compare_path_metrics(
+            baseline_path, baseline_distance, llm_path, llm_distance
+        )
+
+    total_response_time = sum(item["response_time_seconds"] for item in attempts)
+    realtime_deadline = float(
+        os.getenv("PATH_DECISION_DEADLINE_SECONDS", "0.15")
+    )
+    if realtime_deadline <= 0:
+        raise ValueError("PATH_DECISION_DEADLINE_SECONDS는 0보다 커야 합니다.")
+    metrics = {
+        "json_response_success": any(
+            item["json_response_success"] for item in attempts
+        ),
+        "valid_path": successful_attempt is not None,
+        "shortest_path_match": comparison["same_path"] if comparison else False,
+        "shortest_distance_match": comparison["same_distance"] if comparison else False,
+        "absolute_distance_error": (
+            abs(comparison["distance_difference"]) if comparison else None
+        ),
+        "response_time_seconds": round(total_response_time, 6),
+        "realtime_deadline_seconds": realtime_deadline,
+        # 유효한 경로가 제한 시간 안에 도착해야 실시간 기준을 충족한다.
+        "meets_realtime_deadline": (
+            successful_attempt is not None
+            and total_response_time <= realtime_deadline
+        ),
+        "timed_out": any(item["timed_out"] for item in attempts),
+        "first_attempt_success": successful_attempt == 1,
+        "retry_success": successful_attempt is not None and successful_attempt > 1,
+        "attempt_count": len(attempts),
+        **_input_metrics(raw_graph, start_id, target_id),
+    }
 
     result = {
-        "timestamp": datetime.now(
-            timezone.utc
-        ).isoformat(),
-
-        # 여러 모델의 결과를 구분해 재현할 수 있도록 벤더/모델을 기록한다.
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "success" if successful_attempt is not None else "failed",
         "provider": provider_key,
         "model": os.getenv(model_env_name),
-
+        "prompt_strategy": (
+            "compact-dijkstra"
+            if raw_graph.get("type") == "CompactRouteGraph"
+            else "geojson-dijkstra"
+        ),
         "input": {
             "start_node": start_id,
             "target_node": target_id,
-
-            # 실험 재현을 위해 당시 입력 그래프도 함께 저장한다.
+            "route_graph_file": selected_graph_path.name,
             "route_graph": raw_graph,
         },
-
         "baseline": {
             "path": baseline_path,
-            "recalculated_total_distance": (
-                baseline_distance
-            ),
+            "recalculated_total_distance": baseline_distance,
         },
-
         "llm": {
-            "path": llm_path,
-
-            # LLM이 직접 말한 값으로 비교하지 않는다.
+            # 검증에 실패해도 모델이 실제 반환한 경로를 디버깅할 수 있게 보존한다.
+            "path": (
+                llm_answer.get("path")
+                if isinstance(llm_answer, dict)
+                else None
+            ),
             "reported_total_distance": (
-                llm_answer["reported_total_distance"]
+                llm_answer.get("reported_total_distance")
+                if isinstance(llm_answer, dict)
+                else None
             ),
-
-            # 실제 비교에는 로컬에서 재계산한 값만 사용한다.
-            "recalculated_total_distance": (
-                llm_recalculated_distance
-            ),
+            "recalculated_total_distance": llm_distance,
         },
-
-        "comparison": compare_path_metrics(
-            baseline_path,
-            baseline_distance,
-            llm_path,
-            llm_recalculated_distance,
-        ),
+        "comparison": comparison,
+        "metrics": metrics,
+        "attempts": attempts,
     }
+    if last_error is not None and successful_attempt is None:
+        result["error"] = {
+            "type": type(last_error).__name__,
+            "message": str(last_error),
+        }
 
-    # 5. path·재계산 거리·일치 여부·원본 입력을 한 기록으로 저장한다.
-    with LLM_RESULT_PATH.open(
-        "a",
-        encoding="utf-8",
-    ) as result_file:
-        result_file.write(
-            json.dumps(
-                result,
-                ensure_ascii=False,
-            )
-            + "\n"
-        )
-
+    _append_result(result)
     return result
