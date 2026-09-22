@@ -1,5 +1,12 @@
 {
+  "python.defaultInterpreterPath": "/home/sein/venv/robot/bin/python",
   "python.testing.unittestEnabled": true,
   "python.testing.pytestEnabled": false,
-  "python.testing.unittestArgs": ["-v", "-s", "tests", "-t", ".", "-p", "test_*.py"]
+  "python.testing.unittestArgs": [
+    "-v",
+    "-s",
+    "./tests",
+    "-p",
+    "test_*.py"
+  ]
 }
