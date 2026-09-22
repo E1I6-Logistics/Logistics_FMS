@@ -7,10 +7,15 @@ LLM 경로 유효성/거리 재계산 → 두 결과 비교 → JSONL 저장.
 """
 
 import json
-import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+from backend.app.services.route_comparison_service import (
+    build_edge_weight_lookup,
+    compare_path_metrics,
+    validate_and_calculate_path_distance,
+)
 
 # mock_fleet.py를 직접 실행하는 경우와 simulation 패키지로 실행하는 경우를
 # 모두 지원한다.
@@ -32,109 +37,6 @@ ROUTE_GRAPH_PATH = (
     / "routes"
     / "test.geojson"
 )
-
-
-def build_edge_weight_lookup(points, edges):
-    """
-    코드 플래너와 같은 비용 규칙으로 방향성 edge의 가중치를 계산한다.
-
-    cost > 0 : GeoJSON의 cost 사용
-    cost == 0: 두 노드 좌표의 직선거리 사용
-
-    검증 단계에서 baseline과 LLM 경로 모두에 적용한다.
-    """
-
-    edge_weights = {}
-
-    for start, end, cost in edges:
-        if start not in points or end not in points:
-            continue
-
-        start_x, start_y = points[start]
-        end_x, end_y = points[end]
-
-        weight = (
-            cost
-            if cost > 0
-            else math.hypot(
-                end_x - start_x,
-                end_y - start_y,
-            )
-        )
-
-        edge_key = (start, end)
-
-        # 같은 방향의 edge가 여러 개라면 최소 가중치를 사용한다.
-        edge_weights[edge_key] = min(
-            edge_weights.get(edge_key, math.inf),
-            weight,
-        )
-
-    return edge_weights
-
-
-def validate_and_calculate_path_distance(
-    points,
-    edges,
-    path,
-    start_id,
-    target_id,
-):
-    """
-    전달받은 path가 실제 그래프에서 유효한지 검사하고
-    총거리를 로컬 코드로 다시 계산한다.
-
-    LLM이 반환한 거리값은 기록만 하고 비교에는 사용하지 않는다.
-    모든 provider 응답에 같은 검증 기준을 적용한다.
-    """
-
-    if not isinstance(path, list) or not path:
-        raise ValueError("경로가 비어 있거나 list 형식이 아닙니다.")
-
-    # LLM이 문자열 형태의 node id를 반환해도 정수로 변환한다.
-    normalized_path = [int(node_id) for node_id in path]
-
-    if normalized_path[0] != start_id:
-        raise ValueError(
-            f"시작 노드 불일치: "
-            f"{normalized_path[0]} != {start_id}"
-        )
-
-    if normalized_path[-1] != target_id:
-        raise ValueError(
-            f"도착 노드 불일치: "
-            f"{normalized_path[-1]} != {target_id}"
-        )
-
-    for node_id in normalized_path:
-        if node_id not in points:
-            raise ValueError(
-                f"존재하지 않는 노드입니다: {node_id}"
-            )
-
-    edge_weights = build_edge_weight_lookup(
-        points,
-        edges,
-    )
-
-    total_distance = 0.0
-
-    # 모든 연속 노드 사이에 실제 방향성 edge가 있는지 검사한다.
-    for start, end in zip(
-        normalized_path,
-        normalized_path[1:],
-    ):
-        edge_key = (start, end)
-
-        if edge_key not in edge_weights:
-            raise ValueError(
-                f"존재하지 않는 방향성 edge입니다: "
-                f"{start} -> {end}"
-            )
-
-        total_distance += edge_weights[edge_key]
-
-    return normalized_path, total_distance
 
 
 def request_llm_shortest_path(raw_graph, start_id, target_id):
@@ -239,26 +141,12 @@ def compare_path_with_llm(
             ),
         },
 
-        "comparison": {
-            # 노드 순서가 완전히 같은지 비교한다.
-            "same_path": (
-                baseline_path == llm_path
-            ),
-
-            # 부동소수점 오차를 고려해 거리를 비교한다.
-            "same_distance": math.isclose(
-                baseline_distance,
-                llm_recalculated_distance,
-                rel_tol=1e-9,
-                abs_tol=1e-9,
-            ),
-
-            # LLM 경로가 기준 경로보다 얼마나 길거나 짧은지 기록한다.
-            "distance_difference": (
-                llm_recalculated_distance
-                - baseline_distance
-            ),
-        },
+        "comparison": compare_path_metrics(
+            baseline_path,
+            baseline_distance,
+            llm_path,
+            llm_recalculated_distance,
+        ),
     }
 
     # 5. path·재계산 거리·일치 여부·원본 입력을 한 기록으로 저장한다.
