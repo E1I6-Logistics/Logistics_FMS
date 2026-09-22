@@ -68,7 +68,7 @@ export default function WarehouseMap({
   const [size, setSize] = useState({ width: 600, height: 600 })
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
-  const [raw, setRaw] = useState(false)
+  const raw = false
   const [dragging, setDragging] = useState(false)
   const [mapInfo, setMapInfo] = useState<MapInfoDto | null>(null)
   const [mapImageSrc, setMapImageSrc] = useState('')
@@ -238,7 +238,7 @@ export default function WarehouseMap({
         {/* 로봇별 활성 경로. 도착/정지 telemetry의 route=null이면 자동 해제. */}
         {!raw && layers.route && (
           <g data-testid="robot-routes" pointerEvents="none">
-            {robotStates.filter(robot => visibleRobotIds.includes(robot.id) && robot.route).map(robot => (
+            {robotStates.filter(robot => robot.id === selectedRobot && visibleRobotIds.includes(robot.id) && robot.route).map(robot => (
               <g key={robot.id} data-robot-route={robot.id} data-route-phase={robot.route!.phase}>
                 {robot.route!.edge_ids.map((edgeId, index) => {
                   const from = nodes[robot.route!.node_ids[index]]
@@ -328,28 +328,8 @@ export default function WarehouseMap({
         <span>{Math.round(zoom * 100)}%</span>
       </div>
 
-      <button className="warehouse-map__compare" aria-pressed={raw} onClick={() => setRaw(value => !value)}>
-        {raw ? '디자인 지도 보기' : '원본 비교'}
-      </button>
-
-      {picking && (
-        <div className="warehouse-map__hint">
-          {raw ? '목표를 선택하려면 디자인 지도로 전환하세요' : '지도에서 이동 목표 노드를 선택하세요'}
-        </div>
-      )}
-
       {graphLoading && <div className="warehouse-map__hint">Route Graph 불러오는 중…</div>}
       {graphError && <div className="warehouse-map__hint">Route Graph 오류: {graphError}</div>}
-
-      <div className="warehouse-map__legend">
-        <span><i style={{ background: '#8192A5' }} />실제 구조</span>
-        <span><i style={{ background: '#B9C3CF' }} />GeoJSON 노드·엣지</span>
-        <span><i style={{ background: '#2589F5' }} />로봇</span>
-      </div>
-
-      <div className="warehouse-map__note">
-        노드·엣지: backend GeoJSON · 로봇 위치: telemetry
-      </div>
     </div>
   )
 }

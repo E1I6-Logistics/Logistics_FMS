@@ -92,6 +92,14 @@ export function sendGoalNode(robotId: string, nodeId: string | number) {
   })
 }
 
+export function sendGoalCoordinate(robotId: string, targetX: number, targetY: number) {
+  return request<Record<string, unknown>>('/api/command/goal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robot_id: robotId, target_x: targetX, target_y: targetY }),
+  })
+}
+
 export function stopRobot(robotId: string) {
   return request<Record<string, unknown>>('/api/command/stop', {
     method: 'POST',
