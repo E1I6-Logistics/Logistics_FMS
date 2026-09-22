@@ -1,19 +1,9 @@
-"""
-============================================================
-# LLM 경로 비교 기능 (플러그인 구조 버전)
-============================================================
+"""코드 최단 경로와 LLM 계산 경로를 같은 그래프 기준으로 비교한다.
 
-기존 코드 대비 바뀐 부분은 request_llm_shortest_path() 하나뿐이다.
-build_edge_weight_lookup(), validate_and_calculate_path_distance()는
-원본 그대로이며, compare_path_with_llm()도 로직은 동일하고
-결과에 provider 이름만 추가로 기록한다.
-
-모델·벤더를 바꾸려면 이 파일을 건드릴 필요가 없다 — 환경변수만 바꾸면 됨:
-    LLM_PROVIDER=openai|anthropic|ollama
-    OPENAI_MODEL / ANTHROPIC_MODEL / OLLAMA_MODEL
-
-mock_fleet.py 쪽 통합 코드(#4. 기존 build_robot_states()에 호출 코드만 추가)는
-전혀 수정할 필요가 없다 — compare_path_with_llm()의 시그니처가 그대로이기 때문이다.
+순서: GeoJSON 확보 → baseline 거리 재계산 → provider로 LLM 요청 →
+LLM 경로 유효성/거리 재계산 → 두 결과 비교 → JSONL 저장.
+모델 선택은 LLM_PROVIDER와 각 벤더의 *_MODEL 환경변수로 제어한다.
+이 파일의 결과는 실험 기록용이며 로봇의 실제 주행 경로를 바꾸지 않는다.
 """
 
 import json
@@ -29,13 +19,14 @@ if __package__:
 else:
     from llm_providers import get_provider
 
-# [LLM 추가] 경로 비교 결과를 DB 대신 JSONL 파일로 누적 저장
+# 비교 결과는 DB 의존 없이 실험별 한 줄씩 JSONL에 누적한다.
 LLM_RESULT_PATH = (
     Path(__file__).resolve().parent
     / "llm_route_comparisons.jsonl"
 )
 
-# mock_fleet.py와 동일한 원본 Route Graph를 사용한다.
+# 현재 LLM 입력 그래프는 test.geojson으로 고정되어 있다. Mock Fleet의
+# baseline은 FMS_ROUTE_GRAPH를 따르므로 다른 그래프를 지정하면 일치하지 않는다.
 ROUTE_GRAPH_PATH = (
     Path(__file__).resolve().parents[1]
     / "routes"
@@ -45,13 +36,12 @@ ROUTE_GRAPH_PATH = (
 
 def build_edge_weight_lookup(points, edges):
     """
-    기존 shortest_path()와 동일한 방식으로
-    각 방향성 edge의 실제 가중치를 계산한다.
+    코드 플래너와 같은 비용 규칙으로 방향성 edge의 가중치를 계산한다.
 
     cost > 0 : GeoJSON의 cost 사용
     cost == 0: 두 노드 좌표의 직선거리 사용
 
-    ※ 원본 코드에서 변경 없음.
+    검증 단계에서 baseline과 LLM 경로 모두에 적용한다.
     """
 
     edge_weights = {}
@@ -94,10 +84,8 @@ def validate_and_calculate_path_distance(
     전달받은 path가 실제 그래프에서 유효한지 검사하고
     총거리를 로컬 코드로 다시 계산한다.
 
-    LLM이 반환한 거리값은 여기에서 사용하지 않는다.
-
-    ※ 원본 코드에서 변경 없음 — 어떤 provider(OpenAI/Anthropic/Ollama)가
-      path를 만들었든 동일한 기준으로 검증한다.
+    LLM이 반환한 거리값은 기록만 하고 비교에는 사용하지 않는다.
+    모든 provider 응답에 같은 검증 기준을 적용한다.
     """
 
     if not isinstance(path, list) or not path:
@@ -151,8 +139,7 @@ def validate_and_calculate_path_distance(
 
 def request_llm_shortest_path(raw_graph, start_id, target_id):
     """
-    [변경됨] 기존에는 OpenAI를 직접 호출했지만,
-    이제 LLM_PROVIDER 환경변수가 가리키는 플러그인을 통해 호출한다.
+    registry가 LLM_PROVIDER에 맞는 구현을 고른 뒤 경로 계산을 요청한다.
 
     provider 쪽에서 raw_graph, start_id, target_id를 그대로 받아
     기존과 동일한 스키마({"path": [...], "reported_total_distance": ...})로
@@ -170,21 +157,19 @@ def compare_path_with_llm(
     baseline_path,
 ):
     """
-    기존 shortest_path() 결과와 LLM 결과를 비교하고
-    JSONL 파일에 한 줄씩 저장한다.
+    코드 baseline과 LLM 경로를 검증·비교해 JSONL 한 줄로 저장한다.
 
-    ※ 원본 대비 바뀐 점: 결과에 "provider"(어떤 벤더였는지) 필드를 추가했다.
-      5종 모델을 번갈아 테스트할 때 이게 없으면 나중에 결과를 구분할 수 없다.
+    points/edges와 baseline_path는 같은 그래프에서 나온 값이어야 한다.
     """
 
-    # LLM에 전달할 원본 GeoJSON을 다시 읽는다.
+    # 1. LLM에는 가공하지 않은 node/edge GeoJSON을 전달한다.
     with ROUTE_GRAPH_PATH.open(
         "r",
         encoding="utf-8",
     ) as route_file:
         raw_graph = json.load(route_file)
 
-    # 기존 알고리즘의 path도 동일한 방식으로 거리를 계산한다.
+    # 2. 코드 baseline의 거리도 로컬에서 재계산해 비교 기준을 만든다.
     baseline_path, baseline_distance = (
         validate_and_calculate_path_distance(
             points,
@@ -195,14 +180,14 @@ def compare_path_with_llm(
         )
     )
 
-    # 원본 그래프와 동일한 시작/도착 노드를 LLM에 전달한다.
+    # 3. 같은 시작/도착 노드와 그래프를 선택한 LLM provider에 보낸다.
     llm_answer = request_llm_shortest_path(
         raw_graph,
         start_id,
         target_id,
     )
 
-    # LLM이 반환한 path를 검증하고 거리를 직접 재계산한다.
+    # 4. LLM 경로가 실제 방향성 edge를 따르는지 확인하고 거리를 재계산한다.
     llm_path, llm_recalculated_distance = (
         validate_and_calculate_path_distance(
             points,
@@ -221,7 +206,7 @@ def compare_path_with_llm(
             timezone.utc
         ).isoformat(),
 
-        # [추가] 어떤 벤더였는지 반드시 남긴다 — 5종 비교 시 필수
+        # 여러 모델의 결과를 구분해 재현할 수 있도록 벤더/모델을 기록한다.
         "provider": provider_key,
         "model": os.getenv(model_env_name),
 
@@ -276,7 +261,7 @@ def compare_path_with_llm(
         },
     }
 
-    # DB 대신 JSON Lines 형식으로 실행 결과를 누적한다.
+    # 5. path·재계산 거리·일치 여부·원본 입력을 한 기록으로 저장한다.
     with LLM_RESULT_PATH.open(
         "a",
         encoding="utf-8",

@@ -4,7 +4,9 @@ Provider 인스턴스를 만들어 반환한다.
 
 사용 예:
     export LLM_PROVIDER=openai      # 또는 anthropic / ollama
-    python simulation/mock_fleet.py --robot-number 1 --point-id 10
+    # LLM_PROVIDER가 설정된 별도 Mock Fleet을 실행하고 Zenoh goal을 보내야
+    # 비교가 실행된다. --robot-number/--point-id CLI는 FMS API 명령만 보낸다.
+    python simulation/mock_fleet.py
 
 새 벤더(예: Google Gemini)를 추가하려면:
     1. base.LLMPathProvider를 상속한 새 클래스를 만들고
@@ -28,7 +30,7 @@ _PROVIDERS: dict[str, tuple[str, str]] = {
 
 
 def get_provider() -> LLMPathProvider:
-    """LLM_PROVIDER 환경변수(기본값 openai)에 맞는 Provider 인스턴스를 생성한다."""
+    """선택된 LLM 구현을 생성한다. API 자격 증명은 해당 구현에서 확인한다."""
     provider_key = os.getenv("LLM_PROVIDER", "openai").strip().lower()
 
     if provider_key not in _PROVIDERS:

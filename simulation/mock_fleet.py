@@ -1,3 +1,10 @@
+"""ROS/Zenoh Mock Fleet와 선택적 LLM 경로 비교의 진입점.
+
+실행 흐름은 두 가지다. 목표 인자를 주면 FMS API에 명령만 보내고 종료한다.
+인자 없이 실행하면 Zenoh 목표를 받는 시뮬레이터가 시작되며, 그때
+LLM_PROVIDER가 설정되어 있으면 코드 경로와 LLM 경로를 비교한다.
+"""
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
@@ -23,8 +30,8 @@ from backend.app.services.route_graph import (
 )
 from backend.app.services.route_planner import plan_route
 
-# LLM 제공자별 API 코드는 llm_providers에 두고,
-# mock_fleet에서는 공통 비교 함수만 호출한다.
+# 벤더별 API 호출은 llm_providers에 맡긴다. Mock Fleet은 코드 경로를
+# baseline으로 넘기고, 비교 결과를 로그에 남기는 역할만 담당한다.
 if __package__:
     from .llm_route_comparison import compare_path_with_llm
 else:
@@ -35,8 +42,8 @@ INITIAL_POINT_IDS = {"robot1": 0, "robot2": 1, "robot3": 2}
 ROBOT_SPEED = 0.25
 TELEMETRY_PERIOD = 0.3
 
-# LLM 비교와 로봇 보간에 필요한 기존 points/edges 형식으로 변환한다.
-# 그래프 파일 로딩과 노드 검증은 backend route_graph를 공통으로 사용한다.
+# 1. 공통 route_graph가 읽은 GeoJSON을 LLM 검증과 로봇 보간에 필요한
+# points/edges 형식으로 바꾼다. 별도의 그래프 파일을 다시 읽지 않는다.
 def build_route_inputs(graph):
     points = {
         int(node_id): (
@@ -62,7 +69,10 @@ def build_route_inputs(graph):
     return points, edges
 
 def plan_node_path(graph, start_id, target_id):
-    """backend route_planner의 결과를 기존 정수 node path 형식으로 변환한다."""
+    """2. 공통 플래너의 최단 경로를 기존 정수 node path 형식으로 변환한다.
+
+    이 결과가 로봇 이동 경로이자 LLM 비교의 baseline이다.
+    """
     route = plan_route(str(start_id), str(target_id), graph)
     return [int(node_id) for node_id in route["node_ids"]]
 
@@ -191,7 +201,9 @@ class FleetSimulatorNode(Node):
             )
             path = plan_node_path(self.route_graph, start_id, target_id)
 
-            # 명령행에서 선택한 로봇의 초기 경로도 LLM과 비교한다.
+            # 3. 초기 목표가 지정된 경우 코드 경로를 먼저 구한 뒤 LLM과 비교한다.
+            # 일반 CLI의 목표 인자 경로는 main()에서 API 전송 후 종료하므로
+            # 이 분기는 FleetSimulatorNode를 직접 생성할 때만 실행된다.
             if robot_id == self.route_robot_id and route_point_id is not None:
                 self.compare_route_with_llm(
                     robot_id,
@@ -219,9 +231,13 @@ class FleetSimulatorNode(Node):
         target_id,
         baseline_path,
     ):
-        """선택된 LLM 플러그인으로 기존 최단경로 결과를 비교한다."""
+        """4. 코드 경로와 LLM 경로를 비교하는 보조 실험을 실행한다.
 
-        # LLM_PROVIDER가 없으면 기존 Mock Fleet과 완전히 동일하게 동작한다.
+        주행 경로는 바꾸지 않지만 현재는 동기 호출이라 LLM 응답만큼
+        목표 반영이 늦어질 수 있다.
+        """
+
+        # LLM_PROVIDER가 없으면 API 호출·비교·JSONL 저장을 건너뛴다.
         if not os.getenv("LLM_PROVIDER"):
             return
 
@@ -244,7 +260,8 @@ class FleetSimulatorNode(Node):
             )
 
         except Exception as exc:
-            # LLM 또는 네트워크가 실패해도 기존 로봇 이동은 중단하지 않는다.
+            # 비교는 주행 제어에 관여하지 않는다. 모델/네트워크 오류가 나도
+            # 앞서 코드로 계산한 경로에 따른 이동은 그대로 진행한다.
             self.get_logger().error(
                 f"[{robot_id}] LLM 경로 비교 실패: {exc}"
             )
@@ -304,7 +321,8 @@ class FleetSimulatorNode(Node):
             target_point_id,
         )
 
-        # Zenoh로 새 목표를 받은 경우에도 동일 입력으로 LLM 경로를 비교한다.
+        # 새 Zenoh 목표도 같은 순서다: 코드 경로 계산 → 선택적 LLM 비교
+        # → 실제 로봇 상태에 코드 경로 반영. LLM 결과로 경로를 바꾸지 않는다.
         self.compare_route_with_llm(
             robot_id,
             current_point_id,
@@ -371,8 +389,9 @@ class FleetSimulatorNode(Node):
 def main(args=None):
     route_args, ros_args = parse_route_arguments(args)
 
-    # 목적지가 주어진 실행은 simulator를 하나 더 띄우지 않고 FMS에 명령만 전달한다.
-    # 실제 로봇/시뮬레이션 분기는 프론트에서 선택한 Backend 현재 모드가 담당한다.
+    # CLI 목표 인자는 FMS에 명령만 전달한다. 이 경로는 아래 Node를 만들지 않아
+    # 이 파일의 LLM 비교도 실행하지 않는다. 웹의 simulation_gateway 경로는 별개다.
+    # 실제 로봇/시뮬레이션 분기는 Backend 현재 모드가 담당한다.
     if route_args.robot_number is not None:
         dispatch_goal_command(
             route_args.fms_url,

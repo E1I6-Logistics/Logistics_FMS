@@ -7,11 +7,12 @@ from typing import Any
 
 from .route_graph import load_route_graph, node_lookup
 
-
+#경로 생성
 def plan_route(start_id: str, goal_id: str, graph: dict[str, Any] | None = None) -> dict[str, Any]:
     graph = graph if graph is not None else load_route_graph()
     nodes = node_lookup(graph)
     start_id, goal_id = str(start_id), str(goal_id)
+    
     if start_id not in nodes or goal_id not in nodes:
         raise ValueError(f"존재하지 않는 경로 노드: {start_id} → {goal_id}")
     points = {key: tuple(map(float, node["geometry"]["coordinates"][:2])) for key, node in nodes.items()}

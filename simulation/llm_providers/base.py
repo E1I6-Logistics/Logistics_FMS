@@ -2,10 +2,8 @@
 LLM 경로 계산 플러그인 공통 인터페이스.
 
 모든 벤더별 구현(OpenAI, Anthropic, Ollama 등)은 이 클래스를 상속해서
-compute_shortest_path()만 구현하면 된다.
-llm_route_comparison.request_llm_shortest_path()는 어떤 provider가
-꽂혀도 동일한 방식으로 호출한다 — KAN-49의 "모델 교체 가능한 어댑터"
-설계 목표에 대응하는 부분.
+compute_shortest_path()를 구현한다. 공통 지시문·입력·출력 형식을 두어
+비교 코드가 벤더별 API 차이를 알 필요가 없도록 한다.
 """
 
 from abc import ABC, abstractmethod
