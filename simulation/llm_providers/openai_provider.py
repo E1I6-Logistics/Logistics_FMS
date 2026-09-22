@@ -32,7 +32,9 @@ class OpenAIPathProvider(LLMPathProvider):
         self.model = model or self._require_env("OPENAI_MODEL")
         self._require_env("OPENAI_API_KEY")
         # OPENAI_API_KEY 환경변수를 자동으로 읽는다.
-        self.client = OpenAI()
+        self.client = OpenAI(
+            timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        )
 
     def compute_shortest_path(
         self,
@@ -44,8 +46,8 @@ class OpenAIPathProvider(LLMPathProvider):
 
         response = self.client.responses.create(
             model=self.model,
-            instructions=self.INSTRUCTIONS,
-            input=json.dumps(llm_input, ensure_ascii=False),
+            instructions=self.instructions_for_graph(raw_graph),
+            input=json.dumps(llm_input, ensure_ascii=False, separators=(",", ":")),
             text={
                 "format": {
                     "type": "json_schema",

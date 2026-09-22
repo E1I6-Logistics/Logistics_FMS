@@ -30,7 +30,10 @@ class OllamaPathProvider(LLMPathProvider):
 
         self.model = model or self._require_env("OLLAMA_MODEL")
         # host를 안 주면 ollama 기본값(http://localhost:11434)을 그대로 사용
-        self.client = ollama.Client(host=host or os.getenv("OLLAMA_HOST"))
+        self.client = ollama.Client(
+            host=host or os.getenv("OLLAMA_HOST"),
+            timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "60")),
+        )
 
     def compute_shortest_path(
         self,
@@ -43,10 +46,12 @@ class OllamaPathProvider(LLMPathProvider):
         response = self.client.chat(
             model=self.model,
             messages=[
-                {"role": "system", "content": self.INSTRUCTIONS},
+                {"role": "system", "content": self.instructions_for_graph(raw_graph)},
                 {
                     "role": "user",
-                    "content": json.dumps(llm_input, ensure_ascii=False),
+                    "content": json.dumps(
+                        llm_input, ensure_ascii=False, separators=(",", ":")
+                    ),
                 },
             ],
             # Ollama는 JSON Schema를 format 파라미터에 직접 전달한다.

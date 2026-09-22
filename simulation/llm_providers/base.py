@@ -38,18 +38,64 @@ class LLMPathProvider(ABC):
         raise NotImplementedError
 
     #: 모든 provider가 동일하게 사용하는 시스템 지시문.
-    #: (기존 request_llm_shortest_path()의 instructions 문자열 그대로)
-    INSTRUCTIONS = (
-        "당신은 방향성 그래프의 최단 경로 계산기입니다.\n"
-        "Point feature의 properties.id를 노드 ID로 사용하세요.\n"
-        "Edge feature의 properties.startid에서 "
-        "properties.endid 방향으로만 이동할 수 있습니다.\n"
-        "Edge의 cost가 0보다 크면 cost를 거리로 사용하세요.\n"
-        "cost가 0이면 두 Point 좌표 사이의 "
-        "Euclidean 거리를 사용하세요.\n"
-        "주어진 시작 노드에서 도착 노드까지의 "
-        "최단 경로를 직접 계산하세요."
-    )
+    INSTRUCTIONS = """
+    You are a deterministic shortest-path solver for a directed graph.
+
+    Input:
+    - start_node: the start node ID
+    - target_node: the destination node ID
+    - route_graph: either a GeoJSON FeatureCollection or a CompactRouteGraph
+
+    Graph rules:
+    1. A feature with geometry.type == "Point" is a node.
+    2. Use Point properties.id as the node ID.
+    3. Point coordinates are [x, y].
+    4. A feature containing properties.startid and properties.endid is a directed edge.
+    5. An edge can only be traversed from startid to endid.
+    6. Every pair of consecutive nodes in the returned path must have a valid directed edge.
+
+    CompactRouteGraph rules:
+    1. nodes contains objects with id, x, and y.
+    2. edges contains directed objects with from, to, and precomputed weight.
+    3. Traverse a compact edge only from from to to.
+    4. Use the supplied weight directly; do not recalculate it.
+
+    Distance rules:
+    1. All current edge cost values are 0.
+    2. Calculate each edge weight using the coordinates of its start and end nodes.
+    3. Use this Euclidean distance formula:
+    sqrt((start_x - end_x)^2 + (start_y - end_y)^2)
+    4. The total path distance is the sum of all edge weights.
+
+    Find the valid directed path from start_node to target_node with the minimum
+    total distance.
+
+    Validation before returning:
+    - The path must not be empty.
+    - The first node must equal start_node.
+    - The last node must equal target_node.
+    - Every consecutive node pair must be connected by a directed edge.
+    - Include both the start and target nodes.
+
+    Return only the JSON object required by the provided JSON Schema.
+    Do not include explanations or Markdown.
+    """
+
+    #: 작은 로컬 모델이 불필요한 GeoJSON 규칙을 처리하지 않도록 분리한 지시문.
+    COMPACT_INSTRUCTIONS = """
+    You are a deterministic shortest-path solver.
+    route_graph is a directed weighted graph:
+    - nodes is the list of valid node IDs.
+    - each edge has from, to, and weight.
+    - an edge can only be traversed from from to to.
+    - the path cost is the sum of edge weights.
+
+    Find the minimum-cost path for this request only.
+    The returned path MUST start with start_node and MUST end with target_node.
+    Every consecutive pair in the path MUST match a directed edge.
+    Return only the JSON object required by the JSON Schema.
+    Do not include explanations or Markdown.
+    """
 
     #: 모든 provider가 강제해야 하는 JSON 출력 스키마.
     #: (기존 코드의 shortest_path_result 스키마와 동일)
@@ -60,6 +106,7 @@ class LLMPathProvider(ABC):
             "path": {
                 "type": "array",
                 "items": {"type": "integer"},
+                "minItems": 1,
             },
             "reported_total_distance": {"type": "number"},
         },
@@ -84,7 +131,17 @@ class LLMPathProvider(ABC):
     ) -> dict:
         """세 provider가 공통으로 사용하는 입력 JSON 형태."""
         return {
+            "route_graph": raw_graph,
             "start_node": start_id,
             "target_node": target_id,
-            "route_graph": raw_graph,
+            "required_path_endpoints": {
+                "first": start_id,
+                "last": target_id,
+            },
         }
+
+    def instructions_for_graph(self, graph: dict) -> str:
+        """Choose only the rules needed by the selected graph representation."""
+        if graph.get("type") == "CompactRouteGraph":
+            return self.COMPACT_INSTRUCTIONS
+        return self.INSTRUCTIONS
