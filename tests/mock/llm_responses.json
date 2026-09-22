@@ -1,0 +1,7 @@
+{
+  "_comment": "일치 경로, 대체 경로, 잘못된 엣지, 잘못된 목적지 응답",
+  "matching": {"path": [1, 2, 3], "reported_total_distance": 999},
+  "alternative": {"path": [1, 3], "reported_total_distance": 2},
+  "nonexistent_edge": {"path": [1, 4, 2, 3], "reported_total_distance": 0},
+  "wrong_destination": {"path": [1, 2], "reported_total_distance": 1}
+}
