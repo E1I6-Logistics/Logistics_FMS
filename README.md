@@ -137,6 +137,64 @@ python simulation/run_llm_comparison.py --start 2 --goal 10
 
 `simulation/.env`에서 `LLM_PROVIDER`, 해당 provider의 모델 이름·인증 정보, `LLM_ROUTE_GRAPH`를 설정합니다. Ollama를 선택했다면 서버와 모델을 먼저 준비하세요. `--dry-run`은 모델을 호출하지 않습니다. 실제 비교 결과는 `simulation/llm_route_comparisons.jsonl`, 집계는 `simulation/llm_route_summary.json`에 저장되며 두 파일과 `.env`는 Git에서 제외됩니다. 작은 모델은 유효하지 않은 경로를 반환할 수 있고, 이 경우 비교는 실패로 기록됩니다.
 
+### Ollama 모델 설치 및 변경
+
+로컬 Ollama 모델 사용에는 Ollama 계정 로그인이나 API 키가 필요하지 않습니다. 먼저 설치된 모델과 서버 상태를 확인합니다.
+
+```bash
+ollama list
+curl http://localhost:11434/api/tags
+```
+
+서버가 실행되지 않았다면 별도 터미널에서 `ollama serve`를 실행합니다. 사용할 모델이 없다면 먼저 내려받습니다.
+
+```bash
+ollama pull gemma3:1b
+ollama pull llama3.2:3b
+ollama pull qwen3:4b
+```
+
+기본 모델은 `simulation/.env`의 `OLLAMA_MODEL`로 선택합니다. 모델 ID는 `ollama list`에 표시된 이름을 그대로 입력해야 합니다.
+
+```dotenv
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen3:4b
+OLLAMA_HOST=http://localhost:11434
+LLM_ROUTE_GRAPH=test_compact_graph.geojson
+LLM_TIMEOUT_SECONDS=60
+PATH_DECISION_DEADLINE_SECONDS=0.15
+LLM_MAX_ATTEMPTS=1
+```
+
+설정을 바꾼 후 비교 실행기를 다시 실행하면 새 모델이 적용됩니다.
+
+```bash
+python simulation/run_llm_comparison.py \
+  --start 2 \
+  --goal 10 \
+  --llm-graph test_compact_graph.geojson \
+  --max-attempts 1
+```
+
+`.env`를 수정하지 않고 한 번만 다른 모델을 시험하려면 실행 명령 앞에 환경변수를 지정합니다.
+
+```bash
+OLLAMA_MODEL=llama3.2:3b \
+python simulation/run_llm_comparison.py \
+  --start 2 \
+  --goal 10 \
+  --llm-graph test_compact_graph.geojson
+```
+
+셸에서 이전에 `export OLLAMA_MODEL=...`을 실행했다면 그 값이 `.env`보다 우선합니다. `.env` 설정으로 돌아가려면 다음 명령으로 셸 값을 해제합니다.
+
+```bash
+echo "$OLLAMA_MODEL"
+unset OLLAMA_MODEL
+```
+
+모델을 비교할 때는 시작 노드, 도착 노드, 그래프, 재시도 횟수를 동일하게 유지합니다. 모델별 실행 결과는 `model` 값으로 구분되어 누적됩니다.
+
 Mock Fleet에서 LLM 비교를 사용하려면 ROS 2 환경과 Zenoh Router를 준비한 뒤 `simulation/mock_fleet.py`를 실행합니다. LLM 비교는 선택 사항이며 주행에는 코드로 계산한 경로를 사용합니다. 오프라인 검증 명령은 `python -m unittest discover -s tests -v`입니다.
 
 ## 문제 해결

@@ -42,7 +42,6 @@ def resolve_llm_route_graph_path(value: str | Path | None = None) -> Path:
         raise FileNotFoundError(f"LLM 입력 그래프를 찾을 수 없습니다: {selected}")
     return selected
 
-
 ROUTE_GRAPH_PATH = resolve_llm_route_graph_path()
 
 
@@ -109,15 +108,7 @@ def compare_path_with_llm(
     baseline_path, baseline_distance = validate_and_calculate_path_distance(
         points, edges, baseline_path, start_id, target_id
     )
-    print(
-        baseline_path,
-        "   |   ",
-        baseline_distance,
-        "   |   ",
-        start_id,
-        "   |   ",
-        target_id,
-    )
+    print(baseline_path, "   |   ", baseline_distance)
 
     provider_key = os.getenv("LLM_PROVIDER", "openai").strip().lower()
     model_env_name = f"{provider_key.upper()}_MODEL"

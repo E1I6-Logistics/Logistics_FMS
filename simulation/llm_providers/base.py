@@ -54,12 +54,6 @@ class LLMPathProvider(ABC):
     5. An edge can only be traversed from startid to endid.
     6. Every pair of consecutive nodes in the returned path must have a valid directed edge.
 
-    CompactRouteGraph rules:
-    1. nodes contains objects with id, x, and y.
-    2. edges contains directed objects with from, to, and precomputed weight.
-    3. Traverse a compact edge only from from to to.
-    4. Use the supplied weight directly; do not recalculate it.
-
     Distance rules:
     1. All current edge cost values are 0.
     2. Calculate each edge weight using the coordinates of its start and end nodes.
@@ -83,18 +77,23 @@ class LLMPathProvider(ABC):
 
     #: 작은 로컬 모델이 불필요한 GeoJSON 규칙을 처리하지 않도록 분리한 지시문.
     COMPACT_INSTRUCTIONS = """
-    You are a deterministic shortest-path solver.
-    route_graph is a directed weighted graph:
-    - nodes is the list of valid node IDs.
-    - each edge has from, to, and weight.
-    - an edge can only be traversed from from to to.
-    - the path cost is the sum of edge weights.
+    You are a deterministic shortest-path solver for a directed weighted graph.
 
-    Find the minimum-cost path for this request only.
-    The returned path MUST start with start_node and MUST end with target_node.
-    Every consecutive pair in the path MUST match a directed edge.
-    Return only the JSON object required by the JSON Schema.
-    Do not include explanations or Markdown.
+    Input:
+    - start_node, target_node: node IDs
+    - route_graph: CompactRouteGraph
+    - nodes: [{id, x, y}]  (coordinates are for reference only)
+    - edges: [{from, to, weight}]  (directed)
+
+    Rules:
+    1. Traverse an edge only from "from" to "to".
+    2. Use "weight" exactly as given. Do NOT recalculate from coordinates.
+    3. Find the path with the minimum total weight (e.g. Dijkstra).
+    4. The path must start with start_node, end with target_node,
+    and every consecutive pair must be an existing edge.
+    5. reported_total_distance = sum of weights along the path.
+
+    Return only the JSON object matching the schema. No explanations or Markdown.
     """
 
     #: 모든 provider가 강제해야 하는 JSON 출력 스키마.
@@ -141,7 +140,6 @@ class LLMPathProvider(ABC):
         }
 
     def instructions_for_graph(self, graph: dict) -> str:
-        """Choose only the rules needed by the selected graph representation."""
         if graph.get("type") == "CompactRouteGraph":
             return self.COMPACT_INSTRUCTIONS
         return self.INSTRUCTIONS
