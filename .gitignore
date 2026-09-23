@@ -42,6 +42,7 @@ ENV/
 # ------------------------------------------------------------
 node_modules/
 frontend/node_modules/
+frontend/.pnpm-store/
 
 dist/
 frontend/dist/
@@ -76,17 +77,6 @@ logs/
 
 *.pid
 *.pid.lock
-
-
-# ------------------------------------------------------------
-# Database / Runtime data
-# ------------------------------------------------------------
-*.db
-*.sqlite
-*.sqlite3
-
-postgres_data/
-data/postgres/
 
 
 # ------------------------------------------------------------
@@ -165,3 +155,5 @@ test-results/
 # Documentation
 !doc/
 !doc/**
+
+doc/record_file/

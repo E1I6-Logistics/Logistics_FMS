@@ -1,0 +1,12 @@
+# ============================================================
+# Logistics_FMS Main PC
+# Ubuntu 24.04 / ROS 2 Jazzy
+# Common: x86_64 PC + NVIDIA Jetson aarch64
+# ============================================================
+
+ros-jazzy-rmw-cyclonedds-cpp
+ros-jazzy-rmw-fastrtps-cpp
+ros-jazzy-turtlebot3-msgs
+
+curl
+gnupg

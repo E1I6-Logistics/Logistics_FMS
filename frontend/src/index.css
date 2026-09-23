@@ -1,23 +1,66 @@
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  width: 100%;
+html, body, #root {
   height: 100%;
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  min-width: 900px;
-  font-family: Inter, Pretendard, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+/* ── Responsive layout ── */
+/* nav rail (icon-only, <1024px) */
+.fms-nav-label { display: inline; }
+.fms-nav-wordmark { display: flex; }
+.fms-status-strip { display: flex; }
+.fms-bottom-panel { display: flex; }
+.fms-bottom-toggle { display: none; }
+
+@media (max-width: 1023px) {
+  .fms-nav-label { display: none; }
+  .fms-nav-wordmark { display: none; }
+}
+/* bottom panel toggle at narrow viewport */
+@media (max-width: 767px) {
+  .fms-status-strip { display: none; }
+  .fms-bottom-panel { display: none !important; }
+  .fms-bottom-toggle { display: flex; }
+}
+/* bottom tab bar at mobile */
+.fms-bottom-tabbar { display: none; }
+.fms-left-nav { display: flex; }
+@media (max-width: 479px) {
+  .fms-left-nav { display: none !important; }
+  .fms-bottom-tabbar { display: flex !important; }
+  .fms-status-strip { display: none; }
 }
 
-button,
-input,
-select {
-  font: inherit;
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D1D8E2; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #A8B4C4; }
+
+/* ── Animations ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes log-arrive {
+  0%   { box-shadow: inset 3px 0 0 #1A6FD8; }
+  65%  { box-shadow: inset 3px 0 0 #1A6FD8; }
+  100% { box-shadow: none; }
+}
+.log-row-new { animation: log-arrive 1.8s ease-out forwards; }
+
+/* ── Interactive base ── */
+button { transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s; }
+button:focus-visible { outline: 2px solid #1A6FD8; outline-offset: 2px; border-radius: 4px; }
 

@@ -1,26 +1,7 @@
-# ~/Last_Project/fms_infra/docker-compose.yml
 services:
-  # 1. 중앙 통신 라우터 (7447 포트 개방)
   zenoh-router:
     image: eclipse/zenoh:latest
     container_name: fms-zenoh-router
     network_mode: host
     command: ["--listen", "tcp/0.0.0.0:7447"]
     restart: unless-stopped
-
-  # 2. 로봇 데이터 저장용 DB
-  fms-database:
-    image: postgres:16-alpine
-    container_name: fms-postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: fms_db
-      POSTGRES_USER: fms_admin
-      POSTGRES_PASSWORD: fms_password123
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
