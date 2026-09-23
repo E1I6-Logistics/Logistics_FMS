@@ -288,9 +288,9 @@ python -m pip install \
 
 echo "[7/9] Main FMS / Zenoh"
 
-chmod +x "$PROJECT_DIR/doc/main/install_main.sh"
+chmod +x "$PROJECT_DIR/scripts/main/install_main.sh"
 
-"$PROJECT_DIR/doc/main/install_main.sh"
+"$PROJECT_DIR/scripts/main/install_main.sh"
 
 
 # ============================================================
@@ -323,7 +323,7 @@ cd "$PROJECT_DIR"
 echo "[9/9] Shell environment"
 
 cp \
-    "$PROJECT_DIR/doc/main/bashrc_main.conf" \
+    "$PROJECT_DIR/scripts/main/bashrc_main.conf" \
     "$HOME/.axbashrc"
 
 
@@ -347,7 +347,7 @@ fi
 chmod +x \
     "$PROJECT_DIR/start_fms.sh" \
     "$PROJECT_DIR/stop_fms.sh" \
-    "$PROJECT_DIR/verify_env.sh"
+    "$PROJECT_DIR/scripts/verify_env.sh"
 
 
 # ============================================================
@@ -383,4 +383,4 @@ echo ""
 echo "Then verify:"
 echo ""
 echo "  cd $PROJECT_DIR"
-echo "  ./verify_env.sh"
+echo "  ./scripts/verify_env.sh"
