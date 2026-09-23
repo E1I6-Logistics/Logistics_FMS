@@ -27,38 +27,25 @@
 
 ------------------------------------------------------------------------
 
-## 2. 프로젝트 문서 구조
+## 2. 관련 파일
 
-``` text
+```text
 Logistics_FMS/
-├── backend/
-├── debug/
+├── README.md                         # 프로젝트 개요와 기본 설치·실행
+├── start_fms.sh / stop_fms.sh        # 개발 스택 시작·종료
+├── scripts/
+│   ├── setup.sh / verify_env.sh      # 환경 설치·검증
+│   ├── main/                         # Main PC 설정과 설치
+│   └── robot/                        # 로봇 설정과 설치
 ├── doc/
-│   ├── README.md
-│   ├── main/
-│   │   ├── requirements.txt
-│   │   ├── install_main.sh
-│   │   └── bashrc_main.conf
-│   ├── robot/
-│   │   ├── requirements.txt
-│   │   ├── install_robot.sh
-│   │   └── bashrc_robot.conf
-│   └── record_file/
-│       ├── 기존 README
-│       ├── 과거 테스트 기록
-│       └── 기타 보관 문서
-├── frontend/
-├── infra/
-├── maps/
-├── robots_ws/
-├── routes/
-├── simulation/
-├── setup.sh
-├── verify_env.sh
-├── .env
-├── .env.example
-└── .gitignore
+│   ├── ros2-zenoh-guide.md           # 이 문서
+│   └── backend-control-customization-guide.md
+├── tools/diagnostics/zenoh_monitor.py
+├── backend/ / frontend/ / infra/
+└── maps/ / robots_ws/ / routes/ / simulation/
 ```
+
+특정 시점의 장애 조사 기록은 프로젝트 밖에 보관한다. 현재 백엔드는 모의 데이터를 제공하므로 이 문서의 실장비 통신 절차는 장비 환경에서 별도로 확인해야 한다.
 
 ------------------------------------------------------------------------
 
