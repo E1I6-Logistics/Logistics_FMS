@@ -1,4 +1,5 @@
 """Frontend WebSocket connection registry without external messaging systems."""
+
 from __future__ import annotations
 
 from typing import Any

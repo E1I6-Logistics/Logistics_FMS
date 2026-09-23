@@ -5,13 +5,16 @@ from __future__ import annotations
 
 # 메모리 기반 이미지 바이트 처리 기능 사용
 import io
+
 # 파일 및 디렉터리 경로 처리 기능 사용
 from pathlib import Path
+
 # 다양한 타입 정보 표현 기능 사용
 from typing import Any
 
 # ROS Map YAML 파일 파싱 기능 사용
 import yaml
+
 # Map 이미지 로드 및 변환 기능 사용
 from PIL import Image
 
@@ -20,10 +23,10 @@ from ..config import (
     MAP_YAML_PATH,
 )
 
-
 # ============================================================
 # Map Metadata
 # ============================================================
+
 
 # Map YAML 및 이미지 메타데이터 로드 기능
 def load_map_metadata() -> dict[str, Any]:
@@ -31,9 +34,7 @@ def load_map_metadata() -> dict[str, Any]:
     # Map YAML 파일 존재 여부 확인
     if not MAP_YAML_PATH.exists():
 
-        raise FileNotFoundError(
-            f"Map YAML 파일 없음: {MAP_YAML_PATH}"
-        )
+        raise FileNotFoundError(f"Map YAML 파일 없음: {MAP_YAML_PATH}")
 
     # Map YAML 파일 열기 및 내용 파싱
     with MAP_YAML_PATH.open(
@@ -54,9 +55,7 @@ def load_map_metadata() -> dict[str, Any]:
     # Map 이미지 파일 존재 여부 확인
     if not image_path.exists():
 
-        raise FileNotFoundError(
-            f"Map 이미지 파일 없음: {image_path}"
-        )
+        raise FileNotFoundError(f"Map 이미지 파일 없음: {image_path}")
 
     # Map 이미지 크기 정보 확인
     with Image.open(image_path) as image:
@@ -65,52 +64,35 @@ def load_map_metadata() -> dict[str, Any]:
 
     origin = map_yaml["origin"]
 
-    resolution = float(
-        map_yaml["resolution"]
-    )
+    resolution = float(map_yaml["resolution"])
 
     # Map 메타데이터 사전 생성
     return {
-
-        "yaml_path": str(
-            MAP_YAML_PATH
-        ),
-
-        "image_path": str(
-            image_path
-        ),
-
+        "yaml_path": str(MAP_YAML_PATH),
+        "image_path": str(image_path),
         "image_name": image_path.name,
-
         "resolution": resolution,
-
         "origin": origin,
-
         "negate": int(
             map_yaml.get(
                 "negate",
                 0,
             )
         ),
-
         "occupied_thresh": float(
             map_yaml.get(
                 "occupied_thresh",
                 0.65,
             )
         ),
-
         "free_thresh": float(
             map_yaml.get(
                 "free_thresh",
                 0.25,
             )
         ),
-
         "width": width,
-
         "height": height,
-
         "frame": "map",
     }
 
@@ -118,6 +100,7 @@ def load_map_metadata() -> dict[str, Any]:
 # ============================================================
 # Frontend 공개용 map 정보
 # ============================================================
+
 
 # Frontend 공개용 Map 정보 생성 기능
 def get_public_map_info() -> dict[str, Any]:
@@ -137,14 +120,10 @@ def get_public_map_info() -> dict[str, Any]:
     )
 
     # Frontend Map 이미지 API 경로 설정
-    info["image_url"] = (
-        "/api/map/image"
-    )
+    info["image_url"] = "/api/map/image"
 
     # Map의 World 좌표 영역 추가
-    info["world_bounds"] = (
-        get_world_bounds(info)
-    )
+    info["world_bounds"] = get_world_bounds(info)
 
     return info
 
@@ -153,51 +132,29 @@ def get_public_map_info() -> dict[str, Any]:
 # Map world 영역
 # ============================================================
 
+
 # Map 원점, 해상도, 크기 기준 World 영역 계산 기능
 def get_world_bounds(
     map_info: dict[str, Any] | None = None,
 ) -> dict[str, float]:
 
-    info = (
-        map_info
-        or load_map_metadata()
-    )
+    info = map_info or load_map_metadata()
 
-    origin_x = float(
-        info["origin"][0]
-    )
+    origin_x = float(info["origin"][0])
 
-    origin_y = float(
-        info["origin"][1]
-    )
+    origin_y = float(info["origin"][1])
 
-    resolution = float(
-        info["resolution"]
-    )
+    resolution = float(info["resolution"])
 
-    width = int(
-        info["width"]
-    )
+    width = int(info["width"])
 
-    height = int(
-        info["height"]
-    )
+    height = int(info["height"])
 
     return {
-
         "min_x": origin_x,
-
         "min_y": origin_y,
-
-        "max_x": (
-            origin_x
-            + width * resolution
-        ),
-
-        "max_y": (
-            origin_y
-            + height * resolution
-        ),
+        "max_x": (origin_x + width * resolution),
+        "max_y": (origin_y + height * resolution),
     }
 
 
@@ -205,12 +162,12 @@ def get_world_bounds(
 # ROS world 좌표 -> image pixel 좌표
 # ============================================================
 
+
 # ROS World 좌표를 이미지 Pixel 좌표로 변환 기능
 def world_to_pixel(
     x: float,
     y: float,
 ) -> tuple[float, float]:
-
     """
     ROS Map
 
@@ -231,37 +188,17 @@ def world_to_pixel(
 
     info = load_map_metadata()
 
-    origin_x = float(
-        info["origin"][0]
-    )
+    origin_x = float(info["origin"][0])
 
-    origin_y = float(
-        info["origin"][1]
-    )
+    origin_y = float(info["origin"][1])
 
-    resolution = float(
-        info["resolution"]
-    )
+    resolution = float(info["resolution"])
 
-    height = float(
-        info["height"]
-    )
+    height = float(info["height"])
 
-    px = (
-        float(x)
-        - origin_x
-    ) / resolution
+    px = (float(x) - origin_x) / resolution
 
-    py = (
-        height
-        - (
-            (
-                float(y)
-                - origin_y
-            )
-            / resolution
-        )
-    )
+    py = height - ((float(y) - origin_y) / resolution)
 
     return px, py
 
@@ -270,23 +207,18 @@ def world_to_pixel(
 # PGM -> PNG
 # ============================================================
 
+
 # PGM Map 이미지를 PNG 바이트 데이터로 변환 기능
 def pgm_to_png_bytes() -> bytes:
 
     info = load_map_metadata()
 
-    image_path = Path(
-        info["image_path"]
-    )
+    image_path = Path(info["image_path"])
 
-    with Image.open(
-        image_path
-    ) as image:
+    with Image.open(image_path) as image:
 
         # Map 이미지를 Grayscale 형식으로 변환
-        converted = image.convert(
-            "L"
-        )
+        converted = image.convert("L")
 
         # PNG 결과 저장용 메모리 버퍼 생성
         output = io.BytesIO()

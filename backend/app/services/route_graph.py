@@ -1,4 +1,5 @@
 """Read-only access to the static GeoJSON shown by the frontend."""
+
 from __future__ import annotations
 
 import json

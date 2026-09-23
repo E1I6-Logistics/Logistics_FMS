@@ -1,11 +1,11 @@
 """FMS robot operating mode shared by HTTP and WebSocket handlers."""
+
 from __future__ import annotations
 
 from threading import RLock
 from typing import Literal
 
 from ..config import ROBOT_MODE
-
 
 RobotMode = Literal["real", "simulation"]
 
