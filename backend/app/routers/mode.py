@@ -2,19 +2,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..services.control_gateway import ros_gateway
+from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
-from ..services.simulation_gateway import simulation_gateway
-from ..services.zenoh_service import manager
+from ..services.websocket_manager import manager
 
 
-router = APIRouter(
-    prefix="/api/mode",
-    tags=["mode"],
-)
+router = APIRouter(prefix="/api/mode", tags=["mode"])
 
 
 class ModeRequest(BaseModel):
@@ -24,8 +20,9 @@ class ModeRequest(BaseModel):
 def _snapshot() -> dict[str, object]:
     return {
         "mode": mode_manager.mode,
-        "real_available": ros_gateway.active,
-        "simulation_active": simulation_gateway.active,
+        "real_available": True,
+        "simulation_active": mode_manager.mode == "simulation",
+        "using_mock": True,
     }
 
 
@@ -36,30 +33,10 @@ async def get_mode():
 
 @router.put("")
 async def set_mode(payload: ModeRequest):
-    requested_mode = payload.mode
-    current_mode = mode_manager.mode
-
-    if requested_mode == current_mode:
-        return _snapshot()
-
-    if requested_mode == "real":
-        if not ros_gateway.active:
-            raise HTTPException(
-                status_code=503,
-                detail="ROS Gateway inactive; real robot mode is unavailable",
-            )
-        await simulation_gateway.stop()
-    else:
-        simulation_gateway.start()
-
-    mode_manager.set_mode(requested_mode)
-
-    await manager.broadcast({
-        "type": "system",
-        "data": {
-            "mode": mode_manager.mode,
-            "ros": ros_gateway.status_snapshot(),
-        },
-    })
-
+    mode_manager.set_mode(payload.mode)
+    await manager.broadcast(
+        {"type": "system", "data": {"mode": mode_manager.mode, "source": "mock"}}
+    )
+    for state in mock_fms.robot_snapshots(mode_manager.mode):
+        await manager.broadcast({"type": "telemetry", "data": state})
     return _snapshot()

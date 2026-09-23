@@ -149,22 +149,6 @@ export function getConnections() {
   return request<{ devices: ConnectionDeviceDto[] }>('/api/connections')
 }
 
-export function allowConnection(ip: string) {
-  return request<{ status: string; ip: string; devices: ConnectionDeviceDto[] }>('/api/connections/allow', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ip }),
-  })
-}
-
-export function blockConnection(ip: string) {
-  return request<{ status: string; ip: string; devices: ConnectionDeviceDto[] }>('/api/connections/block', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ip }),
-  })
-}
-
 export function getRobots() {
   return request<RobotStateDto[]>('/api/robots')
 }

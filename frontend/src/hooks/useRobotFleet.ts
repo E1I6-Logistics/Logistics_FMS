@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  allowConnection,
-  blockConnection,
   dashboardWsUrl,
   getConnections,
   getRobotMode,
@@ -168,19 +166,6 @@ export function useRobotFleet() {
     }
   }, [mode, refreshRobots])
 
-  const disconnectRobot = useCallback(async (id: RobotId) => {
-    const backendId = uiToBackendId(id)
-    const device = devices.find(item => item.name === backendId)
-    if (!device) throw new Error(`${id}의 연결 IP를 찾을 수 없습니다.`)
-    const result = await blockConnection(device.ip)
-    setDevices(result.devices)
-  }, [devices])
-
-  const allowRobot = useCallback(async (device: ConnectionDeviceDto) => {
-    const result = await allowConnection(device.ip)
-    setDevices(result.devices)
-  }, [])
-
   const robotIds = useMemo(() => Object.values(robotStates)
     .filter(state => state.mode === mode)
     .map(state => backendToUiId(state.robot_id))
@@ -232,15 +217,7 @@ export function useRobotFleet() {
     : managedRobots.filter(robot => robot.hasPose).map(robot => robot.id),
   [managedRobots, mode, robotIds])
 
-  const availableDevices = useMemo(() => {
-    return devices.filter(device =>
-      backendToUiId(device.name) !== null
-      && (device.connected || device.blocked)
-    )
-  }, [devices])
-
   return {
-    availableDevices,
     managedIds,
     mapRobotIds,
     managedRobots,
@@ -250,7 +227,5 @@ export function useRobotFleet() {
     error,
     refreshConnections,
     changeMode,
-    disconnectRobot,
-    allowRobot,
   }
 }

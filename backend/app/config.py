@@ -55,26 +55,6 @@ ROUTE_GRAPH_PATH = (
 )
 
 
-# ============================================================
-# Robot
-# ============================================================
-
-# FMS에서 관리할 Robot 개수 설정
-ROBOT_COUNT = int(
-    os.getenv(
-        "FMS_ROBOT_COUNT",
-        "3",
-    )
-)
-
-# Robot OFFLINE 판단 시간 설정
-ROBOT_OFFLINE_TIMEOUT_SEC = float(
-    os.getenv(
-        "FMS_ROBOT_OFFLINE_TIMEOUT_SEC",
-        "3.0",
-    )
-)
-
 ROBOT_MODE = os.getenv(
     "FMS_ROBOT_MODE",
     "simulation",
@@ -84,37 +64,6 @@ if ROBOT_MODE not in {"real", "simulation"}:
     raise ValueError(
         "FMS_ROBOT_MODE must be either 'real' or 'simulation'"
     )
-
-TELEMETRY_TIMEOUT_SECONDS = float(
-    os.getenv("FMS_TELEMETRY_TIMEOUT_SECONDS", "5.0")
-)
-
-# Zenoh router endpoint used by real-robot telemetry.
-ZENOH_ENDPOINT = os.getenv(
-    "FMS_ZENOH_ENDPOINT",
-    "tcp/127.0.0.1:7447",
-).strip()
-
-# ============================================================
-# 수동주행 최대 속도
-# ============================================================
-
-# 수동주행 최대 직선 속도 설정
-CMD_VEL_MAX_LINEAR = float(
-    os.getenv(
-        "FMS_CMD_VEL_MAX_LINEAR",
-        "0.5",
-    )
-)
-
-# 수동주행 최대 각속도 설정
-CMD_VEL_MAX_ANGULAR = float(
-    os.getenv(
-        "FMS_CMD_VEL_MAX_ANGULAR",
-        "2.0",
-    )
-)
-
 
 # ============================================================
 # CORS
@@ -129,15 +78,3 @@ CORS_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
-
-
-# ============================================================
-# 알려진 로봇 IP
-# ============================================================
-
-# Robot IP와 robot_id 매핑 정보 관리
-KNOWN_DEVICES = {
-    "10.10.141.220": "robot1",
-    "10.10.141.221": "robot2",
-    "10.10.141.222": "robot3",
-}

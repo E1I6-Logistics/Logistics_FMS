@@ -150,7 +150,6 @@ import sys
 modules = [
     "fastapi",
     "uvicorn",
-    "asyncpg",
     "zenoh",
     "yaml",
     "PIL",

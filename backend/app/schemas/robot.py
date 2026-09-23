@@ -3,13 +3,6 @@ from __future__ import annotations
 
 # Robot ID 형식 검증용 정규표현식 사용
 import re
-# Robot 상태 갱신 시간 표현 기능 사용
-from datetime import datetime
-# 선택적 데이터 타입 표현 기능 사용
-from typing import Optional
-
-# Robot 상태 데이터 검증용 Pydantic 모델 및 Field 사용
-from pydantic import BaseModel, Field
 
 
 # ============================================================
@@ -89,52 +82,3 @@ def to_ui_robot_id(
 
     # 두 자리 형식 Frontend Robot ID 생성
     return f"R-{number:02d}"
-
-
-# ============================================================
-# Robot 상태 Schema
-# ============================================================
-
-# Frontend 및 API용 Robot 상태 Schema 생성
-class RobotState(BaseModel):
-
-    # backend Robot ID 사용
-    robot_id: str
-
-    # Frontend 표시용 Robot ID 사용
-    ui_id: str
-
-    # Robot 기본 상태 IDLE 설정
-    status: str = "IDLE"
-
-    # 배터리 잔량 기본값 및 최소값 검증 설정
-    battery: float = Field(
-        default=100.0,
-        ge=0.0,
-    )
-
-    # Robot X 위치 기본값 설정
-    x: float = 0.0
-
-    # Robot Y 위치 기본값 설정
-    y: float = 0.0
-
-    # Robot 방향 Yaw 기본값 설정
-    yaw: float = 0.0
-
-    # Robot 상태 갱신 시간 선택값 설정
-    updated_at: Optional[datetime] = None
-
-
-# ============================================================
-# Dashboard telemetry event
-# ============================================================
-
-# Dashboard 전달용 Robot Telemetry 이벤트 구조 생성
-class TelemetryEvent(BaseModel):
-
-    # 이벤트 타입 telemetry 기본값 설정
-    type: str = "telemetry"
-
-    # Telemetry 이벤트에 Robot 상태 데이터 사용
-    data: RobotState

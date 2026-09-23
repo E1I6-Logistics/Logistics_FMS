@@ -1,330 +1,67 @@
-# 타입 힌트 지연 평가 기능 사용
 from __future__ import annotations
 
-# FastAPI 시작/종료 Lifecycle 관리 기능 사용
-from contextlib import (
-    asynccontextmanager,
-)
+from contextlib import asynccontextmanager
 
-# FastAPI 애플리케이션 생성 기능 사용
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-# CORS 처리 기능 사용
-from fastapi.middleware.cors import (
-    CORSMiddleware,
-)
-
-# CORS 설정값 사용
-from .config import (
-    CORS_ORIGINS,
-)
-
-# # Database 초기화 및 종료 기능 사용
-# from .database.database import (
-#     close_db,
-#     init_db,
-# )
-
-# Command API Router 사용
-from .routers.commands import (
-    router as commands_router,
-)
-
-# Connection API Router 사용
-from .routers.connections import (
-    router as connections_router,
-)
-
-# Map API Router 사용
-from .routers.map import (
-    router as map_router,
-)
-
-from .routers.mode import (
-    router as mode_router,
-)
-
-# Robot API Router 사용
-from .routers.robots import (
-    router as robots_router,
-)
-
-# WebSocket Router 사용
-from .routers.websocket import (
-    router as websocket_router,
-)
-
-# Map 메타데이터 로드 기능 사용
-from .services.map_service import (
-    load_map_metadata,
-)
-
-# Route Graph 요약 정보 생성 기능 사용
-from .services.route_graph import (
-    graph_summary,
-)
-
-# ROS2 통신용 ROS Gateway 사용
-from .services.control_gateway import (
-    ros_gateway,
-)
-from .services.simulation_gateway import simulation_gateway
+from .config import CORS_ORIGINS
+from .routers.commands import router as commands_router
+from .routers.connections import router as connections_router
+from .routers.map import router as map_router
+from .routers.mode import router as mode_router
+from .routers.robots import router as robots_router
+from .routers.websocket import router as websocket_router
+from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
+from .services.route_graph import load_route_graph
 
 
-# ============================================================
-# FastAPI Lifecycle
-# ============================================================
-
-# FastAPI 시작 및 종료 Lifecycle 관리 기능
-# yield 이전 Startup 처리, yield 이후 Shutdown 처리
 @asynccontextmanager
-async def lifespan(
-    app: FastAPI,
-):
-
-    # --------------------------------------------------------
-    # PostgreSQL
-    # --------------------------------------------------------
-
-# # PostgreSQL 초기화 실행
-#     await init_db()
-
-#     print(
-#         " -> Database 초기화 완료"
-#     )
-
-    # --------------------------------------------------------
-    # Map
-    # --------------------------------------------------------
-
-    try:
-# Map 메타데이터 로드 및 상태 확인
-
-        info = (
-            load_map_metadata()
-        )
-
-        print(
-            " -> Map 로드 완료: "
-            f"{info['image_name']} "
-            f"({info['width']}x"
-            f"{info['height']}, "
-            f"resolution="
-            f"{info['resolution']})"
-        )
-
-# Map 로드 실패 예외 처리
-    except Exception as exc:
-
-        print(
-            " -> [WARN] "
-            "Map 로드 실패: "
-            f"{exc}"
-        )
-
-    # --------------------------------------------------------
-    # Route Graph
-    # --------------------------------------------------------
-
-    try:
-# Route Graph 요약 정보 생성 및 상태 확인
-
-        summary = (
-            graph_summary()
-        )
-
-        print(
-            " -> Route Graph 로드 완료: "
-            f"nodes={summary['nodes']}, "
-            f"edges={summary['edges']}"
-        )
-
-# Route Graph 로드 실패 예외 처리
-    except Exception as exc:
-
-        print(
-            " -> [WARN] "
-            "Route Graph 로드 실패: "
-            f"{exc}"
-        )
-
-    # --------------------------------------------------------
-    # ROS Gateway
-    # --------------------------------------------------------
-
-    try:
-        ros_gateway.start()
-        print(" -> ROS Gateway 활성화")
-    except Exception as exc:
-        print(
-            " -> [WARN] "
-            "ROS Gateway 시작 실패: "
-            f"{exc}"
-        )
-
-    if mode_manager.mode == "simulation":
-        simulation_gateway.start()
-        print(" -> Simulation Gateway 활성화")
-
-    # --------------------------------------------------------
-    # FastAPI
-    # --------------------------------------------------------
-
-    try:
-
-# FastAPI 실제 실행 구간 시작
-        yield
-
-# 서버 종료 시 자원 정리 기능
-    finally:
-
-        # ====================================================
-        # Shutdown
-        # ====================================================
-
-        if simulation_gateway.active:
-            await simulation_gateway.stop()
-
-        try:
-            ros_gateway.stop()
-        except Exception as exc:
-            print(
-                " -> [WARN] "
-                "ROS Gateway 종료 오류: "
-                f"{exc}"
-            )
-
-        print(
-            " -> FMS Backend 종료 완료"
-        )
+async def lifespan(app: FastAPI):
+    """Validate static frontend assets; no external control runtime is started."""
+    load_map_metadata()
+    load_route_graph()
+    yield
 
 
-# ============================================================
-# FastAPI
-# ============================================================
-
-# FastAPI 애플리케이션 생성 및 Lifecycle 연결
 app = FastAPI(
-
-    title=(
-        "E1I6 Logistics FMS API"
-    ),
-
+    title="E1I6 Logistics FMS API",
     version="3.0.0",
-
     lifespan=lifespan,
 )
 
-
-# ============================================================
-# CORS
-# ============================================================
-
-# CORS Middleware 등록
 app.add_middleware(
-
     CORSMiddleware,
-
-    allow_origins=
-        CORS_ORIGINS,
-
-    allow_credentials=
-        False,
-
-    allow_methods=[
-        "*"
-    ],
-
-    allow_headers=[
-        "*"
-    ],
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-
-# ============================================================
-# Routers
-# ============================================================
-
-# Map Router 등록
-app.include_router(
-    map_router
-)
-
-# Runtime Robot Mode Router 등록
-app.include_router(
-    mode_router
-)
-
-# Robot Router 등록
-app.include_router(
-    robots_router
-)
-
-# Command Router 등록
-app.include_router(
-    commands_router
-)
-
-# Connection Router 등록
-app.include_router(
-    connections_router
-)
-
-# WebSocket Router 등록
-app.include_router(
-    websocket_router
-)
+app.include_router(map_router)
+app.include_router(mode_router)
+app.include_router(robots_router)
+app.include_router(commands_router)
+app.include_router(connections_router)
+app.include_router(websocket_router)
 
 
-# ============================================================
-# Root
-# ============================================================
-
-# Root API 생성
 @app.get("/")
 async def root():
-
     return {
-
-        "service":
-            "E1I6 Logistics FMS API",
-
-        "version":
-            "3.0.0",
-
-        "status":
-            "ok",
-
-        "architecture":
-            "ROS2 Gateway + "
-            "zenoh-bridge-ros2dds",
-
-        "docs":
-            "/docs",
+        "service": "E1I6 Logistics FMS API",
+        "version": "3.0.0",
+        "status": "ok",
+        "architecture": "frontend contracts + in-memory mock",
+        "docs": "/docs",
     }
 
 
-# ============================================================
-# Health
-# ============================================================
-
-# Backend 및 ROS Gateway 상태 확인 API 생성
 @app.get("/health")
 async def health():
-
     return {
-
-        "status":
-            "ok",
-
-        "ros_gateway":
-            ros_gateway
-            .status_snapshot(),
-
-        "mode":
-            mode_manager.mode,
-
-        "simulation_gateway":
-            simulation_gateway.status_snapshot(),
+        "status": "ok",
+        "mode": mode_manager.mode,
+        "data_source": "mock",
     }

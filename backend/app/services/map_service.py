@@ -267,52 +267,6 @@ def world_to_pixel(
 
 
 # ============================================================
-# image pixel -> ROS world 좌표
-# ============================================================
-
-# 이미지 Pixel 좌표를 ROS World 좌표로 변환 기능
-def pixel_to_world(
-    px: float,
-    py: float,
-) -> tuple[float, float]:
-
-    info = load_map_metadata()
-
-    origin_x = float(
-        info["origin"][0]
-    )
-
-    origin_y = float(
-        info["origin"][1]
-    )
-
-    resolution = float(
-        info["resolution"]
-    )
-
-    height = float(
-        info["height"]
-    )
-
-    x = (
-        origin_x
-        + float(px)
-        * resolution
-    )
-
-    y = (
-        origin_y
-        + (
-            height
-            - float(py)
-        )
-        * resolution
-    )
-
-    return x, y
-
-
-# ============================================================
 # PGM -> PNG
 # ============================================================
 
