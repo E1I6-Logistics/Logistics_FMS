@@ -128,7 +128,7 @@ apt-cache policy zenoh-bridge-ros2dds
 
 ```bash
 source ~/venv/robot/bin/activate
-python -m pip install -r backend/requirements.txt
+python -m pip install -r simulation/requirements.txt
 test -f simulation/.env || cp simulation/.env.example simulation/.env
 python simulation/build_compact_graph.py
 python simulation/run_llm_comparison.py --start 2 --goal 10 --dry-run
