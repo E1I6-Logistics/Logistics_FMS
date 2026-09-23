@@ -3,6 +3,7 @@
 No database, path planning, robot communication, or equipment control belongs
 in this module. Replace each command TODO with project-specific control logic.
 """
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -14,7 +15,6 @@ from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from .map_service import world_to_pixel
 from .route_graph import get_node
 
-
 _MOCK_ROBOT_DEFINITIONS = {
     "robot1": {"node_id": "0", "status": "WORKING", "battery": 92.0},
     "robot2": {"node_id": "1", "status": "IDLE", "battery": 78.0},
@@ -22,7 +22,7 @@ _MOCK_ROBOT_DEFINITIONS = {
 }
 
 _MOCK_CONNECTIONS = {
-    "10.10.141.220": "robot1",
+    "10.10.141.225": "robot1",
     "10.10.141.221": "robot2",
     "10.10.141.222": "robot3",
 }
