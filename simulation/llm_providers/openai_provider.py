@@ -5,9 +5,13 @@
 OPENAI_MODEL 값만 바꿔서 커버한다 (예: gpt-4o-mini vs gpt-4.1 등).
 
 사전 준비:
-    pip install openai
-    export OPENAI_API_KEY="발급받은_API_KEY"
-    export OPENAI_MODEL="사용할_모델_ID"
+    cp simulation/.env.example simulation/.env
+    # simulation/.env의 OPENAI_API_KEY에 실제 키를 입력한다.
+    # LLM_PROVIDER=openai, OPENAI_MODEL=모델 ID도 같은 파일에서 설정한다.
+    python simulation/run_llm_comparison.py
+
+registry.py가 simulation/.env를 먼저 읽는다. 동일한 환경변수가 셸에
+이미 있으면 셸의 값이 우선한다. API 키는 Git에 올리지 않는다.
 
 동작은 기존에 받은 request_llm_shortest_path()와 완전히 동일하다 —
 OpenAI 전용 코드를 그대로 클래스 안으로 옮긴 것뿐이다.
@@ -28,7 +32,9 @@ class OpenAIPathProvider(LLMPathProvider):
         self.model = model or self._require_env("OPENAI_MODEL")
         self._require_env("OPENAI_API_KEY")
         # OPENAI_API_KEY 환경변수를 자동으로 읽는다.
-        self.client = OpenAI()
+        self.client = OpenAI(
+            timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        )
 
     def compute_shortest_path(
         self,
@@ -40,8 +46,8 @@ class OpenAIPathProvider(LLMPathProvider):
 
         response = self.client.responses.create(
             model=self.model,
-            instructions=self.INSTRUCTIONS,
-            input=json.dumps(llm_input, ensure_ascii=False),
+            instructions=self.instructions_for_graph(raw_graph),
+            input=json.dumps(llm_input, ensure_ascii=False, separators=(",", ":")),
             text={
                 "format": {
                     "type": "json_schema",
