@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { getMapInfo, MAP_IMAGE_URL, type MapInfoDto } from './api/fmsApi'
-import { STRUCTURES } from './WarehouseGeometry'
 
 import type { MapEdge, MapPoint } from './hooks/useRouteGraph'
 import type { ManagedRobot } from './hooks/useRobotFleet'
@@ -221,16 +220,6 @@ export default function WarehouseMap({
                   N{id}
                 </text>
               </g>
-            ))}
-          </g>
-        )}
-
-        {!raw && layers.station && (
-          <g data-testid="structure-labels" fill="#697582" fontSize={px(10)} fontWeight="600">
-            {STRUCTURES.map(s => (
-              <text key={s.id} x={s.x + s.w + px(6)} y={s.y + s.h / 2} dominantBaseline="middle">
-                {s.id}
-              </text>
             ))}
           </g>
         )}
