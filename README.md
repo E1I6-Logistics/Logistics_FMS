@@ -20,6 +20,7 @@ ROS 2 로봇 ↔ zenoh-bridge-ros2dds ↔ Zenoh Router  (통합 준비용 프로
 | `frontend/` | React 대시보드와 Vite 개발 서버 |
 | `maps/`, `routes/` | Occupancy Map과 GeoJSON 경로 그래프 |
 | `robots_ws/` | ROS 2 로봇 작업 공간 |
+| `simulation/` | Mock Fleet와 선택적 LLM 경로 비교 도구 |
 | `infra/docker-compose.yml` | 개발용 Zenoh Router 컨테이너 |
 | `scripts/main/`, `scripts/robot/` | Main PC·로봇용 Zenoh 설치와 셸 설정 예시 |
 | `doc/ros2-zenoh-guide.md` | ROS 2/Zenoh 네트워크 설정과 운영 절차의 상세 참고 문서 |
@@ -120,6 +121,23 @@ apt-cache policy zenoh-bridge-ros2dds
 ```
 
 원하는 버전이 보일 때 설치하세요. Main PC/로봇의 Bridge 연결 주소와 ROS 네트워크 설정은 현장 IP에 맞춰 검증해야 합니다. [Zenoh 공식 설치 문서](https://zenoh.io/docs/getting-started/installation/)도 참고할 수 있습니다.
+
+## LLM 경로 비교
+
+코드 최단 경로와 선택한 LLM의 경로를 같은 방향성 그래프에서 비교하며, LLM 결과로 로봇의 주행 경로를 바꾸지는 않습니다. FastAPI·ROS 2·Zenoh 없이 비교 실행기를 사용할 수 있습니다.
+
+```bash
+source ~/venv/robot/bin/activate
+python -m pip install -r backend/requirements.txt
+test -f simulation/.env || cp simulation/.env.example simulation/.env
+python simulation/build_compact_graph.py
+python simulation/run_llm_comparison.py --start 2 --goal 10 --dry-run
+python simulation/run_llm_comparison.py --start 2 --goal 10
+```
+
+`simulation/.env`에서 `LLM_PROVIDER`, 해당 provider의 모델 이름·인증 정보, `LLM_ROUTE_GRAPH`를 설정합니다. Ollama를 선택했다면 서버와 모델을 먼저 준비하세요. `--dry-run`은 모델을 호출하지 않습니다. 실제 비교 결과는 `simulation/llm_route_comparisons.jsonl`, 집계는 `simulation/llm_route_summary.json`에 저장되며 두 파일과 `.env`는 Git에서 제외됩니다. 작은 모델은 유효하지 않은 경로를 반환할 수 있고, 이 경우 비교는 실패로 기록됩니다.
+
+Mock Fleet에서 LLM 비교를 사용하려면 ROS 2 환경과 Zenoh Router를 준비한 뒤 `simulation/mock_fleet.py`를 실행합니다. LLM 비교는 선택 사항이며 주행에는 코드로 계산한 경로를 사용합니다. 오프라인 검증 명령은 `python -m unittest discover -s tests -v`입니다.
 
 ## 문제 해결
 
