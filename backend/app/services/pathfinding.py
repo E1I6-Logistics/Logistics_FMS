@@ -49,7 +49,7 @@ class DistanceAStar:
             
             self.edges[start].append((end, math.dist(self.nodes[start], self.nodes[end])))
 
-    def plan(self, start, end, speed_mps=0.5):
+    def plan(self, start, end, speed_mps=0.025):
         start, end = str(start), str(end)
         if start not in self.nodes or end not in self.nodes:
             raise ValueError('출발 또는 목적지 노드가 존재하지 않습니다.')

@@ -167,7 +167,7 @@ class MockFmsStore:
             if start_node is None:
                 raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
 
-            path = path_plan.plan(start=start_node, end=target["id"], speed_mps=0.5)
+            path = path_plan.plan(start=start_node, end=target["id"], speed_mps=0.025)
             if path is None:
                 raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
 
@@ -255,6 +255,66 @@ class MockFmsStore:
                 {"linear_x": float(linear_x), "angular_z": float(angular_z)},
             ),
         }
+
+    def advance_mock_robot(self, robot_id: str, dt: float, speed_mps: float = 0.025) -> None:
+        # 방어 코드
+        if not math.isfinite(dt) or not math.isfinite(speed_mps):
+            return
+        if dt <= 0.0 or speed_mps <= 0.0:
+            return
+
+        with self._lock:
+            robot = self._get_robot(robot_id)
+            route = robot["route"]
+
+            if robot["status"] != "NAVIGATING" or route is None:
+                return
+
+            # 이번 갱신에서 이동할 수 있는 거리(m)
+            remaining = speed_mps * dt
+            node_ids = route["node_ids"]
+
+            # 한 번의 갱신에서 여러 짧은 구간을 통과할 수도 있음
+            while remaining > 0.0:
+                next_index = route["segment_index"] + 1
+
+                if next_index >= len(node_ids):
+                    robot["status"] = "IDLE"
+                    robot["route"] = None
+                    raise ValueError("경로 진행 인덱스가 올바르지 않습니다.")
+
+                target = get_node(node_ids[next_index])
+                dx = target["x"] - robot["x"]
+                dy = target["y"] - robot["y"]
+                distance = math.hypot(dx, dy)
+
+                route["phase"] = "moving"
+
+                if distance > 0.0:
+                    robot["yaw"] = math.atan2(dy, dx)
+
+                # 다음 노드까지 도착하고 남은 거리로 계속 진행
+                if distance <= remaining:
+                    robot["x"] = target["x"]
+                    robot["y"] = target["y"]
+                    robot["current_node"] = str(target["id"])
+                    route["segment_index"] = next_index
+                    remaining -= distance
+
+                    if next_index == len(node_ids) - 1:
+                        robot["status"] = "IDLE"
+                        robot["route"] = None
+                        return
+
+                else:
+                    # 목표 노드 방향으로 remaining만큼 이동
+                    ratio = remaining / distance
+                    robot["x"] += dx * ratio
+                    robot["y"] += dy * ratio
+
+                    # 노드 사이를 이동하는 상태
+                    robot["current_node"] = None
+                    return
 
 
 mock_fms = MockFmsStore()
