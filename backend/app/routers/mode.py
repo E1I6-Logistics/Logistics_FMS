@@ -9,7 +9,6 @@ from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 from ..services.websocket_manager import manager
 
-
 router = APIRouter(prefix="/api/mode", tags=["mode"])
 
 
@@ -22,7 +21,7 @@ def _snapshot() -> dict[str, object]:
         "mode": mode_manager.mode,
         "real_available": True,
         "simulation_active": mode_manager.mode == "simulation",
-        "using_mock": True,
+        "using_mock": mode_manager.mode == "simulation",
     }
 
 

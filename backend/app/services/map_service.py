@@ -18,10 +18,7 @@ import yaml
 # Map 이미지 로드 및 변환 기능 사용
 from PIL import Image
 
-from ..config import (
-    MAP_DIR,
-    MAP_YAML_PATH,
-)
+from ..config import MAP_DIR, MAP_YAML_PATH
 
 # ============================================================
 # Map Metadata
@@ -33,14 +30,10 @@ def load_map_metadata() -> dict[str, Any]:
 
     # Map YAML 파일 존재 여부 확인
     if not MAP_YAML_PATH.exists():
-
         raise FileNotFoundError(f"Map YAML 파일 없음: {MAP_YAML_PATH}")
 
     # Map YAML 파일 열기 및 내용 파싱
-    with MAP_YAML_PATH.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
+    with MAP_YAML_PATH.open("r", encoding="utf-8") as file:
         map_yaml = yaml.safe_load(file)
 
     # YAML에 정의된 Map 이미지 파일명 사용
@@ -54,12 +47,10 @@ def load_map_metadata() -> dict[str, Any]:
 
     # Map 이미지 파일 존재 여부 확인
     if not image_path.exists():
-
         raise FileNotFoundError(f"Map 이미지 파일 없음: {image_path}")
 
     # Map 이미지 크기 정보 확인
     with Image.open(image_path) as image:
-
         width, height = image.size
 
     origin = map_yaml["origin"]
@@ -109,15 +100,8 @@ def get_public_map_info() -> dict[str, Any]:
 
     # 서버 내부 경로는 프론트로 보내지 않음
     # 서버 내부 파일 경로 제거
-    info.pop(
-        "yaml_path",
-        None,
-    )
-
-    info.pop(
-        "image_path",
-        None,
-    )
+    info.pop("yaml_path", None)
+    info.pop("image_path", None)
 
     # Frontend Map 이미지 API 경로 설정
     info["image_url"] = "/api/map/image"
@@ -134,20 +118,16 @@ def get_public_map_info() -> dict[str, Any]:
 
 
 # Map 원점, 해상도, 크기 기준 World 영역 계산 기능
-def get_world_bounds(
-    map_info: dict[str, Any] | None = None,
-) -> dict[str, float]:
+def get_world_bounds(map_info: dict[str, Any]) -> dict[str, float]:
 
     info = map_info or load_map_metadata()
 
     origin_x = float(info["origin"][0])
-
     origin_y = float(info["origin"][1])
 
     resolution = float(info["resolution"])
 
     width = int(info["width"])
-
     height = int(info["height"])
 
     return {
@@ -164,10 +144,7 @@ def get_world_bounds(
 
 
 # ROS World 좌표를 이미지 Pixel 좌표로 변환 기능
-def world_to_pixel(
-    x: float,
-    y: float,
-) -> tuple[float, float]:
+def world_to_pixel(x: float, y: float) -> tuple[float, float]:
     """
     ROS Map
 
@@ -189,7 +166,6 @@ def world_to_pixel(
     info = load_map_metadata()
 
     origin_x = float(info["origin"][0])
-
     origin_y = float(info["origin"][1])
 
     resolution = float(info["resolution"])
@@ -197,7 +173,6 @@ def world_to_pixel(
     height = float(info["height"])
 
     px = (float(x) - origin_x) / resolution
-
     py = height - ((float(y) - origin_y) / resolution)
 
     return px, py
@@ -212,7 +187,6 @@ def world_to_pixel(
 def pgm_to_png_bytes() -> bytes:
 
     info = load_map_metadata()
-
     image_path = Path(info["image_path"])
 
     with Image.open(image_path) as image:
@@ -223,9 +197,6 @@ def pgm_to_png_bytes() -> bytes:
         # PNG 결과 저장용 메모리 버퍼 생성
         output = io.BytesIO()
 
-        converted.save(
-            output,
-            format="PNG",
-        )
+        converted.save(output, format="PNG")
 
         return output.getvalue()

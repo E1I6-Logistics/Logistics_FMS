@@ -16,7 +16,7 @@ from .map_service import world_to_pixel
 from .route_graph import get_node
 
 _MOCK_ROBOT_DEFINITIONS = {
-    "robot1": {"node_id": "0", "status": "WORKING", "battery": 92.0},
+    "robot1": {"node_id": "0", "status": "IDLE", "battery": 92.0},
     "robot2": {"node_id": "1", "status": "IDLE", "battery": 78.0},
     "robot3": {"node_id": "2", "status": "IDLE", "battery": 64.0},
 }
@@ -31,6 +31,7 @@ _MOCK_CONNECTIONS = {
 class MockFmsStore:
     """Volatile state used only to keep the frontend contract operational."""
 
+    # MockFmsStore - FMS 상태를 유지하는 임시 저장소
     def __init__(self) -> None:
         self._lock = RLock()
         self._robots: dict[str, dict[str, Any]] = {}
@@ -60,10 +61,12 @@ class MockFmsStore:
     def _get_robot(self, robot_id: str) -> dict[str, Any]:
         backend_id = normalize_robot_id(robot_id)
         robot = self._robots.get(backend_id)
+
         if robot is None:
             raise ValueError(f"Unknown robot: {backend_id}")
         return robot
 
+    # 프론트에 보낼 Robot 상태 Snapshot 생성 기능
     @staticmethod
     def _snapshot(robot: dict[str, Any], mode: str) -> dict[str, Any]:
         result = deepcopy(robot)
@@ -80,14 +83,17 @@ class MockFmsStore:
         )
         return result
 
+    # 전체 Robot 상태 반환 기능
     def robot_snapshots(self, mode: str) -> list[dict[str, Any]]:
         with self._lock:
             return [self._snapshot(robot, mode) for robot in self._robots.values()]
 
+    # 한가지 Robot 상태 반환 기능
     def robot_snapshot(self, robot_id: str, mode: str) -> dict[str, Any]:
         with self._lock:
             return self._snapshot(self._get_robot(robot_id), mode)
 
+    # 현재 연결 상태를 Mock으로 반환
     def connections(self) -> list[dict[str, Any]]:
         with self._lock:
             return [
@@ -102,11 +108,10 @@ class MockFmsStore:
                 for ip, robot_id in sorted(_MOCK_CONNECTIONS.items())
             ]
 
+    # 공통 리스폰 생성 기능
     @staticmethod
     def _command_response(
-        robot_id: str,
-        command: str,
-        target: dict[str, Any] | None,
+        robot_id: str, command: str, target: dict[str, Any] | None
     ) -> dict[str, Any]:
         backend_id = normalize_robot_id(robot_id)
         return {
@@ -120,13 +125,16 @@ class MockFmsStore:
             "mock": True,
         }
 
+    # 노드 경로 - 기본으로 시작지점과 목적지점만 존재
     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict[str, Any]:
         """TODO: Replace with user-defined path planning and node movement."""
         target = get_node(node_id)
+
         with self._lock:
             robot = self._get_robot(robot_id)
-            start_node = robot.get("current_node")
+            start_node = robot.get("current_node")  # 로봇 현재 노드
             node_ids = [str(target["id"])]
+
             if start_node is not None and str(start_node) != str(target["id"]):
                 node_ids.insert(0, str(start_node))
             robot["status"] = "NAVIGATING"
@@ -136,6 +144,7 @@ class MockFmsStore:
                 "phase": "ready",
                 "segment_index": 0,
             }
+
         result = self._command_response(
             robot_id,
             "goal-node",
@@ -145,6 +154,7 @@ class MockFmsStore:
         result["node"] = target
         return result
 
+    # 로봇 목적지 좌표 이동 명령
     def navigate_to_pose(self, robot_id: str, x: float, y: float) -> dict[str, Any]:
         """TODO: Replace with user-defined coordinate movement control."""
         with self._lock:

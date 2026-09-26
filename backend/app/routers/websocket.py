@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from ..ros2.ros_gateway import ros_gateway
 from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 from ..services.websocket_manager import manager
-
 
 router = APIRouter(tags=["websocket"])
 
@@ -35,18 +35,25 @@ async def cmd_vel_websocket(websocket: WebSocket):
             data = await websocket.receive_json()
             robot_id = str(data.get("robot_id", "")).strip()
             if not robot_id:
-                await websocket.send_json(
-                    {"type": "error", "message": "robot_id required"}
-                )
+                await websocket.send_json({"type": "error", "message": "robot_id required"})
                 continue
             try:
-                acknowledgement = mock_fms.cmd_vel(
-                    robot_id,
-                    float(data.get("linear_x", 0.0)),
-                    float(data.get("angular_z", 0.0)),
-                )
+                if mode_manager.mode == "simulation":
+                    acknowledgement = mock_fms.cmd_vel(
+                        robot_id,
+                        float(data.get("linear_x", 0.0)),
+                        float(data.get("angular_z", 0.0)),
+                    )
+                else:
+                    acknowledgement = ros_gateway.cmd_vel(
+                        robot_id,
+                        float(data.get("linear_x", 0.0)),
+                        float(data.get("angular_z", 0.0)),
+                    )
+
                 await websocket.send_json(acknowledgement)
-            except (TypeError, ValueError) as exc:
+
+            except (TypeError, ValueError, RuntimeError) as exc:
                 await websocket.send_json({"type": "error", "message": str(exc)})
     except WebSocketDisconnect:
         pass
