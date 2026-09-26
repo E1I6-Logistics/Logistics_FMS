@@ -13,7 +13,10 @@ from typing import Any
 
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from .map_service import world_to_pixel
-from .route_graph import get_node
+from .route_graph import get_node, load_route_graph, find_edge_ids
+from .pathfinding import DistanceAStar
+
+import math
 
 _MOCK_ROBOT_DEFINITIONS = {
     "robot1": {"node_id": "0", "status": "IDLE", "battery": 92.0},
@@ -27,6 +30,19 @@ _MOCK_CONNECTIONS = {
     "10.10.141.222": "robot3",
 }
 
+# current_node 를 새로 식별하기 위해 가장 가까운 노드를 찾아 현재 노드 결정
+# tolerance_m 은 "이 거리 안에 있으면 노드에 도착했다고 볼 것인가" -> 값은 지도 간격과 위치 측정 정확도에 맞춰 정해야 함
+def locate_current_node(nodes, x, y, tolerance_m):
+    if not nodes or not all(math.isfinite(v) for v in (x, y)):
+        return None
+
+    nearest_id = min(
+        nodes,
+        key=lambda node_id: math.dist((x, y), nodes[node_id]),
+    )
+    distance = math.dist((x, y), nodes[nearest_id])
+
+    return nearest_id if distance <= tolerance_m else None
 
 class MockFmsStore:
     """Volatile state used only to keep the frontend contract operational."""
@@ -132,25 +148,57 @@ class MockFmsStore:
 
         with self._lock:
             robot = self._get_robot(robot_id)
-            start_node = robot.get("current_node")  # 로봇 현재 노드
-            node_ids = [str(target["id"])]
 
-            if start_node is not None and str(start_node) != str(target["id"]):
-                node_ids.insert(0, str(start_node))
-            robot["status"] = "NAVIGATING"
-            robot["route"] = {
-                "node_ids": node_ids,
-                "edge_ids": [],
-                "phase": "ready",
-                "segment_index": 0,
-            }
+            # 임시 정책: 이동 중 재계획 미지원
+            if robot["status"] in {"NAVIGATING", "MOVING"}:
+                raise ValueError("이동 중 목적지 변경은 아직 지원하지 않습니다.")
+
+            graph = load_route_graph()
+            path_plan = DistanceAStar(graph)
+
+            robot["current_node"] = locate_current_node(
+                nodes=path_plan.nodes,
+                x=robot["x"],
+                y=robot["y"],
+                tolerance_m=0.2,  # 예시: 노드 중심에서 20cm 이내
+            )
+
+            start_node = robot.get("current_node")  # 로봇 현재 노드
+            if start_node is None:
+                raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
+
+            path = path_plan.plan(start=start_node, end=target["id"], speed_mps=0.5)
+            if path is None:
+                raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
+
+            node_ids = list(path.route)
+            edge_ids = find_edge_ids(graph, node_ids)
+
+            already_arrived = len(node_ids) == 1
+
+            if already_arrived:
+                robot["status"] = "IDLE"
+                robot["route"] = None
+            else:
+                robot["status"] = "NAVIGATING"
+                robot["route"] = {
+                    "node_ids": node_ids,
+                    "edge_ids": edge_ids,
+                    "phase": "ready",
+                    "segment_index": 0,
+                }
+            response_route = deepcopy(robot["route"]) # 응답 경로는 잠금 안에서 복사하는 편이 좋음
 
         result = self._command_response(
             robot_id,
             "goal-node",
             {"node_id": target["id"], "x": target["x"], "y": target["y"]},
         )
-        result["route"] = deepcopy(robot["route"])
+
+        if already_arrived:
+            result["message"] = "이미 목적지 노드에 있습니다."
+
+        result["route"] = response_route
         result["node"] = target
         return result
 
@@ -158,15 +206,28 @@ class MockFmsStore:
     def navigate_to_pose(self, robot_id: str, x: float, y: float) -> dict[str, Any]:
         """TODO: Replace with user-defined coordinate movement control."""
         with self._lock:
+            path_plan = DistanceAStar(load_route_graph())
+
             robot = self._get_robot(robot_id)
             robot.update(
                 {
                     "x": float(x),
                     "y": float(y),
+                    # current_node: 로봇이 현재 위치한다고 확인된 노드. 노드 사이이거나 위치를 확정할 수 없다면 None.
+                    # currnet_node 를 갱신하지 않으면 좌표 이동 이후 노드 이동을 요청하면, 예전 노드에서 출발하는 경로를 계산할 수 있기 때문에
+                    # 현재 노드와 실제 좌표를 맞추기 위해 좌표 이동 시 현재 노드 비우기
+                    "current_node": None,
                     "status": "IDLE",
                     "route": None,
                 }
             )
+            robot["current_node"] = locate_current_node(
+                nodes=path_plan.nodes,
+                x=robot["x"],
+                y=robot["y"],
+                tolerance_m=0.2,
+            )
+
         return self._command_response(
             robot_id,
             "goal",
