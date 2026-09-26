@@ -166,10 +166,18 @@ export function useRobotFleet() {
     }
   }, [mode, refreshRobots])
 
-  const robotIds = useMemo(() => Object.values(robotStates)
-    .filter(state => state.mode === mode)
-    .map(state => backendToUiId(state.robot_id))
-    .filter((id): id is RobotId => id !== null), [mode, robotStates])
+  const robotIds = useMemo(() => {
+    if (mode === 'real') {
+      return devices
+        .map(device => backendToUiId(device.name))
+        .filter((id): id is RobotId => id !== null)
+    }
+
+    return Object.values(robotStates)
+      .filter(state => state.mode === mode)
+      .map(state => backendToUiId(state.robot_id))
+      .filter((id): id is RobotId => id !== null)
+  }, [devices, mode, robotStates])
 
   const managedRobots = useMemo<ManagedRobot[]>(() => {
     return robotIds.map(id => {
@@ -186,10 +194,8 @@ export function useRobotFleet() {
         ip: device?.ip ?? '',
         connected: mode === 'simulation'
           ? Boolean(state && telemetryFresh)
-          : Boolean(
-              state?.connection_state === 'ONLINE'
-              && telemetryFresh
-            ),
+          : Boolean(device?.connected),
+
         blocked: Boolean(device?.blocked),
         battery: typeof state?.battery === 'number' ? state.battery : null,
         status: state?.status ?? (device?.connected ? 'ONLINE' : 'OFFLINE'),
@@ -202,7 +208,7 @@ export function useRobotFleet() {
         pixelX: state?.pixel_x ?? null,
         pixelY: state?.pixel_y ?? null,
         hasPose: state?.map_pose_received === true,
-        connectionState: state?.connection_state ?? 'OFFLINE',
+        connectionState: mode === 'real' ? (device?.state ?? 'OFFLINE') : (state?.connection_state ?? 'OFFLINE'),
       }
     })
   }, [devices, mode, robotIds, robotStates])

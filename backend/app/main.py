@@ -16,13 +16,53 @@ from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
 from .services.route_graph import load_route_graph
 
+import threading
+
+import rclpy
+from rclpy.executors import SingleThreadedExecutor
+
+from .ros2.fms_ros_node import FmsRosNode
+from .ros2.ros_gateway import ros_gateway
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Validate static frontend assets; no external control runtime is started."""
+
     load_map_metadata()
     load_route_graph()
-    yield
+
+    # ROS2 초기화
+    rclpy.init()
+
+    ros_node = FmsRosNode()
+
+    executor = SingleThreadedExecutor()
+    executor.add_node(ros_node)
+
+    # RosGateway에 실제 ROS Node 연결
+    ros_gateway.set_ros_node(ros_node)
+
+    # FastAPI와 별도 Thread에서 ROS2 spin
+    ros_thread = threading.Thread(
+        target=executor.spin,
+        daemon=True,
+    )
+
+    ros_thread.start()
+
+    try:
+        yield
+
+    finally:
+
+        executor.shutdown()
+
+        ros_node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
+
+        ros_thread.join(timeout=2.0)
 
 
 app = FastAPI(

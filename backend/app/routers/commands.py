@@ -6,18 +6,13 @@ from ..schemas.command import GoalCoordinateRequest, GoalNodeRequest, StopReques
 from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 
-
 router = APIRouter(prefix="/api/command", tags=["commands"])
 
 
 @router.post("/goal")
 async def send_coordinate_goal(payload: GoalCoordinateRequest):
     try:
-        result = mock_fms.navigate_to_pose(
-            payload.robot_id,
-            payload.target_x,
-            payload.target_y,
-        )
+        result = mock_fms.navigate_to_pose(payload.robot_id, payload.target_x, payload.target_y)
         result["mode"] = mode_manager.mode
         return result
     except ValueError as exc:
