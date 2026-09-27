@@ -97,3 +97,33 @@ def list_nodes() -> list[dict[str, Any]]:
             return 1, str(node["id"])
 
     return sorted(nodes, key=sort_key)
+
+def find_edge_ids(graph: dict[str, Any], node_ids: list[str]) -> list[str]:
+    # (출발 노드, 도착 노드) -> 엣지 ID
+    edge_lookup = {}
+
+    for feature in graph.get("features", []):
+        props = feature.get("properties") or {}
+
+        if "startid" not in props and "endid" not in props:
+            continue
+
+        if any(props.get(key) is None for key in ("startid", "endid", "id")):
+            raise ValueError("엣지의 출발/도착/ID 정보가 누락되었습니다.")
+
+        pair = (str(props["startid"]), str(props["endid"]))
+        if pair in edge_lookup:
+            raise ValueError(f"동일한 노드에 엣지가 여러 개 있습니다.: {pair}")
+
+        edge_lookup[pair] = str(props["id"])
+
+    edge_ids = []
+    for start, end in zip(node_ids, node_ids[1:]):
+        pair = (str(start), str(end))
+
+        if pair not in edge_lookup:
+            raise ValueError(f"경로에 해당하는 엣지가 없습니다. {start} -> {end}")
+
+        edge_ids.append(edge_lookup[pair])
+
+    return edge_ids
