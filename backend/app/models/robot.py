@@ -38,6 +38,10 @@ class Robot:
 
         # 작업 / 경로 상태
         self.goal_node: str | None = None
+        # 현재 위치한 Route Graph Node
+        self.current_node = None
+        # 현재 계획된 경로
+        self.route = None
 
         # 점유 상태
         self.occupied_node: str | None = None

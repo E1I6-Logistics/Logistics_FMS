@@ -35,6 +35,8 @@ async def fetch_robots():
                 "x": robot.x,
                 "y": robot.y,
                 "yaw": robot.yaw,
+                "current_node": robot.current_node,
+                "route": robot.route,
                 "pixel_x": pixel_x,
                 "pixel_y": pixel_y,
                 "connected": robot.connected,

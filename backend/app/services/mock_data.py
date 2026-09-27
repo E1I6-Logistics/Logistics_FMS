@@ -13,7 +13,7 @@ from typing import Any
 
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from .map_service import world_to_pixel
-from .route_graph import get_node, load_route_graph, find_edge_ids
+from .route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
 from .pathfinding import DistanceAStar
 
 import math
@@ -30,19 +30,6 @@ _MOCK_CONNECTIONS = {
     "10.10.141.222": "robot3",
 }
 
-# current_node 를 새로 식별하기 위해 가장 가까운 노드를 찾아 현재 노드 결정
-# tolerance_m 은 "이 거리 안에 있으면 노드에 도착했다고 볼 것인가" -> 값은 지도 간격과 위치 측정 정확도에 맞춰 정해야 함
-def locate_current_node(nodes, x, y, tolerance_m):
-    if not nodes or not all(math.isfinite(v) for v in (x, y)):
-        return None
-
-    nearest_id = min(
-        nodes,
-        key=lambda node_id: math.dist((x, y), nodes[node_id]),
-    )
-    distance = math.dist((x, y), nodes[nearest_id])
-
-    return nearest_id if distance <= tolerance_m else None
 
 class MockFmsStore:
     """Volatile state used only to keep the frontend contract operational."""
@@ -187,7 +174,7 @@ class MockFmsStore:
                     "phase": "ready",
                     "segment_index": 0,
                 }
-            response_route = deepcopy(robot["route"]) # 응답 경로는 잠금 안에서 복사하는 편이 좋음
+            response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음
 
         result = self._command_response(
             robot_id,

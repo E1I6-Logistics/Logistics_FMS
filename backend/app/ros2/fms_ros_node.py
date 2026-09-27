@@ -11,9 +11,11 @@ from rclpy.action import ActionClient
 
 from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from sensor_msgs.msg import BatteryState
 from nav2_msgs.action import FollowWaypoints
+
+from sensor_msgs.msg import BatteryState
 
 from ..services.fleet_manager import fleet_manager
 
@@ -96,6 +98,77 @@ class FmsRosNode(Node):
         message.twist.angular.z = float(angular_z)
 
         publisher.publish(message)
+
+    def send_follow_waypoints_goal(
+        self, robot_id: str, waypoints: list[tuple[float, float]]
+    ) -> None:
+        client = self._follow_waypoints_clients.get(robot_id)
+        if client is None:
+            raise ValueError(f"Robot is not registered: {robot_id}")
+
+        # Nav2 FollowWaypoints Action Server 연결 확인
+        if not client.wait_for_server(timeout_sec=2.0):
+            raise RuntimeError(f"FollowWaypoints Action Server를 찾을 수 없습니다: {robot_id}")
+
+        # FollowWaypoints Goal 생성
+        goal = FollowWaypoints.Goal()
+
+        poses = []
+
+        for x, y in waypoints:
+            pose = PoseStamped()
+
+            pose.header.frame_id = "map"
+            pose.header.stamp = self.get_clock().now().to_msg()
+
+            pose.pose.position.x = float(x)
+            pose.pose.position.y = float(y)
+
+            # 현재는 방향 지정 없이 기본 Quaternion 사용
+            pose.pose.orientation.w = 1.0
+
+            poses.append(pose)
+
+        goal.poses = poses
+
+        # 비동기로 Goal 전송
+        future = client.send_goal_async(
+            goal,
+            feedback_callback=lambda feedback, rid=robot_id: self._on_follow_waypoints_feedback(
+                rid, feedback
+            ),
+        )
+
+        future.add_done_callback(
+            lambda future, rid=robot_id: self._on_follow_waypoints_goal_response(rid, future)
+        )
+
+    def _on_follow_waypoints_goal_response(self, robot_id: str, future) -> None:
+        goal_handle = future.result()
+
+        if not goal_handle.accepted:
+            self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
+            return
+
+        self.get_logger().info(f"FollowWaypoints goal accepted: {robot_id}")
+
+        result_future = goal_handle.get_result_async()
+
+        result_future.add_done_callback(
+            lambda future, rid=robot_id: self._on_follow_waypoints_result(rid, future)
+        )
+
+    def _on_follow_waypoints_result(self, robot_id: str, future) -> None:
+        result = future.result()
+        self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
+
+    def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg) -> None:
+        feedback = feedback_msg.feedback
+
+        self.get_logger().info(
+            f"FollowWaypoints feedback: {robot_id}, "
+            f"current_waypoint={feedback.current_waypoint}"
+        )
 
     def _on_amcl_pose(self, robot_id: str, msg: PoseWithCovarianceStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)
