@@ -1,5 +1,8 @@
 from __future__ import annotations
+
+from ..services.fleet_manager import fleet_manager
 import re
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -7,9 +10,7 @@ if TYPE_CHECKING:
 
 
 class RosGateway:
-
     def __init__(self) -> None:
-
         self._ros_node: FmsRosNode | None = None
 
     def set_ros_node(self, ros_node: FmsRosNode) -> None:
@@ -20,6 +21,9 @@ class RosGateway:
         if self._ros_node is None:
             raise RuntimeError("FMS ROS node is not initialized")
 
+        # 현재 Zenoh에 연결되어 있는 로봇 ID 저장
+        connected_robot_ids = []
+
         for connection in connections:
             if not connection.get("connected"):
                 continue
@@ -28,7 +32,19 @@ class RosGateway:
             if not robot_id:
                 continue
 
+            connected_robot_ids.append(robot_id)
+            # FMS Robot 객체 생성 또는 연결 상태 갱신
+            fleet_manager.register_robot(robot_id)
+
+            # ROS Interface 생성
             self._ros_node.register_robot(robot_id)
+
+        # 이전에 등록됐지만 현재 Zenoh에서 보이지 않는 로봇은 OFFLINE 처리
+        for robot in fleet_manager.get_all_robots():
+
+            if robot.robot_id not in connected_robot_ids:
+                fleet_manager.disconnect_robot(robot.robot_id)
+                self._ros_node.register_robot(robot_id)
 
     def _normalize_robot_id(self, robot_id: str) -> str:
         robot_id = robot_id.strip()
@@ -68,6 +84,7 @@ class RosGateway:
         if not self._ros_node.is_registered(robot_id):
             print(f"Robot is not registered: {robot_id}")
             raise ValueError(f"Robot is not registered: {robot_id}")
+
         self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=linear_x, angular_z=angular_z)
 
         return {
