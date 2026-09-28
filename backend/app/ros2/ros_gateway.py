@@ -154,7 +154,7 @@ class RosGateway:
         waypoints = []
 
         # 각 waypoint에 도착했을 때 해당 지점으로 진입한 구간의 방향을 계산하여 포함
-        for index in range(1, len(node_ids)):
+        for index in range(len(node_ids)):
             current_id = node_ids[index]
             current = get_node(current_id)
 
