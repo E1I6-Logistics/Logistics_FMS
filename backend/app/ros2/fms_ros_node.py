@@ -13,7 +13,7 @@ from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import TwistStamped
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from nav2_msgs.action import FollowWaypoints
+from nav2_msgs.action import FollowWaypoints, Spin
 
 from action_msgs.msg import GoalStatus
 from sensor_msgs.msg import BatteryState
@@ -35,6 +35,7 @@ class FmsRosNode(Node):
         self._pose_subscribers: dict[str, Subscription] = {}
 
         self._follow_waypoints_clients: dict[str, ActionClient] = {}
+        self._spin_clients: dict[str, ActionClient] = {}
 
         self.navigation_result_callback = None
 
@@ -68,11 +69,14 @@ class FmsRosNode(Node):
             self, FollowWaypoints, f"/{robot_id}/follow_waypoints"
         )
 
+        action_spin_client = ActionClient(self, Spin, f"/{robot_id}/spin")
+
         # 딕셔너리에서 관리
         self._cmd_vel_publishers[robot_id] = publisher_cmd_vel
         self._pose_subscribers[robot_id] = subscription_pose
         self._battery_subscribers[robot_id] = subscription_battery
         self._follow_waypoints_clients[robot_id] = action_follow_waypoints_client
+        self._spin_clients[robot_id] = action_spin_client
 
         # 모든 인터페이스 생성이 끝난 후 등록 처리
         self._registered_robots.add(robot_id)
@@ -178,6 +182,42 @@ class FmsRosNode(Node):
             f"FollowWaypoints feedback: {robot_id}, "
             f"current_waypoint={feedback.current_waypoint}"
         )
+
+    def send_spin(self, robot_id: str, spin_yaw: float) -> None:
+        client = self._spin_clients.get(robot_id)
+
+        if client is None:
+            raise ValueError(f"Robot is not registered: {robot_id}")
+
+        if not client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().error(f"[{robot_id}] Spin action server not available")
+            return
+
+        goal = Spin.Goal()
+        goal.target_yaw = spin_yaw
+
+        future = client.send_goal_async(goal)
+
+        future.add_done_callback(lambda future: self._on_spin_goal_response(robot_id, future))
+
+    def _on_spin_goal_response(self, robot_id: str, future) -> None:
+        goal_handle = future.result()
+
+        if not goal_handle.accepted:
+            self.get_logger().warning(f"Spin goal rejected: {robot_id}")
+            return
+
+        self.get_logger().info(f"Spin goal accepted: {robot_id}")
+
+        result_future = goal_handle.get_result_async()
+
+        result_future.add_done_callback(
+            lambda future, rid=robot_id: self._on_spin_result(rid, future)
+        )
+
+    def _on_spin_result(self, robot_id: str, future) -> None:
+        result = future.result()
+        self.get_logger().info(f"Spin finished: {robot_id}, status={result.status}")
 
     def _on_amcl_pose(self, robot_id: str, msg: PoseWithCovarianceStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)

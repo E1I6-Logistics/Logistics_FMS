@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import Any
 from copy import deepcopy
 
+from backend.app.models import robot
+
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from ..services.fleet_manager import fleet_manager
 from ..services.route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
 from ..services.pathfinding import DistanceAStar
-from action_msgs.msg import GoalStatus
 
+from action_msgs.msg import GoalStatus
 
 import math
 
@@ -16,6 +18,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .fms_ros_node import FmsRosNode
+
+GOAL_YAWS = {
+    "0": 0.0,
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": -math.pi / 2,
+    "6": -math.pi / 2,
+}
 
 
 class RosGateway:
@@ -113,10 +125,7 @@ class RosGateway:
 
         # AMCL 위치를 기준으로 현재 Node 판정
         current_node = locate_current_node(
-            nodes=path_plan.nodes,
-            x=robot.x,
-            y=robot.y,
-            tolerance_m=0.2,
+            nodes=path_plan.nodes, x=robot.x, y=robot.y, tolerance_m=0.2
         )
 
         if current_node is None:
@@ -130,6 +139,8 @@ class RosGateway:
         # 경로에 포함된 Node / Edge ID
         node_ids = list(path.route)
         edge_ids = find_edge_ids(graph, node_ids)
+        robot.current_node = current_node
+        robot.goal_node = str(target["id"])
 
         robot.route = {
             "node_ids": node_ids,
@@ -141,24 +152,29 @@ class RosGateway:
         # 경로의 Node ID를 실제 Map 좌표로 변환
         waypoints = []
 
-        # 첫 구간이 동일 좌표이면 현재 로봇 방향 유지
-        previous_yaw = float(robot.yaw) if robot.yaw is not None else 0.0
-
         # 각 waypoint에 도착했을 때 해당 지점으로 진입한 구간의 방향을 계산하여 포함
-        for previous_id, current_id in zip(node_ids, node_ids[1:]):
-            previous = get_node(previous_id)
+        for index in range(1, len(node_ids)):
+            current_id = node_ids[index]
             current = get_node(current_id)
 
-            dx = current["x"] - previous["x"]
-            dy = current["y"] - previous["y"]
-            # 동일 좌표 또는 매우 짧은 구간에서는 직전 방향 유지
-            if math.hypot(dx, dy) > 1e-9:
-                yaw = math.atan2(dy, dx)
-            else:
-                yaw = previous_yaw
+            # 마지막 노드가 아니면 다음 노드 방향
+            if index < len(node_ids) - 1:
+                next_id = node_ids[index + 1]
+                next_node = get_node(next_id)
 
+                dx = next_node["x"] - current["x"]
+                dy = next_node["y"] - current["y"]
+
+            # 마지막 노드는 이전 노드 -> 마지막 노드 진입 방향
+            else:
+                previous_id = node_ids[index - 1]
+                previous = get_node(previous_id)
+
+                dx = current["x"] - previous["x"]
+                dy = current["y"] - previous["y"]
+
+            yaw = math.atan2(dy, dx)
             waypoints.append((current["x"], current["y"], yaw))
-            previous_yaw = yaw
 
         # 이미 목적지 Node에 있는 경우
         if not waypoints:
@@ -205,10 +221,27 @@ class RosGateway:
         }
 
     def on_navigation_result(self, robot_id: str, status: int) -> None:
+        robot = fleet_manager.get_robot(robot_id)
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             # 도착 후 처리
-            pass
+            print(f"[{robot_id}] 목적지 도착: {robot.goal_node}")
+
+            target_yaw = GOAL_YAWS.get(str(robot.goal_node))
+
+            # 별도 도착 방향이 없는 노드
+            if target_yaw is None:
+                return
+
+            current_yaw = float(robot.yaw)
+
+            # 현재 방향 -> 목표 방향까지 회전해야 하는 각도
+            spin_yaw = target_yaw - current_yaw
+
+            # -pi ~ pi 범위로 정규화
+            spin_yaw = math.atan2(math.sin(spin_yaw), math.cos(spin_yaw))
+
+            self._ros_node.send_spin(robot_id, spin_yaw)
 
         elif status == GoalStatus.STATUS_CANCELED:
             # 취소 처리
