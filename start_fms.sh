@@ -2,12 +2,14 @@
 
 set -Eeuo pipefail
 
-source /opt/ros/jazzy/setup.bash
-source "$PROJECT_ROOT/robots_ws/install/local_setup.bash"
-
 # FMS development launcher
 # - Docker: Zenoh Router only
 # - Host: FastAPI, Vite, ROS 2 daemon, zenoh-bridge-ros2dds
+
+set +u
+source /opt/ros/jazzy/setup.bash
+source "./robots_ws/install/setup.bash"
+set -u
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
