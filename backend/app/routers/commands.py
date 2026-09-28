@@ -4,8 +4,8 @@ from fastapi import APIRouter, HTTPException
 
 from ..schemas.command import GoalCoordinateRequest, GoalNodeRequest, StopRequest
 from ..services.mock_data import mock_fms
+from ..ros2.ros_gateway import ros_gateway
 from ..services.mode_service import mode_manager
-
 
 router = APIRouter(prefix="/api/command", tags=["commands"])
 
@@ -13,11 +13,7 @@ router = APIRouter(prefix="/api/command", tags=["commands"])
 @router.post("/goal")
 async def send_coordinate_goal(payload: GoalCoordinateRequest):
     try:
-        result = mock_fms.navigate_to_pose(
-            payload.robot_id,
-            payload.target_x,
-            payload.target_y,
-        )
+        result = mock_fms.navigate_to_pose(payload.robot_id, payload.target_x, payload.target_y)
         result["mode"] = mode_manager.mode
         return result
     except ValueError as exc:
@@ -27,8 +23,12 @@ async def send_coordinate_goal(payload: GoalCoordinateRequest):
 @router.post("/goal-node")
 async def send_node_goal(payload: GoalNodeRequest):
     try:
-        result = mock_fms.navigate_to_node(payload.robot_id, payload.node_id)
-        result["mode"] = mode_manager.mode
+        if mode_manager.mode == "simulation":
+            result = mock_fms.navigate_to_node(payload.robot_id, payload.node_id)
+            result["mode"] = mode_manager.mode
+        else:
+            result = ros_gateway.navigate_to_node(payload.robot_id, payload.node_id)
+            result["mode"] = mode_manager.mode
         return result
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

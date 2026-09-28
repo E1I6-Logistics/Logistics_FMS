@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-09-23T11:55:30.502026+00:00",
+  "total_run_count": 4,
+  "ignored_legacy_record_count": 0,
+  "groups": [
+    {
+      "provider": "ollama",
+      "model": "deepseek-r1:70b",
+      "prompt_strategy": "compact-dijkstra",
+      "route_graph_file": "test_compact_graph.geojson",
+      "run_count": 4,
+      "json_response_success_rate": 0.25,
+      "valid_path_rate": 0.25,
+      "shortest_path_match_rate": 0.25,
+      "shortest_distance_match_rate": 0.25,
+      "mean_absolute_distance_error": 0.0,
+      "mean_response_time_seconds": 2287.28590175,
+      "realtime_deadline_seconds": 0.15,
+      "realtime_deadline_success_rate": 0.0,
+      "timeout_rate": 0.25,
+      "first_attempt_success_rate": 0.25,
+      "retry_success_rate": 0.0,
+      "mean_input_character_count": 2362,
+      "mean_estimated_input_tokens": 591
+    }
+  ]
+}

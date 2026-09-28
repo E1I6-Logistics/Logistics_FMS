@@ -13,10 +13,13 @@ from typing import Any
 
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from .map_service import world_to_pixel
-from .route_graph import get_node
+from .route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
+from .pathfinding import DistanceAStar
+
+import math
 
 _MOCK_ROBOT_DEFINITIONS = {
-    "robot1": {"node_id": "0", "status": "WORKING", "battery": 92.0},
+    "robot1": {"node_id": "0", "status": "IDLE", "battery": 92.0},
     "robot2": {"node_id": "1", "status": "IDLE", "battery": 78.0},
     "robot3": {"node_id": "2", "status": "IDLE", "battery": 64.0},
 }
@@ -31,6 +34,7 @@ _MOCK_CONNECTIONS = {
 class MockFmsStore:
     """Volatile state used only to keep the frontend contract operational."""
 
+    # MockFmsStore - FMS 상태를 유지하는 임시 저장소
     def __init__(self) -> None:
         self._lock = RLock()
         self._robots: dict[str, dict[str, Any]] = {}
@@ -60,10 +64,12 @@ class MockFmsStore:
     def _get_robot(self, robot_id: str) -> dict[str, Any]:
         backend_id = normalize_robot_id(robot_id)
         robot = self._robots.get(backend_id)
+
         if robot is None:
             raise ValueError(f"Unknown robot: {backend_id}")
         return robot
 
+    # 프론트에 보낼 Robot 상태 Snapshot 생성 기능
     @staticmethod
     def _snapshot(robot: dict[str, Any], mode: str) -> dict[str, Any]:
         result = deepcopy(robot)
@@ -80,14 +86,17 @@ class MockFmsStore:
         )
         return result
 
+    # 전체 Robot 상태 반환 기능
     def robot_snapshots(self, mode: str) -> list[dict[str, Any]]:
         with self._lock:
             return [self._snapshot(robot, mode) for robot in self._robots.values()]
 
+    # 한가지 Robot 상태 반환 기능
     def robot_snapshot(self, robot_id: str, mode: str) -> dict[str, Any]:
         with self._lock:
             return self._snapshot(self._get_robot(robot_id), mode)
 
+    # 현재 연결 상태를 Mock으로 반환
     def connections(self) -> list[dict[str, Any]]:
         with self._lock:
             return [
@@ -102,11 +111,10 @@ class MockFmsStore:
                 for ip, robot_id in sorted(_MOCK_CONNECTIONS.items())
             ]
 
+    # 공통 리스폰 생성 기능
     @staticmethod
     def _command_response(
-        robot_id: str,
-        command: str,
-        target: dict[str, Any] | None,
+        robot_id: str, command: str, target: dict[str, Any] | None
     ) -> dict[str, Any]:
         backend_id = normalize_robot_id(robot_id)
         return {
@@ -120,43 +128,111 @@ class MockFmsStore:
             "mock": True,
         }
 
+    # 노드 경로 - 기본으로 시작지점과 목적지점만 존재
     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict[str, Any]:
         """TODO: Replace with user-defined path planning and node movement."""
         target = get_node(node_id)
+
         with self._lock:
             robot = self._get_robot(robot_id)
-            start_node = robot.get("current_node")
-            node_ids = [str(target["id"])]
-            if start_node is not None and str(start_node) != str(target["id"]):
-                node_ids.insert(0, str(start_node))
-            robot["status"] = "NAVIGATING"
-            robot["route"] = {
-                "node_ids": node_ids,
-                "edge_ids": [],
-                "phase": "ready",
-                "segment_index": 0,
-            }
+
+            # 임시 정책: 이동 중 재계획 미지원
+            if robot["status"] in {"NAVIGATING", "MOVING"}:
+                raise ValueError("이동 중 목적지 변경은 아직 지원하지 않습니다.")
+
+            graph = load_route_graph()
+            path_plan = DistanceAStar(graph)
+
+            robot["current_node"] = locate_current_node(
+                nodes=path_plan.nodes,
+                x=robot["x"],
+                y=robot["y"],
+                tolerance_m=0.2,  # 예시: 노드 중심에서 20cm 이내
+            )
+
+            start_node = robot.get("current_node")  # 로봇 현재 노드
+            if start_node is None:
+                raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
+
+            path = path_plan.plan(start=start_node, end=target["id"], speed_mps=0.025)
+            if path is None:
+                raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
+
+            node_ids = list(path.route)
+            edge_ids = find_edge_ids(graph, node_ids)
+            # 첫 노드는 현재 위치이므로 현재 로봇 방향을 저장. 동일 좌표 노드 처리
+            waypoint_yaws = [float(robot["yaw"])]
+
+            for previous_id, current_id in zip(node_ids, node_ids[1:]):
+                previous = get_node(previous_id)
+                current = get_node(current_id)
+
+                dx = current["x"] - previous["x"]
+                dy = current["y"] - previous["y"]
+
+                # 동일 좌표의 노드는 직전 방향 유지
+                if math.hypot(dx, dy) > 1e-9:
+                    yaw = math.atan2(dy, dx)
+                else:
+                    yaw = waypoint_yaws[-1]
+
+                waypoint_yaws.append(yaw)
+
+            already_arrived = len(node_ids) == 1
+
+            if already_arrived:
+                robot["status"] = "IDLE"
+                robot["route"] = None
+            else:
+                robot["status"] = "NAVIGATING"
+                robot["route"] = {
+                    "node_ids": node_ids,
+                    "edge_ids": edge_ids,
+                    "waypoint_yaws": waypoint_yaws,
+                    "phase": "ready",
+                    "segment_index": 0,
+                }
+            response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음
+
         result = self._command_response(
             robot_id,
             "goal-node",
             {"node_id": target["id"], "x": target["x"], "y": target["y"]},
         )
-        result["route"] = deepcopy(robot["route"])
+
+        if already_arrived:
+            result["message"] = "이미 목적지 노드에 있습니다."
+
+        result["route"] = response_route
         result["node"] = target
         return result
 
+    # 로봇 목적지 좌표 이동 명령
     def navigate_to_pose(self, robot_id: str, x: float, y: float) -> dict[str, Any]:
         """TODO: Replace with user-defined coordinate movement control."""
         with self._lock:
+            path_plan = DistanceAStar(load_route_graph())
+
             robot = self._get_robot(robot_id)
             robot.update(
                 {
                     "x": float(x),
                     "y": float(y),
+                    # current_node: 로봇이 현재 위치한다고 확인된 노드. 노드 사이이거나 위치를 확정할 수 없다면 None.
+                    # currnet_node 를 갱신하지 않으면 좌표 이동 이후 노드 이동을 요청하면, 예전 노드에서 출발하는 경로를 계산할 수 있기 때문에
+                    # 현재 노드와 실제 좌표를 맞추기 위해 좌표 이동 시 현재 노드 비우기
+                    "current_node": None,
                     "status": "IDLE",
                     "route": None,
                 }
             )
+            robot["current_node"] = locate_current_node(
+                nodes=path_plan.nodes,
+                x=robot["x"],
+                y=robot["y"],
+                tolerance_m=0.2,
+            )
+
         return self._command_response(
             robot_id,
             "goal",
@@ -184,6 +260,66 @@ class MockFmsStore:
                 {"linear_x": float(linear_x), "angular_z": float(angular_z)},
             ),
         }
+
+    def advance_mock_robot(self, robot_id: str, dt: float, speed_mps: float = 0.025) -> None:
+        # 방어 코드
+        if not math.isfinite(dt) or not math.isfinite(speed_mps):
+            return
+        if dt <= 0.0 or speed_mps <= 0.0:
+            return
+
+        with self._lock:
+            robot = self._get_robot(robot_id)
+            route = robot["route"]
+
+            if robot["status"] != "NAVIGATING" or route is None:
+                return
+
+            # 이번 갱신에서 이동할 수 있는 거리(m)
+            remaining = speed_mps * dt
+            node_ids = route["node_ids"]
+
+            # 한 번의 갱신에서 여러 짧은 구간을 통과할 수도 있음
+            while remaining > 0.0:
+                next_index = route["segment_index"] + 1
+
+                if next_index >= len(node_ids):
+                    robot["status"] = "IDLE"
+                    robot["route"] = None
+                    raise ValueError("경로 진행 인덱스가 올바르지 않습니다.")
+
+                target = get_node(node_ids[next_index])
+                dx = target["x"] - robot["x"]
+                dy = target["y"] - robot["y"]
+                distance = math.hypot(dx, dy)
+
+                route["phase"] = "moving"
+
+                if distance > 0.0:
+                    robot["yaw"] = route["waypoint_yaws"][next_index]
+
+                # 다음 노드까지 도착하고 남은 거리로 계속 진행
+                if distance <= remaining:
+                    robot["x"] = target["x"]
+                    robot["y"] = target["y"]
+                    robot["current_node"] = str(target["id"])
+                    route["segment_index"] = next_index
+                    remaining -= distance
+
+                    if next_index == len(node_ids) - 1:
+                        robot["status"] = "IDLE"
+                        robot["route"] = None
+                        return
+
+                else:
+                    # 목표 노드 방향으로 remaining만큼 이동
+                    ratio = remaining / distance
+                    robot["x"] += dx * ratio
+                    robot["y"] += dy * ratio
+
+                    # 노드 사이를 이동하는 상태
+                    robot["current_node"] = None
+                    return
 
 
 mock_fms = MockFmsStore()

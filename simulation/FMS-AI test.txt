@@ -1,0 +1,91 @@
+
+(robot) (ID:15)ugie01:~/Logistics_FMS$ python simulation/run_llm_comparison.py --start 2 --goal 10
+LLM 입력 그래프: test_compact_graph.geojson (CompactRouteGraph)
+경로 그래프와 코드 최단 경로를 계산합니다...
+코드 경로: [2, 5, 4, 6, 10]
+ollama 모델 deepseek-r1:70b에 요청 중...
+[2, 5, 4, 6, 10]    |    1.592143392266858
+5
+응답 완료: 9088.8초
+상태: success
+LLM 경로: [2, 5, 4, 6, 10]
+경로 일치: True
+거리 일치: True
+유효 경로: True
+시도 횟수: 1
+결과 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_comparisons.jsonl
+요약 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_summary.json
+
+
+
+(robot) (ID:15)ugie01:~/Logistics_FMS$ python simulation/run_llm_comparison.py --start 2 --goal 10
+LLM 입력 그래프: test_compact_graph.geojson (CompactRouteGraph)
+경로 그래프와 코드 최단 경로를 계산합니다...
+코드 경로: [2, 5, 4, 6, 10]
+ollama 모델 gemma4:12b에 요청 중...
+[2, 5, 4, 6, 10]    |    1.592143392266858
+응답 완료: 69.6초
+상태: failed
+LLM 경로: None
+경로 일치: False
+거리 일치: False
+유효 경로: False
+시도 횟수: 1
+결과 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_comparisons.jsonl
+요약 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_summary.json
+비교 실패 (RuntimeError): LLM 응답이 비어 있습니다.
+
+
+
+(robot) (ID:15)ugie01:~/Logistics_FMS$ python simulation/run_llm_comparison.py --start 2 --goal 10
+LLM 입력 그래프: test_compact_graph.geojson (CompactRouteGraph)
+경로 그래프와 코드 최단 경로를 계산합니다...
+코드 경로: [2, 5, 4, 6, 10]
+ollama 모델 deepseek-r1:14b에 요청 중...
+[2, 5, 4, 6, 10]    |    1.592143392266858
+응답 완료: 33.0초
+상태: success
+LLM 경로: [2, 5, 4, 6, 10]
+경로 일치: True
+거리 일치: True
+유효 경로: True
+시도 횟수: 1
+결과 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_comparisons.jsonl
+요약 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_summary.json
+
+
+
+(robot) (ID:15)ugie01:~/Logistics_FMS$ python simulation/run_llm_comparison.py --start 2 --goal 10
+LLM 입력 그래프: test_compact_graph.geojson (CompactRouteGraph)
+경로 그래프와 코드 최단 경로를 계산합니다...
+코드 경로: [2, 5, 4, 6, 10]
+ollama 모델 deepseek-r1:1.5b에 요청 중...
+[2, 5, 4, 6, 10]    |    1.592143392266858
+응답 완료: 86.4초
+상태: failed
+LLM 경로: [2, 0, 3, 4, 5, 13, 6, 10, 9, 8, 7, 12, 11, 13]
+경로 일치: False
+거리 일치: False
+유효 경로: False
+시도 횟수: 1
+결과 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_comparisons.jsonl
+요약 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_summary.json
+비교 실패 (ValueError): 도착 노드 불일치: 13 != 10
+
+
+
+(robot) (ID:15)ugie01:~/Logistics_FMS$ python simulation/run_llm_comparison.py --start 2 --goal 10
+LLM 입력 그래프: test_compact_graph.geojson (CompactRouteGraph)
+경로 그래프와 코드 최단 경로를 계산합니다...
+코드 경로: [2, 5, 4, 6, 10]
+ollama 모델 qwen3:0.6b에 요청 중...
+[2, 5, 4, 6, 10]    |    1.592143392266858
+응답 완료: 39.0초
+상태: success
+LLM 경로: [2, 5, 4, 6, 10]
+경로 일치: True
+거리 일치: True
+유효 경로: True
+시도 횟수: 1
+결과 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_comparisons.jsonl
+요약 파일: /home/ugie01/Logistics_FMS/simulation/llm_route_summary.json

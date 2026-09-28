@@ -4,7 +4,6 @@ from __future__ import annotations
 # Robot ID 형식 검증용 정규표현식 사용
 import re
 
-
 # ============================================================
 # Robot ID 변환
 # ============================================================
@@ -23,9 +22,7 @@ _UI_ID_RE = re.compile(
 
 
 # 다양한 Robot ID 형식을 backend 표준 형식으로 변환 기능
-def normalize_robot_id(
-    robot_id: str,
-) -> str:
+def normalize_robot_id(robot_id: str) -> str:
     """
     다음 형식을 모두 허용:
 
@@ -62,23 +59,17 @@ def normalize_robot_id(
         return f"robot{number}"
 
     # 지원하지 않는 Robot ID 형식 예외 처리
-    raise ValueError(
-        f"지원하지 않는 robot_id 형식: {robot_id}"
-    )
+    raise ValueError(f"지원하지 않는 robot_id 형식: {robot_id}")
 
 
 # backend Robot ID를 Frontend 표시용 ID로 변환 기능
-def to_ui_robot_id(
-    robot_id: str,
-) -> str:
+def to_ui_robot_id(robot_id: str) -> str:
 
     # 입력 Robot ID를 backend 표준 형식으로 변환
     backend_id = normalize_robot_id(robot_id)
 
     # robot 접두사를 제거하고 숫자 ID 추출
-    number = int(
-        backend_id.removeprefix("robot")
-    )
+    number = int(backend_id.removeprefix("robot"))
 
     # 두 자리 형식 Frontend Robot ID 생성
     return f"R-{number:02d}"

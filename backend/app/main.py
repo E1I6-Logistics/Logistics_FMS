@@ -16,13 +16,69 @@ from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
 from .services.route_graph import load_route_graph
 
+import threading
+
+import rclpy
+from rclpy.executors import SingleThreadedExecutor
+
+from .ros2.fms_ros_node import FmsRosNode
+from .ros2.ros_gateway import ros_gateway
+
+import asyncio
+from contextlib import suppress
+from time import monotonic
+
+from .services.mock_data import mock_fms
+from .services.websocket_manager import manager
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Validate static frontend assets; no external control runtime is started."""
+
     load_map_metadata()
     load_route_graph()
-    yield
+
+    # ROS2 초기화
+    rclpy.init()
+
+    ros_node = FmsRosNode()
+
+    executor = SingleThreadedExecutor()
+    executor.add_node(ros_node)
+
+    # RosGateway에 실제 ROS Node 연결
+    ros_gateway.set_ros_node(ros_node)
+
+    # FastAPI와 별도 Thread에서 ROS2 spin
+    ros_thread = threading.Thread(
+        target=executor.spin,
+        daemon=True,
+    )
+
+    ros_thread.start()
+
+    simulation_task = asyncio.create_task(
+        run_mock_simulation(),
+        name="mock-simulation",
+    )
+
+    try:
+        yield
+
+    finally:
+        simulation_task.cancel()
+
+        try:
+            with suppress(asyncio.CancelledError):
+                await simulation_task
+        finally:
+            executor.shutdown()
+            ros_node.destroy_node()
+
+            if rclpy.ok():
+                rclpy.shutdown()
+
+            ros_thread.join(timeout=2.0)
 
 
 app = FastAPI(
@@ -65,3 +121,33 @@ async def health():
         "mode": mode_manager.mode,
         "data_source": "mock",
     }
+
+async def run_mock_simulation() -> None:
+    interval = 0.1  # 약 10Hz
+    previous_time = monotonic()
+
+    while True:
+        await asyncio.sleep(interval)
+
+        now = monotonic()
+        dt = now - previous_time
+        previous_time = now
+
+        mode = mode_manager.mode
+        if mode != "simulation":
+            continue
+
+        # 먼저 전체 로봇의 위치를 갱신
+        for state in mock_fms.robot_snapshots(mode):
+            mock_fms.advance_mock_robot(
+                robot_id=state["robot_id"],
+                dt=dt,
+                speed_mps=0.5,
+            )
+
+        # 갱신 후의 상태를 웹에 전송
+        for state in mock_fms.robot_snapshots(mode):
+            await manager.broadcast({
+                "type": "telemetry",
+                "data": state,
+            })
