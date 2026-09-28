@@ -1,3 +1,4 @@
-from .registry import get_provider
+from .base import RouteSelector
+from .registry import get_provider, get_selector
 
-__all__ = ["get_provider"]
+__all__ = ["RouteSelector", "get_provider", "get_selector"]
