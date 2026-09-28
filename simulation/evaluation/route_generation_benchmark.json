@@ -1,6 +1,6 @@
 {
-  "benchmark_id": "route-generation-v1",
-  "description": "2026-09-28 Ollama 2차 반복 테스트 재현 설정",
+  "benchmark_id": "route-generation-v2",
+  "description": "2026-09-28 Ollama 2차 반복 테스트 조건에 deepseek-r1:14b를 추가한 Jetson 평가",
   "reference_commit": "1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc",
   "graph": {
     "path": "routes/test_benchmark_v1.geojson",
@@ -23,6 +23,9 @@
     {
       "name": "qwen3:4b",
       "think": false
+    },
+    {
+      "name": "deepseek-r1:14b"
     }
   ],
   "cases": [
@@ -75,5 +78,6 @@
     "keep_alive": "5m"
   },
   "prompt": "\n    You are a deterministic shortest-path solver for a directed weighted graph.\n\n    Input:\n    - start_node, target_node: node IDs\n    - route_graph: CompactRouteGraph\n    - nodes: [{id, x, y}]  (coordinates are for reference only)\n    - edges: [{from, to, weight}]  (directed)\n\n    Rules:\n    1. Traverse an edge only from \"from\" to \"to\".\n    2. Use \"weight\" exactly as given. Do NOT recalculate from coordinates.\n    3. Find the path with the minimum total weight (e.g. Dijkstra).\n    4. The path must start with start_node, end with target_node,\n    and every consecutive pair must be an existing edge.\n    5. reported_total_distance = sum of weights along the path.\n\n    Return only the JSON object matching the schema. No explanations or Markdown.\n    ",
-  "prompt_sha256": "53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44"
+  "prompt_sha256": "53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44",
+  "reference_benchmark": "route-generation-v1"
 }

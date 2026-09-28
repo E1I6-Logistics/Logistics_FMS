@@ -16,7 +16,7 @@
 | 그래프 SHA-256 | `00e1f02cce0f5007342dfef4c7c1a0d95f36eb639c530dcf0c8e7c7ce0f304c3` |
 | 프롬프트 SHA-256 | `53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44` |
 | 그래프 크기 | 노드 14개, 유향 간선 28개 |
-| 모델 | `qwen3:0.6b`, `qwen3:1.7b`, `gemma3:1b`, `qwen3:4b` |
+| 모델 | `qwen3:0.6b`, `qwen3:1.7b`, `gemma3:1b`, `qwen3:4b`, `deepseek-r1:14b` |
 | 경로 | `0→6`, `1→12`, `2→10` |
 | 반복 | 모델·경로 조합별 3회 |
 | 예열 | 모델별 1회, 본 시험 집계에서 제외 |
@@ -75,8 +75,8 @@ python -m unittest tests.test_route_generation_benchmark -v
 python -m unittest tests.test_ollama_provider -v
 ```
 
-Mock 테스트는 모델 성능을 평가하지 않는다. 4개 모델 × 3개 경로 × 3회인
-36개 본 시험과 모델별 예열 4개가 분리되는지, CSV가 생성되는지, 완료된
+Mock 테스트는 모델 성능을 평가하지 않는다. 5개 모델 × 3개 경로 × 3회인
+45개 본 시험과 모델별 예열 5개가 분리되는지, CSV가 생성되는지, 완료된
 결과를 재실행하지 않는지만 빠르게 확인한다.
 
 ## 4. Ollama 및 모델 준비
@@ -102,6 +102,7 @@ ollama pull qwen3:0.6b
 ollama pull qwen3:1.7b
 ollama pull gemma3:1b
 ollama pull qwen3:4b
+ollama pull deepseek-r1:14b
 ```
 
 다른 컴퓨터의 Ollama 서버를 사용하면 실행 전에 주소를 지정한다.

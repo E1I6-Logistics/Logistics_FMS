@@ -79,12 +79,12 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
         summary = json.loads(
             (self.output / "summary.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(len(warmups), 4)
-        self.assertEqual(len(trials), 36)
-        self.assertEqual(len(self.calls), 40)
-        self.assertEqual(summary["trial_count"], 36)
+        self.assertEqual(len(warmups), 5)
+        self.assertEqual(len(trials), 45)
+        self.assertEqual(len(self.calls), 50)
+        self.assertEqual(summary["trial_count"], 45)
         self.assertEqual(manifest["status"], "complete")
-        self.assertEqual(manifest["completed_trial_count"], 36)
+        self.assertEqual(manifest["completed_trial_count"], 45)
         self.assertTrue(
             all(row["metrics"]["shortest_distance_match"] for row in trials)
         )
@@ -101,7 +101,7 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
         with (self.output / "latency_samples.csv").open(
             encoding="utf-8-sig", newline=""
         ) as stream:
-            self.assertEqual(len(list(csv.DictReader(stream))), 36)
+            self.assertEqual(len(list(csv.DictReader(stream))), 45)
 
     def test_resume_skips_completed_warmups_and_trials(self):
         run_benchmark(
@@ -123,8 +123,8 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
         )
 
         self.assertEqual(len(self.calls), initial_call_count)
-        self.assertEqual(len(self._read_jsonl("warmups.jsonl")), 4)
-        self.assertEqual(len(self._read_jsonl("trials.jsonl")), 36)
+        self.assertEqual(len(self._read_jsonl("warmups.jsonl")), 5)
+        self.assertEqual(len(self._read_jsonl("trials.jsonl")), 45)
         self.assertEqual(manifest["status"], "complete")
 
     def _read_jsonl(self, filename: str) -> list[dict]:
