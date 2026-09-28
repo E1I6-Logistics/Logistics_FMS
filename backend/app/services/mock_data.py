@@ -160,6 +160,23 @@ class MockFmsStore:
 
             node_ids = list(path.route)
             edge_ids = find_edge_ids(graph, node_ids)
+            # 첫 노드는 현재 위치이므로 현재 로봇 방향을 저장. 동일 좌표 노드 처리
+            waypoint_yaws = [float(robot["yaw"])]
+
+            for previous_id, current_id in zip(node_ids, node_ids[1:]):
+                previous = get_node(previous_id)
+                current = get_node(current_id)
+
+                dx = current["x"] - previous["x"]
+                dy = current["y"] - previous["y"]
+
+                # 동일 좌표의 노드는 직전 방향 유지
+                if math.hypot(dx, dy) > 1e-9:
+                    yaw = math.atan2(dy, dx)
+                else:
+                    yaw = waypoint_yaws[-1]
+
+                waypoint_yaws.append(yaw)
 
             already_arrived = len(node_ids) == 1
 
@@ -171,6 +188,7 @@ class MockFmsStore:
                 robot["route"] = {
                     "node_ids": node_ids,
                     "edge_ids": edge_ids,
+                    "waypoint_yaws": waypoint_yaws,
                     "phase": "ready",
                     "segment_index": 0,
                 }
@@ -278,7 +296,7 @@ class MockFmsStore:
                 route["phase"] = "moving"
 
                 if distance > 0.0:
-                    robot["yaw"] = math.atan2(dy, dx)
+                    robot["yaw"] = route["waypoint_yaws"][next_index]
 
                 # 다음 노드까지 도착하고 남은 거리로 계속 진행
                 if distance <= remaining:

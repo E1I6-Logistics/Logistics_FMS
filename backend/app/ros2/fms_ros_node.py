@@ -100,7 +100,7 @@ class FmsRosNode(Node):
         publisher.publish(message)
 
     def send_follow_waypoints_goal(
-        self, robot_id: str, waypoints: list[tuple[float, float]]
+        self, robot_id: str, waypoints: list[tuple[float, float, float]]
     ) -> None:
         client = self._follow_waypoints_clients.get(robot_id)
         if client is None:
@@ -115,7 +115,7 @@ class FmsRosNode(Node):
 
         poses = []
 
-        for x, y in waypoints:
+        for x, y, yaw in waypoints:
             pose = PoseStamped()
 
             pose.header.frame_id = "map"
@@ -124,8 +124,11 @@ class FmsRosNode(Node):
             pose.pose.position.x = float(x)
             pose.pose.position.y = float(y)
 
-            # 현재는 방향 지정 없이 기본 Quaternion 사용
-            pose.pose.orientation.w = 1.0
+            # 기존 PoseStamped 생성 및 위치 설정 유지
+            pose.pose.orientation.x = 0.0
+            pose.pose.orientation.y = 0.0
+            pose.pose.orientation.z = math.sin(yaw / 2.0)
+            pose.pose.orientation.w = math.cos(yaw / 2.0)
 
             poses.append(pose)
 
