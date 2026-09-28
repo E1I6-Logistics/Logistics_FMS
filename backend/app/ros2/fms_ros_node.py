@@ -15,6 +15,7 @@ from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav2_msgs.action import FollowWaypoints
 
+from action_msgs.msg import GoalStatus
 from sensor_msgs.msg import BatteryState
 
 from ..services.fleet_manager import fleet_manager
@@ -34,6 +35,8 @@ class FmsRosNode(Node):
         self._pose_subscribers: dict[str, Subscription] = {}
 
         self._follow_waypoints_clients: dict[str, ActionClient] = {}
+
+        self.navigation_result_callback = None
 
     def register_robot(self, robot_id: str) -> None:
 
@@ -164,6 +167,9 @@ class FmsRosNode(Node):
     def _on_follow_waypoints_result(self, robot_id: str, future) -> None:
         result = future.result()
         self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
+
+        if self.navigation_result_callback:
+            self.navigation_result_callback(robot_id, result.status)
 
     def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg) -> None:
         feedback = feedback_msg.feedback

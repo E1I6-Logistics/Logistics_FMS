@@ -7,6 +7,8 @@ from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from ..services.fleet_manager import fleet_manager
 from ..services.route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
 from ..services.pathfinding import DistanceAStar
+from action_msgs.msg import GoalStatus
+
 
 import math
 
@@ -22,6 +24,7 @@ class RosGateway:
 
     def set_ros_node(self, ros_node: FmsRosNode) -> None:
         self._ros_node = ros_node
+        ros_node.navigation_result_callback = self.on_navigation_result
 
     def sync_connected_robots(self, connections: list[dict]) -> None:
 
@@ -137,6 +140,7 @@ class RosGateway:
 
         # 경로의 Node ID를 실제 Map 좌표로 변환
         waypoints = []
+
         # 첫 구간이 동일 좌표이면 현재 로봇 방향 유지
         previous_yaw = float(robot.yaw) if robot.yaw is not None else 0.0
 
@@ -147,22 +151,11 @@ class RosGateway:
 
             dx = current["x"] - previous["x"]
             dy = current["y"] - previous["y"]
-
-            # 특정 노드는 도착 방향 고정
-            if str(current_id) in ["0", "1", "2", "3", "4"]:
-                # 맵 기준 오른쪽
-                yaw = 0.0
-
-            elif str(current_id) in ["5", "6"]:
-                # 맵 기준 아래쪽
-                yaw = -math.pi / 2
-
+            # 동일 좌표 또는 매우 짧은 구간에서는 직전 방향 유지
+            if math.hypot(dx, dy) > 1e-9:
+                yaw = math.atan2(dy, dx)
             else:
-                # 동일 좌표 또는 매우 짧은 구간에서는 직전 방향 유지
-                if math.hypot(dx, dy) > 1e-9:
-                    yaw = math.atan2(dy, dx)
-                else:
-                    yaw = previous_yaw
+                yaw = previous_yaw
 
             waypoints.append((current["x"], current["y"], yaw))
             previous_yaw = yaw
@@ -210,6 +203,20 @@ class RosGateway:
             },
             "source": "ros2",
         }
+
+    def on_navigation_result(self, robot_id: str, status: int) -> None:
+
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            # 도착 후 처리
+            pass
+
+        elif status == GoalStatus.STATUS_CANCELED:
+            # 취소 처리
+            pass
+
+        elif status == GoalStatus.STATUS_ABORTED:
+            # 실패 처리
+            pass
 
 
 ros_gateway = RosGateway()
