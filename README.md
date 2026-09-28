@@ -197,6 +197,15 @@ unset OLLAMA_MODEL
 
 Mock Fleet에서 LLM 비교를 사용하려면 ROS 2 환경과 Zenoh Router를 준비한 뒤 `python -m simulation.simulators.mock_fleet`를 실행합니다. LLM 비교는 선택 사항이며 주행에는 코드로 계산한 경로를 사용합니다. 오프라인 검증 명령은 `python -m unittest discover -s tests -v`입니다.
 
+여러 Ollama 모델을 같은 조건에서 반복 평가하고 Jetson에서 결과를 다시
+수집하는 방법은 [`doc/llm-route-generation-benchmark.md`](doc/llm-route-generation-benchmark.md)를
+참고하세요. 실행 전 그래프와 기준 경로만 확인하려면 다음 명령을 사용합니다.
+
+```bash
+python -m simulation.evaluation.benchmark --check
+```
+
+
 ## 문제 해결
 
 - **대시보드가 열리지 않음:** `logs/frontend.log`, Node.js 버전, 5173 포트 사용 여부를 확인합니다.
