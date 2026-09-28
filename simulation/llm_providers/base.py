@@ -1,11 +1,3 @@
-"""
-LLM 경로 계산 플러그인 공통 인터페이스.
-
-모든 벤더별 구현(OpenAI, Anthropic, Ollama 등)은 이 클래스를 상속해서
-compute_shortest_path()를 구현한다. 공통 지시문·입력·출력 형식을 두어
-비교 코드가 벤더별 API 차이를 알 필요가 없도록 한다.
-"""
-
 from abc import ABC, abstractmethod
 from typing import Optional
 

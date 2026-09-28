@@ -1,20 +1,3 @@
-"""
-[플러그인] Ollama 로컬 모델 기반 최단경로 계산기.
-
-"모델 후보 5종" 중 "오픈소스 로컬" / "오픈소스 경량" 두 자리를
-이 클래스 하나로 커버한다. OLLAMA_MODEL 값만 바꿔 같은 코드로 비교한다.
-
-사전 준비:
-    cp simulation/.env.example simulation/.env
-    # simulation/.env에서 LLM_PROVIDER=ollama, OLLAMA_MODEL을 설정한다.
-    ollama pull gemma3:1b
-    ollama serve              # 이미 서비스로 실행 중이면 생략한다.
-    python simulation/run_llm_comparison.py
-
-로컬 서버는 API 키가 필요 없다. 다른 주소의 서버를 사용하면
-simulation/.env에 OLLAMA_HOST를 설정한다.
-"""
-
 from __future__ import annotations
 
 import json

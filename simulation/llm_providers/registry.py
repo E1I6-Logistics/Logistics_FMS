@@ -1,6 +1,5 @@
 """
-[플러그인 레지스트리] LLM_PROVIDER 환경변수 값에 따라 알맞은
-Provider 인스턴스를 만들어 반환한다.
+LLM_PROVIDER 환경변수 값에 따라 알맞은 Provider 인스턴스를 만들어 반환한다.
 
 사용 예:
     cp simulation/.env.example simulation/.env
