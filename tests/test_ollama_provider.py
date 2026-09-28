@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from simulation.llm_providers import ollama_provider
-from simulation.run_llm_comparison import selected_provider_config
+from simulation.evaluation.cli import selected_provider_config
 
 
 class OllamaProviderTest(unittest.TestCase):

@@ -20,7 +20,7 @@ import sys
 from urllib import error as url_error
 from urllib import request as url_request
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -30,12 +30,8 @@ from simulation.services.route_service import (
     plan_route,
 )
 
-# 벤더별 API 호출은 llm_providers에 맡긴다. Mock Fleet은 코드 경로를
-# baseline으로 넘기고, 비교 결과를 로그에 남기는 역할만 담당한다.
-if __package__:
-    from .llm_route_comparison import compare_path_with_llm
-else:
-    from llm_route_comparison import compare_path_with_llm
+# 벤더별 API 호출은 llm_providers에 맡기고 비교 로직은 evaluation에서 가져온다.
+from simulation.evaluation.comparison import compare_path_with_llm
 
 ROBOT_IDS = ("robot1", "robot2", "robot3")
 INITIAL_POINT_IDS = {"robot1": 0, "robot2": 1, "robot3": 2}

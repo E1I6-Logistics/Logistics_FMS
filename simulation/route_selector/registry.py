@@ -6,7 +6,7 @@ LLM_PROVIDER 환경변수 값에 따라 알맞은 Provider 인스턴스를 만�
     # simulation/.env에서 LLM_PROVIDER, 모델, API 키를 설정한다.
     # LLM_PROVIDER가 설정된 별도 Mock Fleet을 실행하고 Zenoh goal을 보내야
     # 비교가 실행된다. --robot-number/--point-id CLI는 FMS API 명령만 보낸다.
-    python -m simulation.simulators.mock_fleet
+    python simulation/mock_fleet.py
 
 새 벤더(예: Google Gemini)를 추가하려면:
     1. base.LLMPathProvider를 상속한 새 클래스를 만들고

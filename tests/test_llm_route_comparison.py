@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from simulation import llm_route_comparison
+from simulation.evaluation import comparison as llm_route_comparison
 from tests.fixtures import MOCK_DIR, load_graph, load_responses, route_inputs
 
 

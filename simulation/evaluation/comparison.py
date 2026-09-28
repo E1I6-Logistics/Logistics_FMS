@@ -14,20 +14,14 @@ from simulation.services.route_service import (
     validate_and_calculate_path_distance,
 )
 
-if __package__:
-    from .llm_providers import get_provider
-    from .llm_providers.base import LLMPathProvider
-    from .summarize_llm_comparisons import write_summary
-else:
-    from llm_providers import get_provider
-    from llm_providers.base import LLMPathProvider
-    from summarize_llm_comparisons import write_summary
+from simulation.llm_providers import get_provider
+from simulation.llm_providers.base import LLMPathProvider
+from .summary import write_summary
 
-
-SIMULATION_DIR = Path(__file__).resolve().parent
+SIMULATION_DIR = Path(__file__).resolve().parents[1]
 LLM_RESULT_PATH = SIMULATION_DIR / "llm_route_comparisons.jsonl"
 LLM_SUMMARY_PATH = SIMULATION_DIR / "llm_route_summary.json"
-ROUTE_DIR = Path(__file__).resolve().parents[1] / "routes"
+ROUTE_DIR = Path(__file__).resolve().parents[2] / "routes"
 
 
 def resolve_llm_route_graph_path(value: str | Path | None = None) -> Path:

@@ -1,6 +1,6 @@
 """LLM 경로 비교 JSONL을 읽어 모델·프롬프트별 누적 지표를 만든다.
 
-입력은 ``llm_route_comparison.py``가 실행마다 한 줄씩 저장한 JSONL이며,
+입력은 ``evaluation/comparison.py``가 실행마다 한 줄씩 저장한 JSONL이며,
 출력은 실험 조건별 성공률과 평균값을 담은 하나의 JSON 파일이다.
 """
 
@@ -127,7 +127,7 @@ def write_summary(result_path: Path, output_path: Path) -> dict:
 
 def main() -> int:
     """기본 결과 파일을 집계하거나 CLI에서 지정한 경로를 처리한다."""
-    simulation_dir = Path(__file__).resolve().parent
+    simulation_dir = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="LLM 경로 비교 결과를 집계합니다.")
     parser.add_argument(
         "--input",

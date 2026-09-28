@@ -2,7 +2,7 @@
 
 import unittest
 
-from simulation.summarize_llm_comparisons import summarize
+from simulation.evaluation.summary import summarize
 
 
 class LlmComparisonSummaryTest(unittest.TestCase):

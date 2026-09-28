@@ -130,9 +130,9 @@ apt-cache policy zenoh-bridge-ros2dds
 source ~/venv/robot/bin/activate
 python -m pip install -r simulation/requirements.txt
 test -f simulation/.env || cp simulation/.env.example simulation/.env
-python simulation/build_compact_graph.py
-python simulation/run_llm_comparison.py --start 2 --goal 10 --dry-run
-python simulation/run_llm_comparison.py --start 2 --goal 10
+python -m simulation.evaluation.cli build-compact
+python -m simulation.evaluation.cli compare --start 2 --goal 6 --dry-run
+python -m simulation.evaluation.cli compare --start 2 --goal 6
 ```
 
 `simulation/.env`에서 `LLM_PROVIDER`, 해당 provider의 모델 이름·인증 정보, `LLM_ROUTE_GRAPH`를 설정합니다. Ollama를 선택했다면 서버와 모델을 먼저 준비하세요. `--dry-run`은 모델을 호출하지 않습니다. 실제 비교 결과는 `simulation/llm_route_comparisons.jsonl`, 집계는 `simulation/llm_route_summary.json`에 저장되며 두 파일과 `.env`는 Git에서 제외됩니다. 작은 모델은 유효하지 않은 경로를 반환할 수 있고, 이 경우 비교는 실패로 기록됩니다.
@@ -169,9 +169,9 @@ LLM_MAX_ATTEMPTS=1
 설정을 바꾼 후 비교 실행기를 다시 실행하면 새 모델이 적용됩니다.
 
 ```bash
-python simulation/run_llm_comparison.py \
+python -m simulation.evaluation.cli compare \
   --start 2 \
-  --goal 10 \
+  --goal 6 \
   --llm-graph test_compact_graph.geojson \
   --max-attempts 1
 ```
@@ -180,9 +180,9 @@ python simulation/run_llm_comparison.py \
 
 ```bash
 OLLAMA_MODEL=llama3.2:3b \
-python simulation/run_llm_comparison.py \
+python -m simulation.evaluation.cli compare \
   --start 2 \
-  --goal 10 \
+  --goal 6 \
   --llm-graph test_compact_graph.geojson
 ```
 
@@ -195,7 +195,7 @@ unset OLLAMA_MODEL
 
 모델을 비교할 때는 시작 노드, 도착 노드, 그래프, 재시도 횟수를 동일하게 유지합니다. 모델별 실행 결과는 `model` 값으로 구분되어 누적됩니다.
 
-Mock Fleet에서 LLM 비교를 사용하려면 ROS 2 환경과 Zenoh Router를 준비한 뒤 `simulation/mock_fleet.py`를 실행합니다. LLM 비교는 선택 사항이며 주행에는 코드로 계산한 경로를 사용합니다. 오프라인 검증 명령은 `python -m unittest discover -s tests -v`입니다.
+Mock Fleet에서 LLM 비교를 사용하려면 ROS 2 환경과 Zenoh Router를 준비한 뒤 `python -m simulation.simulators.mock_fleet`를 실행합니다. LLM 비교는 선택 사항이며 주행에는 코드로 계산한 경로를 사용합니다. 오프라인 검증 명령은 `python -m unittest discover -s tests -v`입니다.
 
 ## 문제 해결
 
