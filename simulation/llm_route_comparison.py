@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 
-from simulation.route_comparison_service import (
+from simulation.services.route_service import (
     compare_path_metrics,
     validate_and_calculate_path_distance,
 )

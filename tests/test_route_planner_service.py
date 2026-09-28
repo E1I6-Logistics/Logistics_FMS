@@ -3,7 +3,7 @@
 import math
 import unittest
 
-from simulation.route_planner import plan_route
+from simulation.services.route_service import plan_route
 from tests.fixtures import load_graph
 
 

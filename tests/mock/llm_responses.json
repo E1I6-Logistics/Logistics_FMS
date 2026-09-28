@@ -1,0 +1,6 @@
+{
+  "matching": {"path": [1, 2, 3], "reported_total_distance": 2},
+  "alternative": {"path": [1, 3], "reported_total_distance": 2},
+  "nonexistent_edge": {"path": [1, 4, 3], "reported_total_distance": 2},
+  "wrong_destination": {"path": [1, 2], "reported_total_distance": 1}
+}

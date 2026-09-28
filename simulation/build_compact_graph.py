@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from simulation.route_comparison_service import build_compact_route_graph
+from simulation.services.route_service import build_compact_route_graph
 
 
 def route_file(name: str) -> Path:

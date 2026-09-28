@@ -11,37 +11,18 @@ from time import monotonic
 # Allow `python simulation/run_llm_comparison.py` from the repository root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from simulation.route_graph import ROUTE_GRAPH_PATH as CONFIGURED_GRAPH_PATH
-from simulation.route_graph import load_route_graph, node_lookup
-from simulation.route_planner import plan_route
+from simulation.services.route_service import (
+    ROUTE_GRAPH_PATH as CONFIGURED_GRAPH_PATH,
+    build_route_inputs,
+    load_route_graph,
+    plan_route,
+)
 from simulation.llm_route_comparison import (
     LLM_RESULT_PATH,
     LLM_SUMMARY_PATH,
     compare_path_with_llm,
     resolve_llm_route_graph_path,
 )
-
-
-def build_route_inputs(graph: dict) -> tuple[dict[int, tuple[float, float]], list[tuple[int, int, float]]]:
-    """Convert the shared GeoJSON into the comparison function's input format."""
-    points = {
-        int(node_id): (
-            float(feature["geometry"]["coordinates"][0]),
-            float(feature["geometry"]["coordinates"][1]),
-        )
-        for node_id, feature in node_lookup(graph).items()
-    }
-    edges = []
-    for feature in graph.get("features", []):
-        properties = feature.get("properties") or {}
-        if properties.get("startid") is None or properties.get("endid") is None:
-            continue
-        edges.append((
-            int(properties["startid"]),
-            int(properties["endid"]),
-            float(properties.get("cost", 0.0)),
-        ))
-    return points, edges
 
 
 def selected_provider_config() -> tuple[str, str]:

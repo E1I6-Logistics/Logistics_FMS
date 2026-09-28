@@ -24,11 +24,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from simulation.route_graph import (
+from simulation.services.route_service import (
+    build_route_inputs,
     load_route_graph,
-    node_lookup,
+    plan_route,
 )
-from simulation.route_planner import plan_route
 
 # 벤더별 API 호출은 llm_providers에 맡긴다. Mock Fleet은 코드 경로를
 # baseline으로 넘기고, 비교 결과를 로그에 남기는 역할만 담당한다.
@@ -41,32 +41,6 @@ ROBOT_IDS = ("robot1", "robot2", "robot3")
 INITIAL_POINT_IDS = {"robot1": 0, "robot2": 1, "robot3": 2}
 ROBOT_SPEED = 0.25
 TELEMETRY_PERIOD = 0.3
-
-# 1. 공통 route_graph가 읽은 GeoJSON을 LLM 검증과 로봇 보간에 필요한
-# points/edges 형식으로 바꾼다. 별도의 그래프 파일을 다시 읽지 않는다.
-def build_route_inputs(graph):
-    points = {
-        int(node_id): (
-            float(feature["geometry"]["coordinates"][0]),
-            float(feature["geometry"]["coordinates"][1]),
-        )
-        for node_id, feature in node_lookup(graph).items()
-    }
-    edges = []
-    for feature in graph.get("features", []):
-        properties = feature.get("properties") or {}
-        if properties.get("startid") is not None and properties.get("endid") is not None:
-            edges.append(
-                (
-                    int(properties["startid"]),
-                    int(properties["endid"]),
-                    float(properties.get("cost", 0.0)),
-                )
-            )
-
-    if not points:
-        raise ValueError("Route graph에 Point 노드가 없습니다.")
-    return points, edges
 
 def plan_node_path(graph, start_id, target_id):
     """2. 공통 플래너의 최단 경로를 기존 정수 node path 형식으로 변환한다.

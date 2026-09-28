@@ -3,7 +3,7 @@
 import math
 import unittest
 
-from simulation.route_comparison_service import (
+from simulation.services.route_service import (
     build_compact_route_graph,
     build_edge_weight_lookup,
     compare_path_metrics,
