@@ -65,6 +65,27 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
             ],
         )
 
+    def test_v3_has_five_representative_models_and_routes(self):
+        config_path = DEFAULT_CONFIG.with_name("route_generation_benchmark_v3.json")
+        prepared = load_and_validate_config(config_path)
+
+        self.assertEqual(
+            [model["name"] for model in prepared["config"]["models"]],
+            [
+                "deepseek-r1:14b",
+                "qwen3:14b",
+                "phi4:14b",
+                "gemma3:12b",
+                "mistral-nemo:12b",
+            ],
+        )
+        self.assertEqual(len(prepared["cases"]), 5)
+        self.assertEqual(prepared["config"]["settings"]["repeats"], 5)
+        self.assertEqual(
+            [len(case["expected_path"]) for case in prepared["cases"]],
+            [3, 4, 5, 5, 8],
+        )
+
     def test_mock_run_writes_expected_matrix_and_exports(self):
         manifest = run_benchmark(
             DEFAULT_CONFIG,
