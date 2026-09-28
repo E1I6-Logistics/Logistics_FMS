@@ -34,6 +34,7 @@ class OllamaPathProvider(LLMPathProvider):
             host=host or os.getenv("OLLAMA_HOST"),
             timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "60")),
         )
+        self.last_inference = None
 
     def compute_shortest_path(
         self,
@@ -43,7 +44,9 @@ class OllamaPathProvider(LLMPathProvider):
     ) -> dict:
         llm_input = self.build_llm_input(raw_graph, start_id, target_id)
 
-        response = self.client.chat(
+        self.last_inference = None
+        options = {'temperature': 0, 'seed': 20260928, 'num_ctx': 4096, 'num_predict': 512}
+        request = dict(
             model=self.model,
             messages=[
                 {"role": "system", "content": self.instructions_for_graph(raw_graph)},
@@ -56,7 +59,15 @@ class OllamaPathProvider(LLMPathProvider):
             ],
             # Ollama는 JSON Schema를 format 파라미터에 직접 전달한다.
             format=self.OUTPUT_SCHEMA,
+            options=options,
+            stream=False,
+            keep_alive='5m',
         )
+        if self.model.startswith('qwen3:'):
+            request['think'] = False
+        response = self.client.chat(**request)
+        raw = response.model_dump(mode='json') if hasattr(response, 'model_dump') else dict(response)
+        self.last_inference = {'request': request, 'response': raw}
 
         content = response["message"]["content"]
         if not content:
