@@ -8,6 +8,8 @@ from ..services.fleet_manager import fleet_manager
 from ..services.route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
 from ..services.pathfinding import DistanceAStar
 
+import math
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -135,11 +137,24 @@ class RosGateway:
 
         # 경로의 Node ID를 실제 Map 좌표로 변환
         waypoints = []
+        # 첫 구간이 동일 좌표이면 현재 로봇 방향 유지
+        previous_yaw = float(robot.yaw) if robot.yaw is not None else 0.0
 
-        # 첫 번째 Node는 현재 위치이므로 제외
-        for route_node_id in node_ids[1:]:
-            node = get_node(route_node_id)
-            waypoints.append((node["x"], node["y"]))
+        # 각 waypoint에 도착했을 때 해당 지점으로 진입한 구간의 방향을 계산하여 포함
+        for previous_id, current_id in zip(node_ids, node_ids[1:]):
+            previous = get_node(previous_id)
+            current = get_node(current_id)
+
+            dx = current["x"] - previous["x"]
+            dy = current["y"] - previous["y"]
+            # 동일 좌표 또는 매우 짧은 구간에서는 직전 방향 유지
+            if math.hypot(dx, dy) > 1e-9:
+                yaw = math.atan2(dy, dx)
+            else:
+                yaw = previous_yaw
+
+            waypoints.append((current["x"], current["y"], yaw))
+            previous_yaw = yaw
 
         # 이미 목적지 Node에 있는 경우
         if not waypoints:
