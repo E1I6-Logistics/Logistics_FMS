@@ -157,3 +157,7 @@ test-results/
 !doc/**
 
 doc/record_file/
+
+# LLM experiment runtime outputs
+simulation/llm_route_comparisons.jsonl
+simulation/llm_route_summary.json

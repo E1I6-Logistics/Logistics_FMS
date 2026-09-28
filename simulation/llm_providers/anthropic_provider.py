@@ -1,20 +1,7 @@
-"""
-[플러그인] Anthropic Claude API 기반 최단경로 계산기.
-
-"모델 후보 5종" 중 "상용 타 벤더 저지연" 자리에 해당한다.
-Claude의 Structured Outputs(JSON outputs) 기능으로 스키마를 강제한다.
-
-사전 준비:
-    pip install anthropic
-    export ANTHROPIC_API_KEY="발급받은_API_KEY"
-    export ANTHROPIC_MODEL="claude-sonnet-4-6"
-    # ⚠️ Structured Outputs 지원 모델만 사용 가능 — 최신 지원 목록은
-    #    docs.claude.com/en/docs/build-with-claude/structured-outputs 확인
-"""
-
 from __future__ import annotations
 
 import json
+import os
 
 from anthropic import Anthropic
 
@@ -27,8 +14,9 @@ class AnthropicPathProvider(LLMPathProvider):
     def __init__(self, model: str | None = None):
         self.model = model or self._require_env("ANTHROPIC_MODEL")
         self._require_env("ANTHROPIC_API_KEY")
-        # ANTHROPIC_API_KEY 환경변수를 자동으로 읽는다.
-        self.client = Anthropic()
+        self.client = Anthropic(
+            timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        )
 
     def compute_shortest_path(
         self,
@@ -41,11 +29,13 @@ class AnthropicPathProvider(LLMPathProvider):
         response = self.client.messages.create(
             model=self.model,
             max_tokens=1024,
-            system=self.INSTRUCTIONS,
+            system=self.instructions_for_graph(raw_graph),
             messages=[
                 {
                     "role": "user",
-                    "content": json.dumps(llm_input, ensure_ascii=False),
+                    "content": json.dumps(
+                        llm_input, ensure_ascii=False, separators=(",", ":")
+                    ),
                 }
             ],
             # OpenAI의 text.format과 동일한 역할 — JSON 스키마를 강제한다.

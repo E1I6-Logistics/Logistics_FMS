@@ -1,0 +1,13 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {"id": 1}},
+    {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 0]}, "properties": {"id": 2}},
+    {"type": "Feature", "geometry": {"type": "Point", "coordinates": [2, 0]}, "properties": {"id": 3}},
+    {"type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 1]}, "properties": {"id": 4}},
+    {"type": "Feature", "geometry": {"type": "MultiLineString"}, "properties": {"id": "e12", "startid": 1, "endid": 2, "cost": 1}},
+    {"type": "Feature", "geometry": {"type": "MultiLineString"}, "properties": {"id": "e23", "startid": 2, "endid": 3, "cost": 1}},
+    {"type": "Feature", "geometry": {"type": "MultiLineString"}, "properties": {"id": "e13", "startid": 1, "endid": 3, "cost": 3}},
+    {"type": "Feature", "geometry": {"type": "MultiLineString"}, "properties": {"id": "e14", "startid": 1, "endid": 4, "cost": 0}}
+  ]
+}

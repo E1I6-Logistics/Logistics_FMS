@@ -1,18 +1,3 @@
-"""
-[플러그인] OpenAI Responses API 기반 최단경로 계산기.
-
-"모델 후보 5종" 중 "상용 저지연" / "상용 플래그십" 두 자리를
-OPENAI_MODEL 값만 바꿔서 커버한다 (예: gpt-4o-mini vs gpt-4.1 등).
-
-사전 준비:
-    pip install openai
-    export OPENAI_API_KEY="발급받은_API_KEY"
-    export OPENAI_MODEL="사용할_모델_ID"
-
-동작은 기존에 받은 request_llm_shortest_path()와 완전히 동일하다 —
-OpenAI 전용 코드를 그대로 클래스 안으로 옮긴 것뿐이다.
-"""
-
 import json
 import os
 
@@ -28,7 +13,9 @@ class OpenAIPathProvider(LLMPathProvider):
         self.model = model or self._require_env("OPENAI_MODEL")
         self._require_env("OPENAI_API_KEY")
         # OPENAI_API_KEY 환경변수를 자동으로 읽는다.
-        self.client = OpenAI()
+        self.client = OpenAI(
+            timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        )
 
     def compute_shortest_path(
         self,
@@ -40,8 +27,8 @@ class OpenAIPathProvider(LLMPathProvider):
 
         response = self.client.responses.create(
             model=self.model,
-            instructions=self.INSTRUCTIONS,
-            input=json.dumps(llm_input, ensure_ascii=False),
+            instructions=self.instructions_for_graph(raw_graph),
+            input=json.dumps(llm_input, ensure_ascii=False, separators=(",", ":")),
             text={
                 "format": {
                     "type": "json_schema",
