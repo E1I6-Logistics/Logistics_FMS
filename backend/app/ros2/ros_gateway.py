@@ -37,6 +37,7 @@ class RosGateway:
     def set_ros_node(self, ros_node: FmsRosNode) -> None:
         self._ros_node = ros_node
         ros_node.navigation_result_callback = self.on_navigation_result
+        ros_node.spin_result_callback = self.on_spin_result
 
     def sync_connected_robots(self, connections: list[dict]) -> None:
 
@@ -250,6 +251,21 @@ class RosGateway:
         elif status == GoalStatus.STATUS_ABORTED:
             # 실패 처리
             pass
+
+    def on_spin_result(self, robot_id: str, status: int) -> None:
+        if status != GoalStatus.STATUS_SUCCEEDED:
+            print(f"[{robot_id}] Spin 실패")
+            return
+
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            return
+
+        # 0, 1, 2번 노드에서만 정밀 도킹
+        if str(robot.goal_node) in ["0", "1", "2"]:
+            print(f"[{robot_id}] PrecisionDock 시작: {robot.goal_node}")
+            self._ros_node.send_precision_dock(robot_id)
 
 
 ros_gateway = RosGateway()
