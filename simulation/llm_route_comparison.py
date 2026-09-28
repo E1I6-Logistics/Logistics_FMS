@@ -97,6 +97,8 @@ def compare_path_with_llm(
     baseline_path,
     route_graph_path: str | Path | None = None,
     max_attempts: int | None = None,
+    provider: LLMPathProvider | None = None,
+    context: dict | None = None,
 ):
     """Run the LLM harness and save both successful and failed evaluations."""
     selected_graph_path = (
@@ -131,7 +133,8 @@ def compare_path_with_llm(
             "timed_out": False,
         }
         try:
-            llm_answer = request_llm_shortest_path(raw_graph, start_id, target_id)
+            llm_answer = (provider.compute_shortest_path(raw_graph, start_id, target_id)
+                          if provider is not None else request_llm_shortest_path(raw_graph, start_id, target_id))
             attempt["json_response_success"] = isinstance(llm_answer, dict)
             llm_path, llm_distance = validate_and_calculate_path_distance(
                 points,
@@ -147,6 +150,8 @@ def compare_path_with_llm(
             attempt["error_type"] = type(error).__name__
             attempt["error_message"] = str(error)
         finally:
+            if provider is not None and getattr(provider, 'last_inference', None) is not None:
+                attempt['inference'] = provider.last_inference
             attempt["response_time_seconds"] = round(monotonic() - started, 6)
             attempts.append(attempt)
 
@@ -235,6 +240,9 @@ def compare_path_with_llm(
             "type": type(last_error).__name__,
             "message": str(last_error),
         }
+
+    if context is not None:
+        result['context'] = context
 
     _append_result(result)
     return result
