@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from threading import RLock
+from time import monotonic
 
 class RobotState(str, Enum):
     OFFLINE = "OFFLINE"
@@ -19,6 +21,9 @@ class RobotState(str, Enum):
 class Robot:
     def __init__(self, robot_id: str):
 
+        # ROS 콜백과 API 사이의 상태 읽기/쓰기 보호
+        self._lock = RLock()
+
         # 로봇 식별자
         self.robot_id = robot_id
 
@@ -33,12 +38,19 @@ class Robot:
         # 배터리 상태
         self.battery: float | None = None
 
-        # FMS 상태
+        # 현재 동작 상태
         self.state: RobotState = RobotState.OFFLINE
 
-        # 작업 / 경로 상태
+        # 마지막 AMCL 수신 시각. monotonic() 기준 초 단위. 위치 최신성 검사용
+        # monotonic() - 내부 경과 시간 비교. 시스템 시간 변경의 영향을 받지 않음
+        self.pose_received_at: float | None = None
+
+        # 현재 관리 중인 주행 요청 식별자. 이전 목표의 늦은 피드백 또는 결과가 새 상태를 변경하지 않도록 사용
+        self.navigation_id: str | None = None
+
+        # 현재 요청된 최종 목적지
         self.goal_node: str | None = None
-        # 현재 위치한 Route Graph Node
+        # 현재 위치한 Route Graph Node. 구간 사이에서는 None
         self.current_node = None
         # 현재 계획된 경로
         self.route = None
@@ -64,10 +76,11 @@ class Robot:
         self.state = state
 
     def update_pose(self, x: float, y: float, yaw: float) -> None:
-
-        self.x = float(x)
-        self.y = float(y)
-        self.yaw = float(yaw)
+        with self._lock:
+            self.x = float(x)
+            self.y = float(y)
+            self.yaw = float(yaw)
+            self.pose_received_at = monotonic() # FMS가 위치를 저장한 시각. AMCL 메시지의 측정 시간이나 웹 전송 시각과는 별개
 
     def update_battery(self, percentage: float) -> None:
         self.battery = float(percentage)
