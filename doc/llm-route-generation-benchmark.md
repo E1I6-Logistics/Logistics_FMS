@@ -62,7 +62,9 @@ cd ~/Logistics_FMS
 git branch --show-current
 source ~/venv/robot/bin/activate
 python -m pip install -r simulation/requirements.txt
-python -m simulation.evaluation.benchmark --check
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --check
 ```
 
 `--check`는 Ollama에 요청하지 않는다. 그래프 해시, 노드·간선 개수,
@@ -95,14 +97,20 @@ curl http://127.0.0.1:11434/api/tags
 ollama serve
 ```
 
-누락된 모델만 내려받는다.
+v3 시험에 사용할 모델 10종 중 누락된 모델만 내려받는다. 기본 모델
+파일의 합은 약 48GB이므로 먼저 `df -h`로 저장 공간을 확인한다.
 
 ```bash
 ollama pull qwen3:0.6b
-ollama pull qwen3:1.7b
-ollama pull gemma3:1b
+ollama pull deepseek-r1:1.5b
+ollama pull llama3.2:3b
 ollama pull qwen3:4b
+ollama pull gemma3:4b
+ollama pull llama3.1:8b
+ollama pull mistral-nemo:12b
+ollama pull gemma3:12b
 ollama pull deepseek-r1:14b
+ollama pull phi4:14b
 ```
 
 다른 컴퓨터의 Ollama 서버를 사용하면 실행 전에 주소를 지정한다.
@@ -120,7 +128,8 @@ cd ~/Logistics_FMS
 source ~/venv/robot/bin/activate
 
 python -m simulation.evaluation.benchmark \
-  --output simulation/benchmark_results/jetson-$(date +%Y%m%d-%H%M%S)
+  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --output simulation/benchmark_results/jetson-v3-$(date +%Y%m%d-%H%M%S)
 ```
 
 실행기는 모델별 예열을 먼저 수행하고 다음으로 각 경로를 3회 실행한다.
@@ -131,7 +140,8 @@ python -m simulation.evaluation.benchmark \
 
 ```bash
 python -m simulation.evaluation.benchmark \
-  --resume simulation/benchmark_results/jetson-실행시각
+  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --resume simulation/benchmark_results/jetson-v3-실행시각
 ```
 
 이미 기록된 예열과 `모델·시작·도착·반복 번호` 조합은 다시 요청하지 않는다.
@@ -148,6 +158,20 @@ python -m simulation.evaluation.benchmark \
 | `model_summary.csv` | 모델 간 정확도와 지연시간 그래프 작성용 |
 | `route_summary.csv` | 모델·경로별 난이도 비교 그래프 작성용 |
 | `latency_samples.csv` | 모든 개별 실행의 지연시간 분포 그래프 작성용 |
+| `trial_samples.csv` | 개별 실행의 경로·거리·정확도·시간을 한 행으로 펼친 분석용 |
+
+
+
+Ollama를 다시 실행하지 않고 저장된 `trials.jsonl`에서 요약과 CSV를 다시
+만들려면 다음 명령을 사용한다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --export-results simulation/benchmark_results/jetson-v3-실행시각
+```
+
+이 명령은 모델에 요청하지 않고 `summary.json`, `model_summary.csv`,
+`route_summary.csv`, `latency_samples.csv`, `trial_samples.csv`를 재생성한다.
 
 CSV는 Excel에서 한글이 깨지지 않도록 UTF-8 BOM 형식으로 저장한다.
 실행 결과 폴더는 `.gitignore`에 포함되므로 결과를 공유할 때는 별도 보관한다.
@@ -171,6 +195,14 @@ CSV는 Excel에서 한글이 깨지지 않도록 UTF-8 BOM 형식으로 저장�
 
 정답 판정에는 모델이 보고한 거리를 사용하지 않는다. 모델이 반환한 경로를
 공통 `route_service`로 다시 검증하고 계산한 거리만 사용한다.
+
+과거 5종 v2 시험을 그대로 재현해야 할 때만 다음 설정을 지정한다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark.json \
+  --check
+```
 
 ## 8. 재현성의 범위
 
@@ -239,22 +271,6 @@ Qwen은 0.6B와 4B, Gemma는 4B와 12B를 함께 포함하여 동일 계열에�
 `/api/show`로 확인한다.
 
 
-
-Jetson에서 필요한 모델 이름은 다음과 같다. 원격 접속과 저장 공간 확인 후
-누락된 모델만 내려받는다.
-
-```bash
-ollama pull qwen3:0.6b
-ollama pull deepseek-r1:1.5b
-ollama pull llama3.2:3b
-ollama pull qwen3:4b
-ollama pull gemma3:4b
-ollama pull llama3.1:8b
-ollama pull mistral-nemo:12b
-ollama pull gemma3:12b
-ollama pull deepseek-r1:14b
-ollama pull phi4:14b
-```
 
 Jetson 접속이 가능해진 뒤 다음 명령으로 설정만 먼저 검증한다.
 

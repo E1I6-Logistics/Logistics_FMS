@@ -440,6 +440,26 @@ def write_exports(output: Path) -> dict:
         for row in rows
     ]
     _write_csv(output / "latency_samples.csv", latency_rows)
+    trial_rows = [
+        {
+            "trial_id": row["trial_id"],
+            "timestamp": row["timestamp"],
+            "model": row["model"],
+            "start_node": row["input"]["start_node"],
+            "target_node": row["input"]["target_node"],
+            "repeat": row["repeat"],
+            "baseline_path": json.dumps(row["baseline"]["path"]),
+            "llm_path": json.dumps(row["llm"]["path"]),
+            "baseline_distance": row["baseline"]["recalculated_total_distance"],
+            "llm_reported_distance": row["llm"]["reported_total_distance"],
+            "llm_recalculated_distance": row["llm"][
+                "recalculated_total_distance"
+            ],
+            **row["metrics"],
+        }
+        for row in rows
+    ]
+    _write_csv(output / "trial_samples.csv", trial_rows)
     return summary
 
 
@@ -600,6 +620,7 @@ def run_benchmark(
             "model_summary.csv",
             "route_summary.csv",
             "latency_samples.csv",
+            "trial_samples.csv",
         ],
     )
     _json_dump(manifest_path, manifest)
@@ -625,8 +646,28 @@ def main() -> int:
         action="store_true",
         help="validate graph, baselines, and config without contacting Ollama",
     )
+    parser.add_argument(
+        "--export-results",
+        type=Path,
+        metavar="DIRECTORY",
+        help="regenerate summaries and CSV files from an existing trials.jsonl",
+    )
     args = parser.parse_args()
     try:
+        # 기존 JSONL을 다시 집계할 때는 provider를 생성하거나 Ollama를 호출하지 않는다.
+        if args.export_results is not None:
+            if args.output is not None or args.resume is not None or args.check:
+                parser.error(
+                    "--export-results cannot be combined with --output, --resume, or --check"
+                )
+            output = args.export_results.resolve()
+            if not (output / "trials.jsonl").is_file():
+                raise FileNotFoundError(f"trials.jsonl not found: {output}")
+            summary = write_exports(output)
+            print(f"결과 재추출 완료: {output}")
+            print(f"본 시험 레코드: {summary['trial_count']}")
+            return 0
+
         prepared = load_and_validate_config(args.config)
         if args.check:
             print(
