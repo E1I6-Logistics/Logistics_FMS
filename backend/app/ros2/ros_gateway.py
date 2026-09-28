@@ -147,11 +147,22 @@ class RosGateway:
 
             dx = current["x"] - previous["x"]
             dy = current["y"] - previous["y"]
-            # 동일 좌표 또는 매우 짧은 구간에서는 직전 방향 유지
-            if math.hypot(dx, dy) > 1e-9:
-                yaw = math.atan2(dy, dx)
+
+            # 특정 노드는 도착 방향 고정
+            if str(current_id) in ["0", "1", "2", "3", "4"]:
+                # 맵 기준 오른쪽
+                yaw = 0.0
+
+            elif str(current_id) in ["5", "6"]:
+                # 맵 기준 아래쪽
+                yaw = -math.pi / 2
+
             else:
-                yaw = previous_yaw
+                # 동일 좌표 또는 매우 짧은 구간에서는 직전 방향 유지
+                if math.hypot(dx, dy) > 1e-9:
+                    yaw = math.atan2(dy, dx)
+                else:
+                    yaw = previous_yaw
 
             waypoints.append((current["x"], current["y"], yaw))
             previous_yaw = yaw
