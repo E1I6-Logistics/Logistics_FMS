@@ -7,6 +7,7 @@ from enum import Enum
 from threading import RLock
 from time import monotonic
 
+
 class RobotState(str, Enum):
     OFFLINE = "OFFLINE"
     INITIALIZING = "INITIALIZING"
@@ -23,6 +24,9 @@ class Robot:
 
         # ROS 콜백과 API 사이의 상태 읽기/쓰기 보호
         self._lock = RLock()
+
+        # 현재 로봇이 수행 중인 navigation type. None이면 navigation 중 아님
+        self.navigation_type = None
 
         # 로봇 식별자
         self.robot_id = robot_id
@@ -80,7 +84,9 @@ class Robot:
             self.x = float(x)
             self.y = float(y)
             self.yaw = float(yaw)
-            self.pose_received_at = monotonic() # FMS가 위치를 저장한 시각. AMCL 메시지의 측정 시간이나 웹 전송 시각과는 별개
+            self.pose_received_at = (
+                monotonic()
+            )  # FMS가 위치를 저장한 시각. AMCL 메시지의 측정 시간이나 웹 전송 시각과는 별개
 
     def update_battery(self, percentage: float) -> None:
         self.battery = float(percentage)
