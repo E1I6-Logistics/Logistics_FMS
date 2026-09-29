@@ -1,7 +1,8 @@
-# Ollama 최단 경로 생성 반복 테스트
+# 로컬 모델 경로 생성·선택 반복 테스트
 
 이 문서는 코드로 계산한 최단 경로와 Ollama 로컬 모델이 생성한 경로를
-같은 조건에서 반복 비교하는 방법을 설명한다. 이 실행기는 로봇 이동 명령을
+반복 비교하고, Hugging Face Laya가 경로 후보를 선택하는 성능을 측정하는
+방법을 설명한다. 이 실행기는 로봇 이동 명령을
 보내지 않으며 FastAPI, ROS 2, Zenoh, 데이터베이스를 사용하지 않는다.
 
 ## 1. 재현 기준
@@ -291,3 +292,225 @@ python -m simulation.evaluation.benchmark \
 Jetson의 메모리 용량과 모델 로딩 가능 여부가 확인되지 않았으므로 최종 모델
 확정은 보류한다. 모델을 불러올 수 없으면 실패 기록을 보존하고, 같은 용량대의
 대체 모델 선정 여부를 별도로 결정한다.
+
+
+## 10. Hugging Face Laya 경로 선택 시험
+
+앞의 Ollama 시험은 모델이 최단 경로를 직접 생성하는 능력을 평가한다.
+Laya 시험은 코드가 계산한 여러 경로 후보 중 하나를 선택하는 능력을 평가한다.
+Laya가 최단 경로 알고리즘을 대신하지 않으며, 두 시험 결과를 같은 지표로
+해석하지 않는다.
+
+### 10.1 대상 장비와 실행 정책
+
+- 장비: Jetson Orin Nano Developer Kit, RAM 8GB
+- 프로젝트에서 사용할 수 있는 RAM: 약 4.5GB
+- 사용할 수 있는 저장공간: 약 15GB
+- 모델: `convaiinnovations/laya-multilingual` checkpoint 하나
+- 기본 입력 한도: 1,024 tokens
+- 동시 추론: 한 번에 한 요청
+- CUDA를 사용할 수 없거나 CPU fallback이 발생하면 실패 처리
+
+Laya Router의 `preload=True`는 여러 checkpoint를 함께 메모리에 올리므로
+사용하지 않는다. TileLang fast extra도 기본 CUDA 경로를 검증하기 전에는
+설치하지 않는다. 모델 파일은 Git에 저장하지 않으며 첫 실행 때 Hugging Face
+cache로 내려받는다.
+Laya Multilingual checkpoint는 약 647MB이며 Python 환경과 JetPack용 PyTorch 용량은 별도다.
+
+관련 코드는 다음과 같다.
+
+- `simulation/route_selector/laya_selector.py`: 모델 로드와 typed decision 처리
+- `simulation/route_selector/registry.py`: `ROUTE_SELECTOR=laya` 선택
+- `simulation/requirements-laya-jetson.txt`: Jetson용 Laya 의존성
+- `tests/test_laya_selector.py`: 모델 다운로드가 없는 Mock 구조 테스트
+- `simulation/evaluation/selector_latency_benchmark.py`: 언어·난이도·정답 위치별 경로 선택 시험
+- `simulation/evaluation/selector_question_types_benchmark.py`: choice·score·noul 시험
+
+### 10.2 Jetson CUDA PyTorch 확인
+
+JetPack 버전에 맞는 NVIDIA 제공 PyTorch를 먼저 설치해야 한다. 일반 PyPI의
+CPU용 PyTorch로 교체하지 않는다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+python -c "import torch; print('torch=', torch.__version__); print('cuda=', torch.cuda.is_available()); print('device=', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+```
+
+다음 조건을 만족해야 한다.
+
+```text
+cuda= True
+device= Orin
+```
+
+`cuda=False`이면 Laya 설치보다 먼저 현재 JetPack과 호환되는 CUDA PyTorch를
+설치한다.
+
+### 10.3 저장공간과 Hugging Face cache 설정
+
+```bash
+df -h ~
+free -h
+mkdir -p ~/.cache/huggingface
+export HF_HOME="$HOME/.cache/huggingface"
+```
+
+15GB 저장공간 안에서 중복 다운로드를 막으려면 모든 실행 터미널에서 같은
+`HF_HOME`을 사용한다.
+
+### 10.4 Laya 런타임 설치
+
+CUDA가 동작하는 기존 Python 환경에서 설치한다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+python -m pip install -r simulation/requirements-laya-jetson.txt
+python -m pip check
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+설치 후에도 `torch.cuda.is_available()`이 `True`인지 확인한다.
+
+### 10.5 환경변수 설정
+
+`simulation/.env`에 다음 값을 설정한다.
+
+```dotenv
+ROUTE_SELECTOR=laya
+LAYA_HF_MODEL=convaiinnovations/laya-multilingual
+LAYA_DEVICE=cuda:0
+LAYA_REQUIRE_CUDA=true
+LAYA_MAX_LENGTH=1024
+HF_HOME=/home/sein/.cache/huggingface
+# 공개 모델에는 HF_TOKEN이 필요하지 않다.
+# HF_TOKEN=
+```
+
+`LAYA_REQUIRE_CUDA=true`이면 CUDA를 사용할 수 없거나 추론 중 CPU fallback이
+발생할 때 오류로 처리한다. CPU 결과가 GPU 성능 측정에 섞이는 것을 방지하기
+위한 설정이다.
+
+### 10.6 모델 다운로드 없는 구조 테스트
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+python -m unittest tests.test_laya_selector -v
+```
+
+이 테스트는 가짜 CUDA agent를 주입하므로 Hugging Face 접속과 실제 GPU가
+필요하지 않다. 모델 성능을 평가하는 테스트는 아니다.
+
+### 10.7 실제 GPU smoke test
+
+첫 실행에서는 checkpoint를 다운로드하므로 이후 실행보다 오래 걸린다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+python - <<'PY'
+from simulation.route_selector import get_selector
+
+selector = get_selector()
+try:
+    result = selector.select_route(
+        {"start_node": 2, "target_node": 10},
+        {
+            "route_a": "path=[2,5,4,6,13,8,9,10], distance=3.033652",
+            "route_b": "path=[2,5,4,6,10], distance=1.592143",
+        },
+    )
+    print("choice:", result["choice"])
+    print("confidence:", result["confidence"])
+    print("runtime:", result["runtime"])
+    print("load_seconds:", result["load_duration_seconds"])
+    print("eval_seconds:", result["eval_duration_seconds"])
+finally:
+    selector.release()
+PY
+```
+
+정상 결과의 `runtime.device`는 `cuda:0`이어야 하며 precision은
+`float16` 또는 `bfloat16`으로 표시되어야 한다. 다른 터미널에서는 다음
+명령으로 메모리와 GPU 사용량을 확인한다.
+
+```bash
+sudo tegrastats
+```
+
+### 10.8 Laya 반복 벤치마크 실행
+
+언어, 질문 난이도, 최단 경로, 정답 선택지 위치에 따른 정확도와 지연시간을
+측정한다. 기본값은 케이스별 5회, 예열 1회, 실시간 기준 0.15초다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/laya-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 \
+  --warmups 1 \
+  --deadline 0.15
+```
+
+생성 파일:
+
+| 파일 | 용도 |
+| --- | --- |
+| `selector_latency_trials.jsonl` | 개별 실행 입력·응답·정답 여부·시간 |
+| `selector_latency_summary.json` | 전체 및 조건별 정확도·지연시간 집계 |
+| `selector_latency_samples.csv` | 그래프와 통계 분석용 개별 측정값 |
+
+choice, score, noul 질문 유형과 한국어·영어 결과를 별도로 측정하려면 다음을
+실행한다.
+
+```bash
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output simulation/benchmark_results/laya-question-types-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 \
+  --warmups 1
+```
+
+생성 파일:
+
+| 파일 | 용도 |
+| --- | --- |
+| `selector_question_type_trials.jsonl` | 질문 유형별 개별 실행 결과 |
+| `selector_question_type_summary.json` | 언어·질문 유형별 정확도와 시간 |
+| `selector_question_type_samples.csv` | 그래프와 통계 분석용 측정값 |
+
+### 10.9 오류 확인
+
+CUDA 사용 여부:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+`False`이면 현재 가상환경의 PyTorch가 Jetson CUDA를 지원하지 않는 상태다.
+
+CUDA 메모리와 시스템 메모리 확인:
+
+```bash
+free -h
+sudo tegrastats
+```
+
+메모리가 부족하면 다른 모델 서버와 불필요한 프로세스를 종료하고
+`LAYA_MAX_LENGTH=512`로 낮춰 smoke test부터 다시 실행한다. selector의
+`release()`는 모델 참조와 CUDA cache를 해제한다.
+
+Hugging Face cache와 저장공간 확인:
+
+```bash
+du -sh "$HF_HOME"
+df -h ~
+```
+
+cache를 삭제하면 다음 실행 때 모델을 다시 다운로드한다.
