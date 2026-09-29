@@ -39,6 +39,9 @@ class FmsRosNode(Node):
         self._spin_clients: dict[str, ActionClient] = {}
         self._precision_dock_clients: dict[str, ActionClient] = {}
 
+        # 현재 실행 중인 FollowWaypoints Goal 관리
+        self._follow_waypoints_goal_handles = {}
+
         self.navigation_result_callback = None
         self.spin_result_callback = None
 
@@ -166,17 +169,28 @@ class FmsRosNode(Node):
         if not goal_handle.accepted:
             self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
             return
+        # 현재 실행 중인 Goal 저장
+        self._follow_waypoints_goal_handles[robot_id] = goal_handle
 
         self.get_logger().info(f"FollowWaypoints goal accepted: {robot_id}")
 
         result_future = goal_handle.get_result_async()
 
         result_future.add_done_callback(
-            lambda future, rid=robot_id: self._on_follow_waypoints_result(rid, future)
+            lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_result(
+                rid, handle, future
+            )
         )
 
-    def _on_follow_waypoints_result(self, robot_id: str, future) -> None:
+    def _on_follow_waypoints_result(self, robot_id: str, goal_handle, future) -> None:
         result = future.result()
+
+        # 종료된 Goal이 현재 실행 중인 Goal일 때만 삭제
+        current_handle = self._follow_waypoints_goal_handles.get(robot_id)
+
+        if current_handle is goal_handle:
+            self._follow_waypoints_goal_handles.pop(robot_id, None)
+
         self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
 
         if self.navigation_result_callback:
@@ -189,6 +203,45 @@ class FmsRosNode(Node):
             f"FollowWaypoints feedback: {robot_id}, "
             f"current_waypoint={feedback.current_waypoint}"
         )
+
+    def cancel_follow_waypoints(self, robot_id: str, callback=None) -> None:
+        goal_handle = self._follow_waypoints_goal_handles.get(robot_id)
+
+        # 실행 중인 Goal이 없으면 바로 다음 작업
+        if goal_handle is None:
+            if callback:
+                callback()
+            return
+
+        self.get_logger().info(f"FollowWaypoints cancel requested: {robot_id}")
+
+        future = goal_handle.cancel_goal_async()
+
+        future.add_done_callback(
+            lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_cancel(
+                rid, handle, future, callback
+            )
+        )
+
+    def _on_follow_waypoints_cancel(
+        self, robot_id: str, goal_handle, future, callback=None
+    ) -> None:
+
+        response = future.result()
+
+        if not response.goals_canceling:
+            self.get_logger().warning(f"FollowWaypoints cancel failed: {robot_id}")
+            return
+
+        self.get_logger().info(f"FollowWaypoints cancel accepted: {robot_id}")
+
+        current_handle = self._follow_waypoints_goal_handles.get(robot_id)
+
+        if current_handle is goal_handle:
+            self._follow_waypoints_goal_handles.pop(robot_id, None)
+
+        if callback:
+            callback()
 
     def send_spin(self, robot_id: str, spin_yaw: float) -> None:
         client = self._spin_clients.get(robot_id)

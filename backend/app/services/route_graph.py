@@ -137,10 +137,16 @@ def locate_current_node(nodes, x, y, tolerance_m):
     if not nodes or not all(math.isfinite(v) for v in (x, y)):
         return None
 
-    nearest_id = min(
-        nodes,
-        key=lambda node_id: math.dist((x, y), nodes[node_id]),
-    )
+    nearest_id = min(nodes, key=lambda node_id: math.dist((x, y), nodes[node_id]))
     distance = math.dist((x, y), nodes[nearest_id])
 
     return nearest_id if distance <= tolerance_m else None
+
+
+def find_nearest_node(nodes, x: float, y: float):
+    if not nodes or not all(math.isfinite(v) for v in (x, y)):
+        return None
+
+    nearest_id = min(nodes, key=lambda node_id: math.dist((x, y), nodes[node_id]))
+
+    return nearest_id

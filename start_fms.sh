@@ -8,7 +8,7 @@ set -Eeuo pipefail
 
 set +u
 source /opt/ros/jazzy/setup.bash
-source "./robots_ws/install/setup.bash"
+source "./robots_ws/Logistics_AMR/install/setup.bash"
 set -u
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +26,7 @@ NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 ROS_SETUP="${FMS_ROS_SETUP:-/opt/ros/$ROS_DISTRO/setup.bash}"
-ROS_WS_SETUP="${FMS_ROS_WS_SETUP:-$PROJECT_DIR/robots_ws/install/setup.bash}"
+ROS_WS_SETUP="${FMS_ROS_WS_SETUP:-$PROJECT_DIR/robots_ws/Logistics_AMR/install/setup.bash}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-15}"
 RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 ROS_AUTOMATIC_DISCOVERY_RANGE="${ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"

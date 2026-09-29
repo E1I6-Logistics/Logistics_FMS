@@ -162,3 +162,6 @@ doc/record_file/
 simulation/llm_route_comparisons.jsonl
 simulation/llm_route_summary.json
 simulation/benchmark_results/
+
+# Logistics_AMR file
+robots_ws/

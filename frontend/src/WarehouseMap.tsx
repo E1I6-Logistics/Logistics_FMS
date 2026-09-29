@@ -26,13 +26,13 @@ type Props = {
 }
 
 const ROBOT_COLORS: Record<RobotId, string> = {
-  'R-01': '#2589F5',
+  'R-01': '#F52525',
   'R-02': '#E5A53A',
   'R-03': '#36BD8A',
 }
 
 const robotColors: Record<RobotId, string> = {
-  'R-01': '#2589F5',
+  'R-01': '#F52525',
   'R-02': '#E5A53A',
   'R-03': '#36BD8A',
 }
@@ -40,7 +40,7 @@ const robotColors: Record<RobotId, string> = {
 // 로봇 위치는 아직 telemetry 연동 전이므로 기존 UI 위치를 임시 유지한다.
 // 노드/엣지는 아래에서 backend GeoJSON 기반 props만 사용한다.
 // const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
-//   { id: 'R-01', x: 116.210, y: 58.449, color: '#2589F5', heading: 270 },
+//   { id: 'R-01', x: 116.210, y: 58.449, color: '#F52525', heading: 270 },
 //   { id: 'R-02', x: 115.052, y: 87.312, color: '#E5A53A', heading: 270 },
 //   { id: 'R-03', x: 115.548, y: 112.893, color: '#36BD8A', heading: 270 },
 // ]
@@ -227,7 +227,7 @@ export default function WarehouseMap({
         {/* 로봇별 활성 경로. 도착/정지 telemetry의 route=null이면 자동 해제. */}
         {!raw && layers.route && (
           <g data-testid="robot-routes" pointerEvents="none">
-            {robotStates.filter(robot => robot.id === selectedRobot && visibleRobotIds.includes(robot.id) && robot.route).map(robot => (
+            {robotStates.filter(robot => visibleRobotIds.includes(robot.id) && robot.route).map(robot => (
               <g key={robot.id} data-robot-route={robot.id} data-route-phase={robot.route!.phase}>
                 {robot.route!.edge_ids.map((edgeId, index) => {
                   const from = nodes[robot.route!.node_ids[index]]

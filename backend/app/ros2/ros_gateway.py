@@ -7,8 +7,14 @@ from backend.app.models import robot
 
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from ..services.fleet_manager import fleet_manager
-from ..services.route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
 from ..services.pathfinding import DistanceAStar
+from ..services.route_graph import (
+    get_node,
+    load_route_graph,
+    find_edge_ids,
+    locate_current_node,
+    find_nearest_node,
+)
 
 from action_msgs.msg import GoalStatus
 
@@ -101,6 +107,20 @@ class RosGateway:
         # Robot ID 정규화 및 ROS 등록 여부 확인
         robot_id = self._resolve_robot_id(robot_id)
 
+        self._ros_node.cancel_follow_waypoints(
+            robot_id, callback=lambda: self._start_navigation(robot_id, node_id)
+        )
+
+        return {
+            "success": True,
+            "status": "PROCESSING",
+            "robot_id": robot_id,
+            "command": "goal-node",
+            "target_node": str(node_id),
+            "source": "ros2",
+        }
+
+    def _start_navigation(self, robot_id: str, node_id: str | int) -> None:
         # FleetManager에서 실제 Robot 객체 조회
         robot = fleet_manager.get_robot(robot_id)
 
@@ -124,13 +144,11 @@ class RosGateway:
         # 기존 A* 경로 탐색기 생성
         path_plan = DistanceAStar(graph)
 
-        # AMCL 위치를 기준으로 현재 Node 판정
-        current_node = locate_current_node(
-            nodes=path_plan.nodes, x=robot.x, y=robot.y, tolerance_m=0.2
-        )
+        # AMCL 위치를 기준으로 가까운 Node 판정
+        current_node = find_nearest_node(nodes=path_plan.nodes, x=robot.x, y=robot.y)
 
         if current_node is None:
-            raise ValueError("Robot의 현재 Node를 알 수 없습니다.")
+            raise ValueError("가장 가까운 Node를 찾을 수 없습니다.")
 
         # 현재 Node -> 목적지 Node 경로 생성
         path = path_plan.plan(start=current_node, end=target["id"], speed_mps=0.025)
@@ -142,6 +160,7 @@ class RosGateway:
         edge_ids = find_edge_ids(graph, node_ids)
         robot.current_node = current_node
         robot.goal_node = str(target["id"])
+        robot.navigation_type = "goal"
 
         robot.route = {
             "node_ids": node_ids,
@@ -151,31 +170,46 @@ class RosGateway:
         }
 
         # 경로의 Node ID를 실제 Map 좌표로 변환
+
         waypoints = []
 
-        # 각 waypoint에 도착했을 때 해당 지점으로 진입한 구간의 방향을 계산하여 포함
-        for index in range(1, len(node_ids)):
-            current_id = node_ids[index]
-            current = get_node(current_id)
+        # 시작 노드와 목적지 노드가 같은 경우
+        if len(node_ids) == 1:
+            current = get_node(node_ids[0])
 
-            # 마지막 노드가 아니면 다음 노드 방향
-            if index < len(node_ids) - 1:
-                next_id = node_ids[index + 1]
-                next_node = get_node(next_id)
+            waypoints.append(
+                (
+                    current["x"],
+                    current["y"],
+                    float(robot.yaw),
+                )
+            )
 
-                dx = next_node["x"] - current["x"]
-                dy = next_node["y"] - current["y"]
+        else:
+            # 경로에 포함된 모든 Node를 Waypoint로 변환
+            for index in range(len(node_ids)):
+                current_id = node_ids[index]
+                current = get_node(current_id)
 
-            # 마지막 노드는 이전 노드 -> 마지막 노드 진입 방향
-            else:
-                previous_id = node_ids[index - 1]
-                previous = get_node(previous_id)
+                # 마지막 노드가 아니면 다음 노드 방향
+                if index < len(node_ids) - 1:
+                    next_id = node_ids[index + 1]
+                    next_node = get_node(next_id)
 
-                dx = current["x"] - previous["x"]
-                dy = current["y"] - previous["y"]
+                    dx = next_node["x"] - current["x"]
+                    dy = next_node["y"] - current["y"]
 
-            yaw = math.atan2(dy, dx)
-            waypoints.append((current["x"], current["y"], yaw))
+                # 마지막 노드는 이전 노드 -> 마지막 노드 진입 방향
+                else:
+                    previous_id = node_ids[index - 1]
+                    previous = get_node(previous_id)
+
+                    dx = current["x"] - previous["x"]
+                    dy = current["y"] - previous["y"]
+
+                yaw = math.atan2(dy, dx)
+
+                waypoints.append((current["x"], current["y"], yaw))
 
         # 이미 목적지 Node에 있는 경우
         if not waypoints:
@@ -225,22 +259,27 @@ class RosGateway:
         robot = fleet_manager.get_robot(robot_id)
 
         if status == GoalStatus.STATUS_SUCCEEDED:
-            # 도착 후 처리
+            # 가장 가까운 노드 복귀 완료
+            if robot.navigation_type == "return":
+                robot.current_node = robot.goal_node
+                robot.navigation_type = None
+                robot.route = None
+
+                print(f"[{robot_id}] 가장 가까운 노드 복귀 완료: " f"{robot.current_node}")
+                return
+
+            # 일반 목적지 이동 완료
             print(f"[{robot_id}] 목적지 도착: {robot.goal_node}")
 
             target_yaw = GOAL_YAWS.get(str(robot.goal_node))
 
-            # 별도 도착 방향이 없는 노드
             if target_yaw is None:
                 return
 
             current_yaw = float(robot.yaw)
 
-            # 현재 방향 -> 목표 방향까지 회전해야 하는 각도
             spin_yaw = target_yaw - current_yaw
-
-            # -pi ~ pi 범위로 정규화
-            spin_yaw = math.atan2(math.sin(spin_yaw), math.cos(spin_yaw))
+            spin_yaw = math.atan2(math.sin(spin_yaw), math.cos(spin_yaw))  # -pi ~ pi 범위로 정규화
 
             self._ros_node.send_spin(robot_id, spin_yaw)
 
@@ -251,6 +290,52 @@ class RosGateway:
         elif status == GoalStatus.STATUS_ABORTED:
             # 실패 처리
             pass
+
+    def return_to_nearest_node(self, robot_id: str) -> dict:
+        robot_id = self._resolve_robot_id(robot_id)
+
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if not robot.connected:
+            raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+
+        if robot.x is None or robot.y is None:
+            raise ValueError(f"Robot 위치를 아직 받지 못했습니다: {robot_id}")
+
+        graph = load_route_graph()
+        path_plan = DistanceAStar(graph)
+
+        nearest_node = find_nearest_node(nodes=path_plan.nodes, x=robot.x, y=robot.y)
+
+        if nearest_node is None:
+            raise ValueError("가장 가까운 Node를 찾을 수 없습니다.")
+
+        target = get_node(nearest_node)
+
+        # 복귀 명령임을 표시
+        robot.navigation_type = "return"
+        robot.goal_node = str(nearest_node)
+
+        self._ros_node.send_follow_waypoints_goal(
+            robot_id=robot_id, waypoints=[(target["x"], target["y"], float(robot.yaw))]
+        )
+
+        return {
+            "success": True,
+            "status": "SUCCESS",
+            "robot_id": robot_id,
+            "command": "return-nearest-node",
+            "nearest_node": nearest_node,
+            "target": {
+                "node_id": target["id"],
+                "x": target["x"],
+                "y": target["y"],
+            },
+            "source": "ros2",
+        }
 
     def on_spin_result(self, robot_id: str, status: int) -> None:
         if status != GoalStatus.STATUS_SUCCEEDED:

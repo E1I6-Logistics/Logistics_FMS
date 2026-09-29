@@ -136,31 +136,45 @@ class MockFmsStore:
         with self._lock:
             robot = self._get_robot(robot_id)
 
-            # 임시 정책: 이동 중 재계획 미지원
-            if robot["status"] in {"NAVIGATING", "MOVING"}:
-                raise ValueError("이동 중 목적지 변경은 아직 지원하지 않습니다.")
-
             graph = load_route_graph()
             path_plan = DistanceAStar(graph)
-
-            robot["current_node"] = locate_current_node(
+            active_route = robot["route"]
+            between_nodes = active_route is not None and robot["current_node"] is None
+            current_node = robot["current_node"] if active_route else locate_current_node(
                 nodes=path_plan.nodes,
                 x=robot["x"],
                 y=robot["y"],
                 tolerance_m=0.2,  # 예시: 노드 중심에서 20cm 이내
             )
-
-            start_node = robot.get("current_node")  # 로봇 현재 노드
-            if start_node is None:
-                raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
-
-            path = path_plan.plan(start=start_node, end=target["id"], speed_mps=0.025)
-            if path is None:
-                raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
-
-            node_ids = list(path.route)
+            if between_nodes:
+                index = active_route["segment_index"]
+                if not 0 <= index < len(active_route["node_ids"]) - 1:
+                    raise ValueError("경로 진행 인덱스가 올바르지 않습니다.")
+                start, end = active_route["node_ids"][index:index + 2]
+                candidates = []
+                # 현재 pose에서 각 끝점까지의 거리 + 끝점부터의 A* 비용.
+                # 임시 pose 노드를 연결한 탐색과 같으며, 실제 그래프 ID만 유지합니다.
+                for previous, endpoint in ((start, end), (end, start)):
+                    if not any(node == endpoint for node, _ in path_plan.edges[previous]):
+                        continue
+                    try:
+                        path = path_plan.plan(endpoint, target["id"], speed_mps=0.025)
+                    except ValueError:
+                        continue  # 이 방향으로는 목적지에 도달할 수 없음
+                    distance = math.dist(
+                        (robot["x"], robot["y"]), path_plan.nodes[endpoint]
+                    ) + path.total_distance_m
+                    candidates.append((distance, [previous, *path.route]))
+                if not candidates:
+                    raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
+                node_ids = min(candidates, key=lambda candidate: candidate[0])[1]
+            else:
+                if current_node is None:
+                    raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
+                path = path_plan.plan(current_node, target["id"], speed_mps=0.025)
+                node_ids = list(path.route)
             edge_ids = find_edge_ids(graph, node_ids)
-            # 첫 노드는 현재 위치이므로 현재 로봇 방향을 저장. 동일 좌표 노드 처리
+            # 첫 yaw는 현재 로봇 방향으로 초기화하고, 이후 yaw는 구간 방향으로 계산
             waypoint_yaws = [float(robot["yaw"])]
 
             for previous_id, current_id in zip(node_ids, node_ids[1:]):
@@ -180,6 +194,8 @@ class MockFmsStore:
 
             already_arrived = len(node_ids) == 1
 
+            # 계산과 검증이 모두 성공한 뒤에만 활성 상태를 교체
+            robot["current_node"] = current_node
             if already_arrived:
                 robot["status"] = "IDLE"
                 robot["route"] = None
@@ -189,7 +205,7 @@ class MockFmsStore:
                     "node_ids": node_ids,
                     "edge_ids": edge_ids,
                     "waypoint_yaws": waypoint_yaws,
-                    "phase": "ready",
+                    "phase": "moving" if between_nodes else "ready",
                     "segment_index": 0,
                 }
             response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음
@@ -251,7 +267,8 @@ class MockFmsStore:
         """TODO: Replace with user-defined velocity command transport."""
         with self._lock:
             robot = self._get_robot(robot_id)
-            robot["status"] = "MOVING" if linear_x or angular_z else "IDLE"
+            if robot["status"] != "NAVIGATING":
+                robot["status"] = "MOVING" if linear_x or angular_z else "IDLE"
         return {
             "type": "ack",
             "data": self._command_response(
