@@ -161,3 +161,6 @@ doc/record_file/
 # LLM experiment runtime outputs
 simulation/llm_route_comparisons.jsonl
 simulation/llm_route_summary.json
+
+# Logistics_AMR file
+robots_ws/src/Logistics_AMR
