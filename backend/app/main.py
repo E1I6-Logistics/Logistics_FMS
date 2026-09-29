@@ -137,13 +137,7 @@ async def run_mock_simulation() -> None:
         if mode != "simulation":
             continue
 
-        # 먼저 전체 로봇의 위치를 갱신
-        for state in mock_fms.robot_snapshots(mode):
-            mock_fms.advance_mock_robot(
-                robot_id=state["robot_id"],
-                dt=dt,
-                speed_mps=0.5,
-            )
+        mock_fms.advance_simulation(dt, now)
 
         # 갱신 후의 상태를 웹에 전송
         for state in mock_fms.robot_snapshots(mode):
