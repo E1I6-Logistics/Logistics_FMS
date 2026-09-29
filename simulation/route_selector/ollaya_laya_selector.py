@@ -1,4 +1,4 @@
-"""Ollaya의 로컬 Laya 모델을 이용한 선택기."""
+"""Ollaya의 로컬 Laya 모델을 이용한 typed-decision 선택기."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ Transport = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any
 
 
 class OllayaLayaSelector(RouteSelector):
-    """Ollaya `/api/decide`에 choice 질문을 전달한다."""
+    """Ollaya `/api/decide`의 choice, score, noul 질문을 처리한다."""
 
     name = "ollaya_laya"
     ROUTE_INSTRUCTIONS = (
@@ -42,61 +42,35 @@ class OllayaLayaSelector(RouteSelector):
         self._transport = transport or self._http_post
         self.last_inference: dict[str, Any] | None = None
 
-    def select_choice(
+    def decide(
         self,
-        state: str | dict[str, Any],
-        candidates: Mapping[str, str],
-        instructions: str,
-        *,
-        question_id: str = "decision",
+        state: str | dict[str, Any] | list[Any],
+        questions: Mapping[str, dict[str, Any]],
     ) -> dict[str, Any]:
-        """일반적인 choice 질문을 Ollaya에 보내고 공통 결과를 반환한다."""
-        if len(candidates) < 2:
-            raise ValueError("후보는 두 개 이상이어야 합니다.")
-        if any(not key or not description for key, description in candidates.items()):
-            raise ValueError("모든 후보에는 비어 있지 않은 ID와 설명이 필요합니다.")
-        if not instructions.strip():
-            raise ValueError("질문 지시문은 비어 있을 수 없습니다.")
-
+        """Typed question map을 한 번의 Ollaya forward pass로 처리한다."""
+        if not questions:
+            raise ValueError("질문은 한 개 이상이어야 합니다.")
         payload = {
             "model": self.model,
             "state": state,
-            "questions": {
-                question_id: {
-                    "type": "choice",
-                    "instructions": instructions,
-                    "criteria": dict(candidates),
-                }
-            },
+            "questions": dict(questions),
         }
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-
         response = self._transport(
-            f"{self.host}/api/decide",
-            payload,
-            headers,
-            self.timeout_seconds,
+            f"{self.host}/api/decide", payload, headers, self.timeout_seconds
         )
         self.last_inference = {"request": payload, "response": response}
-
-        try:
-            answer = response["answers"][question_id]
-            choice = str(answer["choice"])
-        except (KeyError, TypeError) as error:
-            raise RuntimeError(
-                f"Ollaya 응답에 answers.{question_id}.choice가 없습니다."
-            ) from error
-        if choice not in candidates:
-            raise RuntimeError(f"Ollaya가 알 수 없는 후보를 선택했습니다: {choice}")
-
+        answers = response.get("answers")
+        if not isinstance(answers, dict):
+            raise RuntimeError("Ollaya 응답에 answers 객체가 없습니다.")
         return {
-            "choice": choice,
-            "confidence": float(answer.get("confidence", 0.0)),
-            "probabilities": dict(answer.get("probabilities", {})),
+            "answers": answers,
             "model": response.get("model", self.model),
             "routing": response.get("routing"),
+            "usage": response.get("usage"),
+            "state_truncated": response.get("state_truncated"),
             "total_duration_seconds": self._nanoseconds_to_seconds(
                 response.get("total_duration")
             ),
@@ -109,18 +83,117 @@ class OllayaLayaSelector(RouteSelector):
             "raw": response,
         }
 
+    def select_choice(
+        self,
+        state: str | dict[str, Any],
+        candidates: Mapping[str, str],
+        instructions: str,
+        *,
+        question_id: str = "decision",
+    ) -> dict[str, Any]:
+        if len(candidates) < 2:
+            raise ValueError("후보는 두 개 이상이어야 합니다.")
+        if any(not key or not description for key, description in candidates.items()):
+            raise ValueError("모든 후보에는 비어 있지 않은 ID와 설명이 필요합니다.")
+        common = self.decide(
+            state,
+            {
+                question_id: {
+                    "type": "choice",
+                    "instructions": instructions,
+                    "criteria": dict(candidates),
+                }
+            },
+        )
+        answer = self._answer(common, question_id, "choice")
+        choice = str(answer["choice"])
+        if choice not in candidates:
+            raise RuntimeError(f"Ollaya가 알 수 없는 후보를 선택했습니다: {choice}")
+        return {
+            **self._metadata(common),
+            "choice": choice,
+            "confidence": float(answer.get("confidence", 0.0)),
+            "probabilities": dict(answer.get("probabilities", {})),
+        }
+
+    def evaluate_score(
+        self,
+        state: str | dict[str, Any],
+        levels: list[str],
+        instructions: str,
+        *,
+        question_id: str = "score",
+    ) -> dict[str, Any]:
+        if not 2 <= len(levels) <= 10:
+            raise ValueError("score 단계는 2개 이상 10개 이하여야 합니다.")
+        common = self.decide(
+            state,
+            {
+                question_id: {
+                    "type": "score",
+                    "instructions": instructions,
+                    "criteria": levels,
+                }
+            },
+        )
+        answer = self._answer(common, question_id, "score")
+        return {
+            **self._metadata(common),
+            "score": float(answer["score"]),
+            "confidence": float(answer.get("confidence", 0.0)),
+            "legend": dict(answer.get("legend", {})),
+            "probabilities": dict(answer.get("probabilities", {})),
+        }
+
+    def evaluate_noul(
+        self,
+        state: str | dict[str, Any],
+        instructions: str,
+        *,
+        criteria: Mapping[str, str] | None = None,
+        question_id: str = "noul",
+    ) -> dict[str, Any]:
+        question: dict[str, Any] = {
+            "type": "noul",
+            "instructions": instructions,
+        }
+        if criteria is not None:
+            question["criteria"] = dict(criteria)
+        common = self.decide(state, {question_id: question})
+        answer = self._answer(common, question_id, "noul")
+        return {
+            **self._metadata(common),
+            "noul": float(answer["noul"]),
+        }
+
     def select_route(
         self,
         state: str | dict[str, Any],
         candidates: Mapping[str, str],
     ) -> dict[str, Any]:
-        """기존 경로 선택 호출을 일반 choice API에 연결한다."""
         return self.select_choice(
-            state,
-            candidates,
-            self.ROUTE_INSTRUCTIONS,
-            question_id="route",
+            state, candidates, self.ROUTE_INSTRUCTIONS, question_id="route"
         )
+
+    @staticmethod
+    def _answer(
+        common: dict[str, Any], question_id: str, expected_type: str
+    ) -> dict[str, Any]:
+        try:
+            answer = common["answers"][question_id]
+        except (KeyError, TypeError) as error:
+            raise RuntimeError(
+                f"Ollaya 응답에 answers.{question_id}가 없습니다."
+            ) from error
+        if answer.get("type") not in (None, expected_type):
+            raise RuntimeError(
+                f"Ollaya 응답 타입 불일치: {answer.get('type')} != {expected_type}"
+            )
+        return answer
+
+    @staticmethod
+    def _metadata(common: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in common.items() if key != "answers"}
 
     @staticmethod
     def _nanoseconds_to_seconds(value: Any) -> float | None:

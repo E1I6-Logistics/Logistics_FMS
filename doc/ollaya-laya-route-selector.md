@@ -101,6 +101,39 @@ print(result)
 후보 순서를 무작위로 바꾸어 정확도를 측정하는 3차 반복 테스트는 이 선택기를
 사용해 별도 단계에서 구현한다.
 
+
+## Choice 외 질문 타입 테스트
+
+Ollaya의 `/api/decide`는 URL 하나에서 `choice`, `score`, `noul` 타입을 지원한다.
+각 타입을 한국어와 영어로 분리하고 유형별 예열 1회, 본 시험 5회를 실행한다.
+추가로 계획 경로 `[2, 5, 4, 6, 10]`에 차단 노드 `6`이 포함된 구조화된
+상태를 전달해, 해당 경로를 사용할 수 없는지 `noul`로 판단하는 한국어·영어
+케이스를 각각 실행한다.
+
+| 타입 | 반환값 | 정답 판정 |
+| --- | --- | --- |
+| `choice` | 선택 label·확률·confidence | 정답 label과 일치 |
+| `score` | 0부터 시작하는 연속 기대 점수 | 설정한 정답 범위에 포함 |
+| `noul` | 진술이 참일 확률 | 0.5 임계값으로 참·거짓 판정 |
+
+```bash
+python -m simulation.evaluation.ollaya_question_types_benchmark \
+  --model laya:multilingual \
+  --warmups 1 \
+  --repeats 5 \
+  --output simulation/benchmark_results/laya-question-types-$(date +%Y%m%d-%H%M%S)
+```
+
+생성 파일은 `ollaya_question_type_trials.jsonl`,
+`ollaya_question_type_summary.json`, `ollaya_question_type_samples.csv`다. 요약에는
+한국어·영어와 질문 타입을 조합한 6개 그룹의 정확도와 지연시간이 저장된다.
+
+구조만 검증하려면 다음을 실행한다.
+
+```bash
+python -m unittest tests.test_ollaya_question_types -v
+```
+
 ## 언어·질문 복잡도·정답 위치별 테스트
 
 각 질문은 선택지 5개를 사용한다. 같은 정답 내용을 유지하면서 정답을
