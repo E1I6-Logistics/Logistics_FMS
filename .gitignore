@@ -163,4 +163,4 @@ simulation/llm_route_comparisons.jsonl
 simulation/llm_route_summary.json
 
 # Logistics_AMR file
-robots_ws/src/Logistics_AMR
+robots_ws/
