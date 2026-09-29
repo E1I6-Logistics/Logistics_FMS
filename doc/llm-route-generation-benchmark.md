@@ -64,7 +64,7 @@ git branch --show-current
 source ~/venv/robot/bin/activate
 python -m pip install -r simulation/requirements.txt
 python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --config simulation/evaluation/route_generation_benchmark_jetson.json \
   --check
 ```
 
@@ -92,27 +92,57 @@ ollama list
 curl http://127.0.0.1:11434/api/tags
 ```
 
-서버가 동작하지 않으면 별도 터미널에서 실행한다.
+Jetson에서는 모델 하나와 요청 하나만 처리하도록 서버를 실행한다. Ollama가
+이미 systemd 서비스라면 같은 환경변수를 서비스 설정에 넣고 재시작한다.
 
 ```bash
-ollama serve
+OLLAMA_MAX_LOADED_MODELS=1 OLLAMA_NUM_PARALLEL=1 ollama serve
 ```
 
-v3 시험에 사용할 모델 10종 중 누락된 모델만 내려받는다. 기본 모델
-파일의 합은 약 48GB이므로 먼저 `df -h`로 저장 공간을 확인한다.
+Jetson 후보는 **공식 Ollama 모델 파일이 4.5GB 이하인 가장 높은 정밀도 태그**로
+통일한다. 그래서 모델별 정밀도는 FP16, Q8, Q4가 섞인다.
+
+| 모델 계열 | 선택 태그 | 공식 파일 크기 | 선택 이유 |
+| --- | --- | ---: | --- |
+| Qwen3 0.6B | `qwen3:0.6b-fp16` | 1.5GB | FP16이 4.5GB 이하 |
+| DeepSeek R1 1.5B | `deepseek-r1:1.5b-qwen-distill-fp16` | 3.6GB | FP16이 4.5GB 이하 |
+| Llama 3.2 3B | `llama3.2:3b-instruct-q8_0` | 3.4GB | FP16 6.4GB는 초과, Q8 선택 |
+| Qwen3 4B | `qwen3:4b-q8_0` | 4.4GB | FP16 8.1GB는 초과, Q8 선택 |
+| Gemma 3 4B | `gemma3:4b-it-q4_K_M` | 3.3GB | Q8 5.0GB는 초과, Q4 선택 |
+
+태그를 생략한 `ollama pull qwen3:0.6b`와
+`ollama pull deepseek-r1:1.5b`는 FP16 원본을 받는 명령이 아니다. 각각
+기본 Q4 태그인 523MB와 1.1GB 모델을 받는다. FP16을 시험하려면 위 표의
+`-fp16` 태그를 명시해야 한다.
+
+필요한 모델은 다음과 같이 내려받는다.
 
 ```bash
-ollama pull qwen3:0.6b
-ollama pull deepseek-r1:1.5b
-ollama pull llama3.2:3b
-ollama pull qwen3:4b
-ollama pull gemma3:4b
-ollama pull llama3.1:8b
-ollama pull mistral-nemo:12b
-ollama pull gemma3:12b
-ollama pull deepseek-r1:14b
-ollama pull phi4:14b
+ollama pull qwen3:0.6b-fp16
+ollama pull deepseek-r1:1.5b-qwen-distill-fp16
+ollama pull llama3.2:3b-instruct-q8_0
+ollama pull qwen3:4b-q8_0
+ollama pull gemma3:4b-it-q4_K_M
 ```
+
+다섯 파일의 합은 약 16.2GB이므로 저장공간이 15GB라면 동시에 보관할 수 없다.
+모델을 하나씩 받아 시험하고 결과를 백업한 뒤 다음 모델을 받을 때 이전 모델을
+제거한다.
+
+```bash
+ollama rm 이전에_시험한_모델태그
+```
+
+4.5GB는 모델 파일 선택 상한이다. 실제 실행에서는 모델 가중치 외에 KV cache,
+Ollama 버퍼, 운영체제 메모리가 필요하다. 특히 3.6GB와 4.4GB 모델은 파일이
+기준 안에 들어와도 OOM 또는 CPU/GPU 분할 실행이 발생할 수 있다. 최종 판정은
+`manifest.json`의 `device.models`, `ollama ps`, `tegrastats`로 한다.
+
+모델 태그와 파일 크기 출처:
+[`qwen3`](https://ollama.com/library/qwen3/tags),
+[`deepseek-r1`](https://ollama.com/library/deepseek-r1/tags),
+[`llama3.2`](https://ollama.com/library/llama3.2/tags),
+[`gemma3`](https://ollama.com/library/gemma3/tags).
 
 다른 컴퓨터의 Ollama 서버를 사용하면 실행 전에 주소를 지정한다.
 
@@ -122,37 +152,42 @@ export OLLAMA_HOST=http://서버주소:11434
 
 ## 5. Jetson 또는 원격 컴퓨터에서 본 시험 실행
 
-결과 폴더 이름에는 장비와 실행 시각을 넣는 것을 권장한다.
+Jetson용 설정은 `simulation/evaluation/route_generation_benchmark_jetson.json`이다.
+모델 파일 상한은 4.5GB이며 `num_ctx=2048`, `num_predict=512`로 모델 하나를
+한 번에 하나씩 실행한다.
+`num_ctx`는 입력과 출력을 포함하는 문맥 창이고 `num_predict`는 출력 생성
+상한이므로 서로 같은 값이 아니다.
 
 ```bash
 cd ~/Logistics_FMS
 source ~/venv/robot/bin/activate
 
 python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark_v3.json \
-  --output simulation/benchmark_results/jetson-v3-$(date +%Y%m%d-%H%M%S)
+  --config simulation/evaluation/route_generation_benchmark_jetson.json \
+  --output simulation/benchmark_results/jetson-4_5gb-$(date +%Y%m%d-%H%M%S)
 ```
 
-실행기는 모델별 예열을 먼저 수행하고 다음으로 각 경로를 3회 실행한다.
-터미널에는 모델, 경로, 반복 번호, 유효 경로 여부, 최단 거리 일치 여부,
-응답 시간이 한 줄씩 출력된다.
+실행기는 모델별 예열 1회를 집계에서 제외하고 5개 경로를 각 5회 실행한다.
+총 본 시험은 `5개 모델 × 5개 경로 × 5회 = 125회`다. 터미널에는 모델,
+경로, 반복 번호, 유효 경로 여부, 최단 거리 일치 여부, 응답 시간이 출력된다.
 
-실행이 중단되면 같은 폴더를 `--resume`에 전달한다.
+중단된 실행은 같은 폴더로 재개한다.
 
 ```bash
 python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark_v3.json \
-  --resume simulation/benchmark_results/jetson-v3-실행시각
+  --config simulation/evaluation/route_generation_benchmark_jetson.json \
+  --resume simulation/benchmark_results/jetson-4_5gb-실행시각
 ```
 
-이미 기록된 예열과 `모델·시작·도착·반복 번호` 조합은 다시 요청하지 않는다.
-설정 파일 또는 그래프 해시가 원래 실행과 다르면 재개를 거부한다.
+설치하지 않은 모델이 있으면 해당 요청은 실패한다. 모델 일부만 시험하려면
+원본 설정을 즉석에서 바꾸지 말고 복사본에 새 `benchmark_id`와 모델 목록을
+지정해 별도 실험으로 남긴다.
 
 ## 6. 생성되는 파일
 
 | 파일 | 용도 |
 | --- | --- |
-| `manifest.json` | Git 상태, 장비, Ollama 버전, 모델 정보, 그래프·프롬프트·설정 해시 |
+| `manifest.json` | Git 상태, 장비, 모델별 `cpu/gpu/mixed`와 VRAM 적재량, Ollama 버전, 그래프·프롬프트·설정 해시 |
 | `warmups.jsonl` | 모델별 예열 응답과 시간. 정확도·지연시간 집계에서는 제외 |
 | `trials.jsonl` | 본 시험의 입력, 원시 추론 정보, 응답, 재계산 결과, 모든 지표 |
 | `summary.json` | 모델별·경로별 집계 결과 |
@@ -168,7 +203,7 @@ Ollama를 다시 실행하지 않고 저장된 `trials.jsonl`에서 요약과 CS
 
 ```bash
 python -m simulation.evaluation.benchmark \
-  --export-results simulation/benchmark_results/jetson-v3-실행시각
+  --export-results simulation/benchmark_results/jetson-4_5gb-실행시각
 ```
 
 이 명령은 모델에 요청하지 않고 `summary.json`, `model_summary.csv`,
@@ -213,49 +248,44 @@ python -m simulation.evaluation.benchmark \
 것을 보장하지 않는다. 이 차이를 비교할 수 있도록 장비와 런타임 정보가
 `manifest.json`에 저장된다.
 
-## 9. 대표 로컬 모델 10종 확장 평가
+## 9. PC 10종과 Jetson 5종 평가 구분
 
-`route-generation-v2`는 과거 2차 시험의 소형 모델 조건을 재현하기 위해
-보존한다. 실제 후보 선정을 위한 확장 설정은
-`simulation/evaluation/route_generation_benchmark_v3.json`을 사용한다.
+### 9.1 PC용 대표 모델 10종
 
-1차 단일 실행에서는 `deepseek-r1:14b`가 약 33초, `qwen3:0.6b`가
-약 39초로 성공했고 `deepseek-r1:1.5b`는 실패했다. 작은 모델이 항상
-빠르거나 정확하지는 않았으므로 성공·실패 기준 모델을 모두 포함한다.
-0.6B부터 14B까지 크기와 모델 계열을 분산하여 정확도, 응답 시간, 메모리
-사용량의 변화를 비교한다.
+`simulation/evaluation/route_generation_benchmark_v3.json`은 RTX 4070 SUPER처럼
+저장공간과 GPU 메모리가 충분한 PC의 기존 10종 시험을 재현한다.
 
-| 모델 | 파라미터 | Ollama 기본 파일 크기 | 비교 역할 |
+| 모델 | 파라미터 | Ollama 기본 파일 | 기존 PC 시험 역할 |
 | --- | ---: | ---: | --- |
-| `qwen3:0.6b` | 0.6B | 523MB | 1차 성공 초경량 기준 |
-| `deepseek-r1:1.5b` | 1.5B | 1.1GB | 1차 실패 초경량 기준 |
+| `qwen3:0.6b` | 0.6B | 523MB | 초경량 속도 기준 |
+| `deepseek-r1:1.5b` | 1.5B | 1.1GB | thinking·출력 실패 비교군 |
 | `llama3.2:3b` | 3B | 2.0GB | Meta 경량 비교군 |
-| `qwen3:4b` | 4B | 2.5GB | 기존 반복 시험의 최고 정확도 모델 |
+| `qwen3:4b` | 4B | 2.5~2.6GB | 속도·정확도 균형 후보 |
 | `gemma3:4b` | 4B | 3.3GB | Google 경량 비교군 |
 | `llama3.1:8b` | 8B | 4.9GB | Meta 중형 비교군 |
-| `mistral-nemo:12b` | 12B | 7.1GB | Mistral·NVIDIA 중대형 비교군 |
-| `gemma3:12b` | 12B | 8.1GB | Gemma 계열 크기 증가 비교군 |
-| `deepseek-r1:14b` | 14B | 9.0GB | 1차 시험 최단 시간 성공 기준 |
-| `phi4:14b` | 14B | 9.1GB | Microsoft 일반·논리 비교군 |
+| `mistral-nemo:12b` | 12B | 7.1GB | 정확도 우선 비교군 |
+| `gemma3:12b` | 12B | 8.1GB | Gemma 크기 증가 비교군 |
+| `deepseek-r1:14b` | 14B | 9.0GB | thinking 재평가 대상 |
+| `phi4:14b` | 14B | 9.1GB | 유효 경로 우선 후보 |
 
-Qwen은 0.6B와 4B, Gemma는 4B와 12B를 함께 포함하여 동일 계열에서
-크기 증가가 정확도와 지연시간에 미치는 영향을 확인한다. DeepSeek는 1차
-실패 모델인 1.5B와 성공 모델인 14B를 함께 포함한다.
+이 설정의 모델 파일 합은 약 48GB이므로 Jetson에는 전부 다운로드하지 않는다.
+PC에서 재현할 때만 다음을 사용한다.
 
-모델 정보 출처는 Ollama 공식 모델 페이지다:
-[`qwen3`](https://ollama.com/library/qwen3/tags),
-[`deepseek-r1`](https://ollama.com/library/deepseek-r1),
-[`llama3.2`](https://ollama.com/library/llama3.2),
-[`gemma3`](https://ollama.com/library/gemma3),
-[`llama3.1`](https://ollama.com/library/llama3.1),
-[`mistral-nemo`](https://ollama.com/library/mistral-nemo),
-[`phi4`](https://ollama.com/library/phi4).
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --check
 
-기본 모델 파일의 합은 약 48GB다. Jetson에서 전부 다운로드하기 전에
-`df -h`로 저장 공간을 확인하고, 모델별 로딩 가능 여부와 메모리 사용량을
-순서대로 점검한다.
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --output simulation/benchmark_results/pc-v3-$(date +%Y%m%d-%H%M%S)
+```
 
-시험 경로는 노드 수가 3, 4, 5, 5, 8개인 다섯 경로로 구성한다.
+### 9.2 Jetson 4.5GB 제한 5종
+
+Jetson에서는 `simulation/evaluation/route_generation_benchmark_jetson.json`을
+사용한다. 각 계열에서 공식 파일 크기가 4.5GB 이하인 가장 높은 정밀도 태그를
+선택하며, 경로는 PC 시험과 동일한 다섯 개다.
 
 | 출발→도착 | 기준 최단 경로 | 거리 |
 | --- | --- | ---: |
@@ -265,34 +295,26 @@ Qwen은 0.6B와 4B, Gemma는 4B와 12B를 함께 포함하여 동일 계열에�
 | 1→12 | 1 → 4 → 6 → 13 → 12 | 1.899060 |
 | 7→2 | 7 → 8 → 9 → 10 → 6 → 4 → 5 → 2 | 2.672242 |
 
-각 모델은 예열 1회를 제외하고 경로별 5회씩 실행한다. 총 본 시험 수는
-`10개 모델 × 5개 경로 × 5회 = 250회`이며 예열은 10회다. 생성 설정과 프롬프트는 v2와
-동일하다. `deepseek-r1`과 `qwen3`은 직접 JSON 응답의 조건을 맞추기 위해
-`think=false`를 요청한다. 장비에서 지원하는 thinking 값은 실행 전에
-`/api/show`로 확인한다.
-
-
-
-Jetson 접속이 가능해진 뒤 다음 명령으로 설정만 먼저 검증한다.
+구조 검증은 모델을 호출하지 않는다.
 
 ```bash
 python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --config simulation/evaluation/route_generation_benchmark_jetson.json \
   --check
 ```
 
-실제 실행 명령은 다음과 같다.
+메모리상 실행 가능하다는 사실만으로 모델을 채택하지 않는다. 기존 PC 시험에서
+`llama3.2:3b`는 최단 경로 0/25였고 `deepseek-r1:1.5b`도 JSON 결과가
+0/25였다. `qwen3:0.6b`는 10/25, `qwen3:4b`와 `gemma3:4b`는 15/25였다.
+Jetson에서는 다음 순서로 최종 후보를 고른다.
 
-```bash
-python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark_v3.json \
-  --output simulation/benchmark_results/jetson-v3-$(date +%Y%m%d-%H%M%S)
-```
+1. `manifest.json`에서 실제 GPU 적재와 CPU fallback 여부를 확인한다.
+2. 유효 경로와 최단 경로 정확도를 확인한다.
+3. 정확도 조건을 통과한 모델끼리 중앙 응답시간을 비교한다.
+4. 0.15초 실시간 기준 충족 여부는 별도 지표로 기록한다.
 
-Jetson의 메모리 용량과 모델 로딩 가능 여부가 확인되지 않았으므로 최종 모델
-확정은 보류한다. 모델을 불러올 수 없으면 실패 기록을 보존하고, 같은 용량대의
-대체 모델 선정 여부를 별도로 결정한다.
-
+즉 “구동 가능”은 메모리 선별 결과이고 “최종 채택”은 정확도와 속도를 다시
+측정한 뒤 결정한다.
 
 ## 10. Hugging Face Laya 경로 선택 시험
 
