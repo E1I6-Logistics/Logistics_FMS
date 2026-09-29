@@ -1,4 +1,4 @@
-"""Ollaya 없이 언어·복잡도·정답 위치별 지연시간 집계를 검증한다."""
+"""모델 없이 언어·복잡도·정답 위치별 selector 지연시간 집계를 검증한다."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from simulation.evaluation.ollaya_latency_benchmark import (
+from simulation.evaluation.selector_latency_benchmark import (
     CSV_FILENAME, SUMMARY_FILENAME, TEST_CASES, TRIALS_FILENAME,
     run_latency_benchmark,
 )
@@ -54,7 +54,7 @@ class _SteppedClock:
         return next(self.values)
 
 
-class OllayaLatencyBenchmarkTest(unittest.TestCase):
+class SelectorLatencyBenchmarkTest(unittest.TestCase):
     def test_builds_five_options_and_moves_answer_through_every_position(self):
         self.assertEqual(len(TEST_CASES), 30)
         for language in ("ko", "en"):

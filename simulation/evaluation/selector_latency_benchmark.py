@@ -1,4 +1,4 @@
-"""Compare Ollaya Laya latency by complexity, language, and answer position."""
+"""Compare route-selector latency by complexity, language, and answer position."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from simulation.route_selector.ollaya_laya_selector import OllayaLayaSelector
+from simulation.route_selector import get_selector
 from simulation.services.route_service import (
     build_compact_route_graph,
     build_route_inputs,
@@ -24,9 +24,9 @@ from simulation.services.route_service import (
     validate_and_calculate_path_distance,
 )
 
-TRIALS_FILENAME = "ollaya_laya_latency_trials.jsonl"
-SUMMARY_FILENAME = "ollaya_laya_latency_summary.json"
-CSV_FILENAME = "ollaya_laya_latency_samples.csv"
+TRIALS_FILENAME = "selector_latency_trials.jsonl"
+SUMMARY_FILENAME = "selector_latency_summary.json"
+CSV_FILENAME = "selector_latency_samples.csv"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 ROUTE_GRAPH_PATH = ROOT / "routes" / "test_benchmark_v1.geojson"
 OPTION_IDS = ("option_a", "option_b", "option_c", "option_d", "option_e")
@@ -221,9 +221,9 @@ def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
     successful = [trial for trial in trials if trial["error"] is None]
     wall_times = [trial["wall_seconds"] for trial in successful]
     server_times = [
-        trial["ollaya_total_seconds"]
+        trial["model_total_seconds"]
         for trial in successful
-        if trial["ollaya_total_seconds"] is not None
+        if trial["model_total_seconds"] is not None
     ]
     eval_times = [
         trial["eval_seconds"]
@@ -247,7 +247,7 @@ def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
             else None
         ),
         "wall_latency": _latency_stats(wall_times),
-        "ollaya_total_latency": _latency_stats(server_times),
+        "model_total_latency": _latency_stats(server_times),
         "model_eval_latency": _latency_stats(eval_times),
     }
 
@@ -257,7 +257,7 @@ def _write_csv(path: Path, trials: list[dict[str, Any]]) -> None:
         "case_id", "question_type", "language", "answer_position", "repeat",
         "timestamp", "requested_model", "response_model", "choice",
         "expected_choice", "correct_answer", "correct", "confidence",
-        "wall_seconds", "ollaya_total_seconds", "load_seconds", "eval_seconds",
+        "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds",
         "realtime_deadline_seconds", "realtime_met", "probabilities", "routing",
         "error",
     ]
@@ -297,7 +297,7 @@ def run_latency_benchmark(
     if trials_path.exists() and trials_path.stat().st_size:
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
 
-    selector = selector or OllayaLayaSelector()
+    selector = selector or get_selector()
     started_at = _utc_now()
 
     # Warm each language/type once. Position variants use the already-warmed model.
@@ -343,7 +343,7 @@ def run_latency_benchmark(
                     "probabilities": result.get("probabilities"),
                     "routing": result.get("routing"),
                     "wall_seconds": wall_seconds,
-                    "ollaya_total_seconds": result.get("total_duration_seconds"),
+                    "model_total_seconds": result.get("total_duration_seconds"),
                     "load_seconds": result.get("load_duration_seconds"),
                     "eval_seconds": result.get("eval_duration_seconds"),
                     "realtime_deadline_seconds": realtime_deadline_seconds,
@@ -370,7 +370,7 @@ def run_latency_benchmark(
                     "probabilities": None,
                     "routing": None,
                     "wall_seconds": wall_seconds,
-                    "ollaya_total_seconds": None,
+                    "model_total_seconds": None,
                     "load_seconds": None,
                     "eval_seconds": None,
                     "realtime_deadline_seconds": realtime_deadline_seconds,
@@ -410,7 +410,7 @@ def run_latency_benchmark(
         )
 
     summary = {
-        "benchmark": "ollaya-laya-language-position-latency-v3",
+        "benchmark": "route-selector-language-position-latency-v3",
         "started_at": started_at,
         "completed_at": _utc_now(),
         "requested_model": getattr(selector, "model", None),
@@ -436,7 +436,7 @@ def run_latency_benchmark(
 
 def _default_output() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return DEFAULT_RESULTS_DIR / f"ollaya-laya-v3-{timestamp}"
+    return DEFAULT_RESULTS_DIR / f"route-selector-v3-{timestamp}"
 
 
 def main() -> int:
@@ -445,14 +445,9 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=5, help="repeats per case")
     parser.add_argument("--warmups", type=int, default=1, help="warmups per language/type")
     parser.add_argument("--deadline", type=float, default=0.15)
-    parser.add_argument("--model", default=None)
-    parser.add_argument("--host", default=None)
-    parser.add_argument("--timeout", type=float, default=None)
     args = parser.parse_args()
 
-    selector = OllayaLayaSelector(
-        model=args.model, host=args.host, timeout_seconds=args.timeout
-    )
+    selector = get_selector()
     output = args.output or _default_output()
     summary = run_latency_benchmark(
         output, repeats=args.repeats, warmups=args.warmups,

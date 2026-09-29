@@ -1,4 +1,4 @@
-"""Benchmark Ollaya Laya choice, score, and noul question types."""
+"""Benchmark route-selector choice, score, and noul question types."""
 
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from simulation.route_selector.ollaya_laya_selector import OllayaLayaSelector
+from simulation.route_selector import get_selector
 
-TRIALS_FILENAME = "ollaya_question_type_trials.jsonl"
-SUMMARY_FILENAME = "ollaya_question_type_summary.json"
-CSV_FILENAME = "ollaya_question_type_samples.csv"
+TRIALS_FILENAME = "selector_question_type_trials.jsonl"
+SUMMARY_FILENAME = "selector_question_type_summary.json"
+CSV_FILENAME = "selector_question_type_samples.csv"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 Clock = Callable[[], float]
 
@@ -139,7 +139,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "correct_count": sum(bool(row["correct"]) for row in rows),
         "accuracy": sum(bool(row["correct"]) for row in rows) / len(rows) if rows else None,
         "wall_latency": _stats([row["wall_seconds"] for row in successful]),
-        "ollaya_total_latency": _stats([row["ollaya_total_seconds"] for row in successful if row["ollaya_total_seconds"] is not None]),
+        "model_total_latency": _stats([row["model_total_seconds"] for row in successful if row["model_total_seconds"] is not None]),
         "model_eval_latency": _stats([row["eval_seconds"] for row in successful if row["eval_seconds"] is not None]),
     }
 
@@ -179,7 +179,7 @@ def run_question_types_benchmark(
     trials_path = output / TRIALS_FILENAME
     if trials_path.exists() and trials_path.stat().st_size:
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
-    selector = selector or OllayaLayaSelector()
+    selector = selector or get_selector()
 
     for case in CASES:
         for _ in range(warmups):
@@ -203,7 +203,7 @@ def run_question_types_benchmark(
                     "requested_model": selector.model,
                     "response_model": result.get("model"),
                     "wall_seconds": wall_seconds,
-                    "ollaya_total_seconds": result.get("total_duration_seconds"),
+                    "model_total_seconds": result.get("total_duration_seconds"),
                     "load_seconds": result.get("load_duration_seconds"),
                     "eval_seconds": result.get("eval_duration_seconds"),
                     "error": None, "raw": result.get("raw"),
@@ -217,7 +217,7 @@ def run_question_types_benchmark(
                     "confidence": None, "probabilities": None, "legend": None,
                     "requested_model": getattr(selector, "model", None),
                     "response_model": None, "wall_seconds": wall_seconds,
-                    "ollaya_total_seconds": None, "load_seconds": None,
+                    "model_total_seconds": None, "load_seconds": None,
                     "eval_seconds": None,
                     "error": f"{type(error).__name__}: {error}", "raw": None,
                 }
@@ -233,7 +233,7 @@ def run_question_types_benchmark(
             selected = [row for row in rows if row["language"] == language and row["question_type"] == question_type]
             groups.append({"language": language, "question_type": question_type, **_summarize(selected)})
     summary = {
-        "benchmark": "ollaya-question-types-v1",
+        "benchmark": "route-selector-question-types-v1",
         "created_at": _utc_now(),
         "requested_model": getattr(selector, "model", None),
         "settings": {"repeats_per_case": repeats, "warmups_per_case": warmups, "case_count": len(CASES), "expected_trial_count": len(CASES) * repeats},
@@ -241,7 +241,7 @@ def run_question_types_benchmark(
     }
     (output / SUMMARY_FILENAME).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    fields = ["case_id", "language", "question_type", "repeat", "timestamp", "value", "correct", "confidence", "requested_model", "response_model", "wall_seconds", "ollaya_total_seconds", "load_seconds", "eval_seconds", "probabilities", "legend", "error"]
+    fields = ["case_id", "language", "question_type", "repeat", "timestamp", "value", "correct", "confidence", "requested_model", "response_model", "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds", "probabilities", "legend", "error"]
     with (output / CSV_FILENAME).open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
@@ -258,13 +258,10 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
-    parser.add_argument("--model", default=None)
-    parser.add_argument("--host", default=None)
-    parser.add_argument("--timeout", type=float, default=None)
     args = parser.parse_args()
     summary = run_question_types_benchmark(
         args.output, repeats=args.repeats, warmups=args.warmups,
-        selector=OllayaLayaSelector(model=args.model, host=args.host, timeout_seconds=args.timeout),
+        selector=get_selector(),
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
