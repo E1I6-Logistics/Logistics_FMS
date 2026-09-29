@@ -290,6 +290,11 @@ class RosGateway:
             spin_yaw = target_yaw - current_yaw
             spin_yaw = math.atan2(math.sin(spin_yaw), math.cos(spin_yaw))  # -pi ~ pi 범위로 정규화
 
+            YAW_TOLERANCE = math.radians(5)
+            if abs(spin_yaw) <= YAW_TOLERANCE:
+                self.on_spin_result(robot_id, GoalStatus.STATUS_SUCCEEDED)
+                return
+
             robot.set_state(RobotState.MOVING)
             self._ros_node.send_spin(robot_id, spin_yaw)
 
