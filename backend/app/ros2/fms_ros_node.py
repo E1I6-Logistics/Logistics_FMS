@@ -299,6 +299,7 @@ class FmsRosNode(Node):
             print(f"[Error] [Robot {robot_id}] PrecisionDock client not available: {robot_id}")
             raise ValueError(f"PrecisionDock client not found: {robot_id}")
 
+        print(f"[DEBUG] PrecisionDock {robot_id}: " f"ready={client.server_is_ready()}")
         if not client.wait_for_server(timeout_sec=2.0):
             print(f"[Error] [Robot {robot_id}] PrecisionDock server not available: {robot_id}")
             if self.precision_dock_result_callback:
