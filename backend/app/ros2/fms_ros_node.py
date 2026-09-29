@@ -169,6 +169,8 @@ class FmsRosNode(Node):
 
         if not goal_handle.accepted:
             self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
+            if self.navigation_result_callback:
+                self.navigation_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
             return
         # 현재 실행 중인 Goal 저장
         self._follow_waypoints_goal_handles[robot_id] = goal_handle
@@ -298,6 +300,10 @@ class FmsRosNode(Node):
 
         if not client.wait_for_server(timeout_sec=2.0):
             self.get_logger().error(f"PrecisionDock server not available: {robot_id}")
+
+            if self.precision_dock_result_callback:
+                self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
             return
 
         goal = PrecisionDock.Goal()
@@ -315,8 +321,13 @@ class FmsRosNode(Node):
 
     def _on_precision_dock_goal_response(self, robot_id: str, future) -> None:
         goal_handle = future.result()
+
         if not goal_handle.accepted:
             self.get_logger().warning(f"PrecisionDock goal rejected: {robot_id}")
+
+            if self.precision_dock_result_callback:
+                self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
             return
 
         self.get_logger().info(f"PrecisionDock goal accepted: {robot_id}")
@@ -333,7 +344,7 @@ class FmsRosNode(Node):
         self.get_logger().info(f"PrecisionDock finished: {robot_id}, status={result.status}")
 
         if self.precision_dock_result_callback:
-            self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+            self.precision_dock_result_callback(robot_id, result.status)
 
     def _on_amcl_pose(self, robot_id: str, msg: PoseWithCovarianceStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)

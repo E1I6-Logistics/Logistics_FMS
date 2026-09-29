@@ -249,8 +249,13 @@ class RosGateway:
             }
 
         # Nav2 FollowWaypoints Action으로 경로 전송
+        try:
+            self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
+        except (ValueError, RuntimeError):
+            robot.set_state(RobotState.PAUSED)
+            raise
+
         robot.set_state(RobotState.MOVING)
-        self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
 
         return {
             "success": True,
@@ -348,9 +353,16 @@ class RosGateway:
         robot.set_state(RobotState.MOVING)
         robot.goal_node = str(nearest_node)
 
-        self._ros_node.send_follow_waypoints_goal(
-            robot_id=robot_id, waypoints=[(target["x"], target["y"], float(robot.yaw))]
-        )
+        try:
+            self._ros_node.send_follow_waypoints_goal(
+                robot_id=robot_id, waypoints=[(target["x"], target["y"], float(robot.yaw))]
+            )
+
+        except (ValueError, RuntimeError):
+            robot.set_state(RobotState.PAUSED)
+            raise
+
+        robot.set_state(RobotState.MOVING)
 
         return {
             "success": True,
