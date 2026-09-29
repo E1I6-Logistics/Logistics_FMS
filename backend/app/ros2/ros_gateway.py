@@ -92,7 +92,20 @@ class RosGateway:
     def cmd_vel(self, robot_id: str, linear_x: float, angular_z: float) -> dict:
         robot_id = self._resolve_robot_id(robot_id)
 
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if not robot.connected:
+            raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+
         self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=linear_x, angular_z=angular_z)
+
+        if linear_x == 0.0 and angular_z == 0.0:
+            robot.set_state(RobotState.IDLE)
+        else:
+            robot.set_state(RobotState.MOVING)
 
         return {
             "type": "cmd_vel_ack",
