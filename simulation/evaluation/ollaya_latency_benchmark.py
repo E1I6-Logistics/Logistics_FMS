@@ -1,4 +1,4 @@
-"""Compare Ollaya Laya latency across three decision complexities."""
+"""Compare Ollaya Laya latency by complexity, language, and answer position."""
 
 from __future__ import annotations
 
@@ -17,57 +17,164 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from simulation.route_selector.ollaya_laya_selector import OllayaLayaSelector
+from simulation.services.route_service import (
+    build_compact_route_graph,
+    build_route_inputs,
+    plan_route,
+    validate_and_calculate_path_distance,
+)
 
 TRIALS_FILENAME = "ollaya_laya_latency_trials.jsonl"
 SUMMARY_FILENAME = "ollaya_laya_latency_summary.json"
 CSV_FILENAME = "ollaya_laya_latency_samples.csv"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
+ROUTE_GRAPH_PATH = ROOT / "routes" / "test_benchmark_v1.geojson"
+OPTION_IDS = ("option_a", "option_b", "option_c", "option_d", "option_e")
 Clock = Callable[[], float]
 
-# All cases use the same choice API. Only the state and decision complexity differ.
-TEST_CASES = (
-    {
-        "id": "intuitive",
-        "label": "생각이 거의 필요 없는 직관 질문",
-        "state": "상자에 붙은 라벨의 색상은 파란색입니다.",
-        "instructions": "상자 라벨의 색상을 선택하세요.",
-        "candidates": {
-            "blue": "파란색",
-            "red": "빨간색",
+
+def _route_question_data(language: str) -> dict[str, Any]:
+    """Build the route case from the same graph and validator as the simulator."""
+    graph = json.loads(ROUTE_GRAPH_PATH.read_text(encoding="utf-8"))
+    points, edges = build_route_inputs(graph)
+    baseline = plan_route("2", "10", graph)
+    correct_path = [int(node) for node in baseline["node_ids"]]
+    _, correct_distance = validate_and_calculate_path_distance(
+        points, edges, correct_path, 2, 10
+    )
+    long_path = [2, 5, 4, 6, 13, 8, 9, 10]
+    _, long_distance = validate_and_calculate_path_distance(
+        points, edges, long_path, 2, 10
+    )
+    candidates = [
+        f"path={correct_path}, distance={correct_distance:.6f}",
+        f"path={long_path}, distance={long_distance:.6f}",
+        "path=[2,10]",
+        "path=[2,5,6,10]",
+        "path=[2,5,4,13,6,10]",
+    ]
+    state = {
+        "start_node": 2,
+        "target_node": 10,
+        "route_graph": build_compact_route_graph(graph, ROUTE_GRAPH_PATH.name),
+    }
+    if language == "ko":
+        instructions = (
+            "방향성 간선으로 모두 연결된 후보 중 간선 weight 합이 가장 작은 "
+            "경로를 선택하세요."
+        )
+    else:
+        instructions = (
+            "Select the candidate whose nodes are connected by directed edges and "
+            "whose sum of edge weights is the smallest."
+        )
+    return {
+        "state": state,
+        "instructions": instructions,
+        "answers": candidates,
+        "correct_answer": candidates[0],
+    }
+
+
+def _base_questions() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "intuitive",
+            "language": "ko",
+            "label": "한국어 직관 질문",
+            "state": "상자에 붙은 라벨의 색상은 파란색입니다.",
+            "instructions": "상자 라벨의 색상을 선택하세요.",
+            "answers": ["파란색", "빨간색", "초록색", "노란색", "검은색"],
+            "correct_answer": "파란색",
         },
-        "expected_choice": "blue",
-    },
-    {
-        "id": "reasoning",
-        "label": "여러 조건을 연결하는 사고 질문",
-        "state": (
-            "민수는 영희보다 키가 큽니다. "
-            "영희는 철수보다 키가 큽니다."
-        ),
-        "instructions": "세 사람 중 키가 가장 큰 사람을 선택하세요.",
-        "candidates": {
-            "minsu": "민수",
-            "younghee": "영희",
-            "cheolsu": "철수",
+        {
+            "type": "intuitive",
+            "language": "en",
+            "label": "English intuitive question",
+            "state": "The label attached to the box is blue.",
+            "instructions": "Choose the color of the label on the box.",
+            "answers": ["Blue", "Red", "Green", "Yellow", "Black"],
+            "correct_answer": "Blue",
         },
-        "expected_choice": "minsu",
-    },
-    {
-        "id": "shortest_path",
-        "label": "최단거리 경로 선택 질문",
-        "state": {
-            "start_node": 2,
-            "target_node": 10,
-            "rule": "연속된 방향성 간선을 따라 이동하고 거리 합이 가장 작은 경로를 선택한다.",
+        {
+            "type": "reasoning",
+            "language": "ko",
+            "label": "한국어 사고 질문",
+            "state": (
+                "민수는 영희보다 키가 큽니다. 영희는 철수보다 키가 큽니다. "
+                "철수는 지수보다 키가 큽니다. 지수는 준호보다 키가 큽니다."
+            ),
+            "instructions": "다섯 사람 중 키가 가장 큰 사람을 선택하세요.",
+            "answers": ["민수", "영희", "철수", "지수", "준호"],
+            "correct_answer": "민수",
         },
-        "instructions": "유효하며 총거리가 가장 짧은 경로를 선택하세요.",
-        "candidates": {
-            "route_a": "path=[2,5,4,6,13,8,9,10], distance=3.033652",
-            "route_b": "path=[2,5,4,6,10], distance=1.592143",
+        {
+            "type": "reasoning",
+            "language": "en",
+            "label": "English reasoning question",
+            "state": (
+                "Alice is taller than Bob. Bob is taller than Carol. "
+                "Carol is taller than David. David is taller than Erin."
+            ),
+            "instructions": "Choose the tallest person among the five people.",
+            "answers": ["Alice", "Bob", "Carol", "David", "Erin"],
+            "correct_answer": "Alice",
         },
-        "expected_choice": "route_b",
-    },
-)
+        {
+            "type": "shortest_path",
+            "language": "ko",
+            "label": "한국어 최단거리 질문",
+            **_route_question_data("ko"),
+        },
+        {
+            "type": "shortest_path",
+            "language": "en",
+            "label": "English shortest-path question",
+            **_route_question_data("en"),
+        },
+    ]
+
+
+def _positioned_candidates(
+    answers: list[str], correct_answer: str, answer_position: int
+) -> tuple[dict[str, str], str]:
+    """Place the same correct answer once at each of the five option positions."""
+    distractors = [answer for answer in answers if answer != correct_answer]
+    ordered_answers = distractors.copy()
+    ordered_answers.insert(answer_position, correct_answer)
+    candidates = dict(zip(OPTION_IDS, ordered_answers, strict=True))
+    expected_choice = OPTION_IDS[answer_position]
+    return candidates, expected_choice
+
+
+def build_test_cases() -> tuple[dict[str, Any], ...]:
+    cases = []
+    for question in _base_questions():
+        for position in range(len(OPTION_IDS)):
+            candidates, expected_choice = _positioned_candidates(
+                question["answers"], question["correct_answer"], position
+            )
+            cases.append(
+                {
+                    "id": (
+                        f"{question['language']}_{question['type']}_"
+                        f"position_{position + 1}"
+                    ),
+                    "question_type": question["type"],
+                    "language": question["language"],
+                    "label": question["label"],
+                    "answer_position": position + 1,
+                    "state": question["state"],
+                    "instructions": question["instructions"],
+                    "candidates": candidates,
+                    "expected_choice": expected_choice,
+                    "correct_answer": question["correct_answer"],
+                }
+            )
+    return tuple(cases)
+
+
+TEST_CASES = build_test_cases()
 
 
 def _utc_now() -> str:
@@ -110,42 +217,6 @@ def _latency_stats(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
-def _write_csv(path: Path, trials: list[dict[str, Any]]) -> None:
-    fieldnames = [
-        "case_id",
-        "case_label",
-        "repeat",
-        "timestamp",
-        "requested_model",
-        "response_model",
-        "choice",
-        "expected_choice",
-        "correct",
-        "confidence",
-        "wall_seconds",
-        "ollaya_total_seconds",
-        "load_seconds",
-        "eval_seconds",
-        "realtime_deadline_seconds",
-        "realtime_met",
-        "probabilities",
-        "routing",
-        "error",
-    ]
-    with path.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fieldnames)
-        writer.writeheader()
-        for trial in trials:
-            row = {field: trial.get(field) for field in fieldnames}
-            row["probabilities"] = json.dumps(
-                trial.get("probabilities"), ensure_ascii=False, separators=(",", ":")
-            )
-            row["routing"] = json.dumps(
-                trial.get("routing"), ensure_ascii=False, separators=(",", ":")
-            )
-            writer.writerow(row)
-
-
 def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
     successful = [trial for trial in trials if trial["error"] is None]
     wall_times = [trial["wall_seconds"] for trial in successful]
@@ -181,17 +252,38 @@ def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _write_csv(path: Path, trials: list[dict[str, Any]]) -> None:
+    fieldnames = [
+        "case_id", "question_type", "language", "answer_position", "repeat",
+        "timestamp", "requested_model", "response_model", "choice",
+        "expected_choice", "correct_answer", "correct", "confidence",
+        "wall_seconds", "ollaya_total_seconds", "load_seconds", "eval_seconds",
+        "realtime_deadline_seconds", "realtime_met", "probabilities", "routing",
+        "error",
+    ]
+    with path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        for trial in trials:
+            row = {field: trial.get(field) for field in fieldnames}
+            for field in ("probabilities", "routing"):
+                row[field] = json.dumps(
+                    trial.get(field), ensure_ascii=False, separators=(",", ":")
+                )
+            writer.writerow(row)
+
+
 def run_latency_benchmark(
     output: Path,
     *,
-    repeats: int = 30,
+    repeats: int = 5,
     warmups: int = 1,
     realtime_deadline_seconds: float = 0.15,
     selector: Any | None = None,
     clock: Clock = time.perf_counter,
     progress: bool = True,
 ) -> dict[str, Any]:
-    """Run every case, then write per-case and overall latency statistics."""
+    """Measure all languages, complexities, and correct-answer positions."""
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
     if warmups < 0:
@@ -208,17 +300,21 @@ def run_latency_benchmark(
     selector = selector or OllayaLayaSelector()
     started_at = _utc_now()
 
-    # Warm each input form, but exclude these calls from every statistic.
-    for case in TEST_CASES:
+    # Warm each language/type once. Position variants use the already-warmed model.
+    for question in _base_questions():
+        candidates, _ = _positioned_candidates(
+            question["answers"], question["correct_answer"], 0
+        )
         for warmup in range(1, warmups + 1):
             selector.select_choice(
-                case["state"],
-                case["candidates"],
-                case["instructions"],
-                question_id=case["id"],
+                question["state"], candidates, question["instructions"],
+                question_id=f"warmup_{question['language']}_{question['type']}",
             )
             if progress:
-                print(f"{case['id']} warmup {warmup}/{warmups} complete")
+                print(
+                    f"{question['language']} {question['type']} "
+                    f"warmup {warmup}/{warmups} complete"
+                )
 
     trials: list[dict[str, Any]] = []
     for case in TEST_CASES:
@@ -226,21 +322,22 @@ def run_latency_benchmark(
             started = clock()
             try:
                 result = selector.select_choice(
-                    case["state"],
-                    case["candidates"],
-                    case["instructions"],
+                    case["state"], case["candidates"], case["instructions"],
                     question_id=case["id"],
                 )
                 wall_seconds = clock() - started
                 trial = {
                     "case_id": case["id"],
-                    "case_label": case["label"],
+                    "question_type": case["question_type"],
+                    "language": case["language"],
+                    "answer_position": case["answer_position"],
                     "repeat": repeat,
                     "timestamp": _utc_now(),
                     "requested_model": selector.model,
                     "response_model": result.get("model"),
                     "choice": result.get("choice"),
                     "expected_choice": case["expected_choice"],
+                    "correct_answer": case["correct_answer"],
                     "correct": result.get("choice") == case["expected_choice"],
                     "confidence": result.get("confidence"),
                     "probabilities": result.get("probabilities"),
@@ -258,13 +355,16 @@ def run_latency_benchmark(
                 wall_seconds = clock() - started
                 trial = {
                     "case_id": case["id"],
-                    "case_label": case["label"],
+                    "question_type": case["question_type"],
+                    "language": case["language"],
+                    "answer_position": case["answer_position"],
                     "repeat": repeat,
                     "timestamp": _utc_now(),
                     "requested_model": getattr(selector, "model", None),
                     "response_model": None,
                     "choice": None,
                     "expected_choice": case["expected_choice"],
+                    "correct_answer": case["correct_answer"],
                     "correct": False,
                     "confidence": None,
                     "probabilities": None,
@@ -278,45 +378,56 @@ def run_latency_benchmark(
                     "error": f"{type(error).__name__}: {error}",
                     "raw": None,
                 }
-
             trials.append(trial)
             _append_jsonl(trials_path, trial)
             if progress:
                 print(
                     f"{case['id']} {repeat:02d}/{repeats} "
-                    f"choice={trial['choice']} correct={trial['correct']} "
-                    f"wall={wall_seconds:.6f}s realtime={trial['realtime_met']}"
+                    f"choice={trial['choice']} expected={trial['expected_choice']} "
+                    f"correct={trial['correct']} wall={wall_seconds:.6f}s"
                 )
 
-    case_summaries = []
-    for case in TEST_CASES:
-        case_trials = [trial for trial in trials if trial["case_id"] == case["id"]]
-        case_summaries.append(
-            {
-                "case_id": case["id"],
-                "case_label": case["label"],
-                "state": case["state"],
-                "instructions": case["instructions"],
-                "candidates": case["candidates"],
-                "expected_choice": case["expected_choice"],
-                **_summarize_trials(case_trials),
-            }
+    groups = []
+    for language in ("ko", "en"):
+        for question_type in ("intuitive", "reasoning", "shortest_path"):
+            grouped = [
+                trial for trial in trials
+                if trial["language"] == language
+                and trial["question_type"] == question_type
+            ]
+            groups.append(
+                {
+                    "language": language,
+                    "question_type": question_type,
+                    **_summarize_trials(grouped),
+                }
+            )
+    positions = []
+    for position in range(1, len(OPTION_IDS) + 1):
+        positioned = [trial for trial in trials if trial["answer_position"] == position]
+        positions.append(
+            {"answer_position": position, **_summarize_trials(positioned)}
         )
 
     summary = {
-        "benchmark": "ollaya-laya-complexity-latency-v2",
+        "benchmark": "ollaya-laya-language-position-latency-v3",
         "started_at": started_at,
         "completed_at": _utc_now(),
         "requested_model": getattr(selector, "model", None),
         "settings": {
+            "question_types": 3,
+            "languages": 2,
+            "answer_positions": 5,
+            "option_count": 5,
             "case_count": len(TEST_CASES),
-            "warmups_per_case": warmups,
+            "warmups_per_language_and_type": warmups,
             "repeats_per_case": repeats,
             "expected_trial_count": len(TEST_CASES) * repeats,
             "realtime_deadline_seconds": realtime_deadline_seconds,
         },
         "overall": _summarize_trials(trials),
-        "cases": case_summaries,
+        "groups": groups,
+        "answer_positions": positions,
     }
     _json_dump(output / SUMMARY_FILENAME, summary)
     _write_csv(output / CSV_FILENAME, trials)
@@ -325,14 +436,14 @@ def run_latency_benchmark(
 
 def _default_output() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return DEFAULT_RESULTS_DIR / f"ollaya-laya-complexity-{timestamp}"
+    return DEFAULT_RESULTS_DIR / f"ollaya-laya-v3-{timestamp}"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--repeats", type=int, default=30, help="repeats per case")
-    parser.add_argument("--warmups", type=int, default=1, help="warmups per case")
+    parser.add_argument("--repeats", type=int, default=5, help="repeats per case")
+    parser.add_argument("--warmups", type=int, default=1, help="warmups per language/type")
     parser.add_argument("--deadline", type=float, default=0.15)
     parser.add_argument("--model", default=None)
     parser.add_argument("--host", default=None)
@@ -340,17 +451,12 @@ def main() -> int:
     args = parser.parse_args()
 
     selector = OllayaLayaSelector(
-        model=args.model,
-        host=args.host,
-        timeout_seconds=args.timeout,
+        model=args.model, host=args.host, timeout_seconds=args.timeout
     )
     output = args.output or _default_output()
     summary = run_latency_benchmark(
-        output,
-        repeats=args.repeats,
-        warmups=args.warmups,
-        realtime_deadline_seconds=args.deadline,
-        selector=selector,
+        output, repeats=args.repeats, warmups=args.warmups,
+        realtime_deadline_seconds=args.deadline, selector=selector,
     )
     print(f"results: {output.resolve()}")
     print(json.dumps(summary, ensure_ascii=False, indent=2))

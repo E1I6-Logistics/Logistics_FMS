@@ -101,23 +101,21 @@ print(result)
 후보 순서를 무작위로 바꾸어 정확도를 측정하는 3차 반복 테스트는 이 선택기를
 사용해 별도 단계에서 구현한다.
 
-## 질문 복잡도별 지연시간 테스트
+## 언어·질문 복잡도·정답 위치별 테스트
 
-동일한 Laya choice API에 다음 세 가지 질문을 전달해 복잡도에 따른 시간을
-비교한다.
+각 질문은 선택지 5개를 사용한다. 같은 정답 내용을 유지하면서 정답을
+`option_a`부터 `option_e`까지 한 번씩 옮겨 위치 편향을 확인한다. 한국어와
+영어를 별도 케이스로 실행한다.
 
-| 유형 | 입력 | 정답 |
+| 질문 유형 | 한국어 예시 | 영어 예시 |
 | --- | --- | --- |
-| 직관 질문 | 라벨 색상이 파란색이라고 직접 명시 | `blue` |
-| 사고 질문 | 민수 > 영희 > 철수 조건에서 가장 큰 사람 선택 | `minsu` |
-| 최단거리 질문 | 두 경로의 유효성과 거리 비교 | `route_b` |
+| 직관 | 명시된 라벨 색상 선택 | Select the stated label color |
+| 사고 | 다섯 사람의 키 순서를 연결해 최댓값 선택 | Infer the tallest of five people |
+| 최단거리 | 방향성 그래프에서 유효한 최단 후보 선택 | Select the valid shortest directed path |
 
-Laya는 생성형 LLM처럼 숨은 사고 과정이나 사고 토큰을 제공하지 않는다. 따라서
-여기서 사고 질문은 여러 조건을 연결해야 정답을 고를 수 있는 문제를 뜻한다.
-측정값은 실제 API 호출 전후의 시간과 Ollaya가 반환한 내부 처리시간이다.
-
-예열은 질문 유형별 1회이며 통계에서 제외한다. `--repeats 30`은 유형마다
-30회 실행한다는 뜻이므로 본 시험은 총 `3 × 30 = 90회`다.
+총 케이스는 `3개 유형 × 2개 언어 × 정답 위치 5개 = 30개`다. 기본 반복 5회를
+사용하면 본 시험은 150회이며, 한국어·영어 및 질문 유형별 예열 6회는 집계에서
+제외한다.
 
 ```bash
 cd ~/Logistics_FMS
@@ -126,23 +124,43 @@ source ~/venv/robot/bin/activate
 python -m simulation.evaluation.ollaya_latency_benchmark \
   --model laya:multilingual \
   --warmups 1 \
-  --repeats 30 \
+  --repeats 5 \
   --deadline 0.15 \
-  --output simulation/benchmark_results/laya-complexity-$(date +%Y%m%d-%H%M%S)
+  --output simulation/benchmark_results/laya-v3-$(date +%Y%m%d-%H%M%S)
 ```
 
-`wall_seconds`는 통신과 직렬화를 포함한 체감시간이고, `ollaya_total_seconds`는
-Ollaya 서버 내부 전체 시간이며, `eval_seconds`는 모델 추론시간이다. 실시간
-기준은 `wall_seconds <= 0.15`로 판정한다. 요약 파일에는 전체 통계와 세 유형별
-정확도, 평균, 중앙값, p95, 최솟값, 최댓값, 실시간 기준 충족률이 각각 저장된다.
+요약에는 한국어·영어와 질문 유형을 조합한 6개 그룹 통계, 정답 위치 5개별
+통계, 전체 통계를 저장한다. 각 그룹에서 정확도, 평균, 중앙값, p95, 최솟값,
+최댓값 및 0.15초 충족률을 비교할 수 있다.
+
+### 실제 최단거리 검증 방식
+
+이 지연시간 시험에서 경로 후보는
+`routes/test_benchmark_v1.geojson`으로부터 만들어진다. 코드 기준 정답은
+`simulation/services/route_service.py`의 `plan_route()`로 계산하고, 후보 경로의
+방향성 간선과 거리는 `validate_and_calculate_path_distance()`로 다시 검증한다.
+Laya에는 방향성 CompactRouteGraph와 경로 후보 5개를 전달한다.
+
+이 시험은 **코드가 준비한 후보 중 Laya가 정답을 선택하는 시험**이다. LLM이
+그래프 전체를 받아 경로를 직접 생성하고 코드 결과와 비교하는 방법은
+`doc/llm-route-generation-benchmark.md`에 설명되어 있다. 실행 전 구조 검증은
+다음 명령으로 수행한다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark_v3.json \
+  --check
+```
+
+생성되는 분석 파일은 다음과 같다.
 
 | 파일 | 내용 |
 | --- | --- |
-| `ollaya_laya_latency_trials.jsonl` | 유형·반복별 선택 결과, 신뢰도와 모든 시간 |
-| `ollaya_laya_latency_summary.json` | 전체 및 유형별 정확도·지연시간 통계 |
+| `ollaya_laya_latency_trials.jsonl` | 언어·유형·정답 위치·반복별 원시 결과 |
+| `ollaya_laya_latency_summary.json` | 전체·언어/유형·정답 위치별 통계 |
 | `ollaya_laya_latency_samples.csv` | Excel과 그래프 작성용 개별 측정값 |
 
-Ollaya를 호출하지 않고 구조만 확인하려면 다음을 실행한다.
+Mock 구조 검증 명령은 다음과 같다.
 
 ```bash
 python -m unittest tests.test_ollaya_latency_benchmark -v
