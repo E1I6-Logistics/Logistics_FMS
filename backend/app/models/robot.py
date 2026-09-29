@@ -27,7 +27,6 @@ class Robot:
 
         # 현재 로봇이 수행 중인 navigation type. None이면 navigation 중 아님
         self.navigation_type = None
-
         # 로봇 식별자
         self.robot_id = robot_id
 
