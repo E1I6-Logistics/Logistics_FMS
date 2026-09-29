@@ -463,6 +463,7 @@ python -m simulation.evaluation.selector_latency_benchmark \
 
 | 파일 | 용도 |
 | --- | --- |
+| `manifest.json` | Git 상태와 요청/실제 장치, GPU 이름, precision, CPU fallback 횟수 |
 | `selector_latency_trials.jsonl` | 개별 실행 입력·응답·정답 여부·시간 |
 | `selector_latency_summary.json` | 전체 및 조건별 정확도·지연시간 집계 |
 | `selector_latency_samples.csv` | 그래프와 통계 분석용 개별 측정값 |
@@ -481,9 +482,17 @@ python -m simulation.evaluation.selector_question_types_benchmark \
 
 | 파일 | 용도 |
 | --- | --- |
+| `manifest.json` | Git 상태와 요청/실제 장치, GPU 이름, precision, CPU fallback 횟수 |
 | `selector_question_type_trials.jsonl` | 질문 유형별 개별 실행 결과 |
 | `selector_question_type_summary.json` | 언어·질문 유형별 정확도와 시간 |
 | `selector_question_type_samples.csv` | 그래프와 통계 분석용 측정값 |
+
+두 명령은 smoke test가 아니라 실제 Laya checkpoint를 사용한다. 첫 명령은
+직관·사고·최단거리 질문을 한국어/영어로 구성하고 정답을 5개 위치에 한 번씩
+옮겨 케이스당 5회 측정한다. 두 번째 명령은 choice·score·noul을 케이스당
+5회 측정한다. RTX 4070 SUPER에서도 같은 환경변수와 명령을 사용하며, 실행
+후 `manifest.json`의 `device.actual`, `device.kind`, `device.device_name`이 각각
+`cuda:0`, `gpu`, `NVIDIA GeForce RTX 4070 SUPER`인지 확인한다.
 
 ### 10.9 오류 확인
 
