@@ -131,14 +131,15 @@ class MockFmsStore:
     # 노드 경로 - 기본으로 시작지점과 목적지점만 존재
     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict[str, Any]:
         """TODO: Replace with user-defined path planning and node movement."""
-        target = get_node(node_id)
-
         with self._lock:
             robot = self._get_robot(robot_id)
+            active_route = robot["route"]
+            if active_route is not None:
+                self.stop_robot(robot_id)
+            target = get_node(node_id)
 
             graph = load_route_graph()
             path_plan = DistanceAStar(graph)
-            active_route = robot["route"]
             between_nodes = active_route is not None and robot["current_node"] is None
             current_node = robot["current_node"] if active_route else locate_current_node(
                 nodes=path_plan.nodes,
