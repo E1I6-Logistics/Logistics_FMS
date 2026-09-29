@@ -1,0 +1,117 @@
+{
+  "benchmark_id": "route-generation-jetson-4_5gb-v1",
+  "description": "Jetson Orin Nano에서 공식 모델 파일 4.5GB 이하의 최고 정밀도 태그 5종을 비교",
+  "reference_commit": "1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc",
+  "graph": {
+    "path": "routes/test_benchmark_v1.geojson",
+    "sha256": "00e1f02cce0f5007342dfef4c7c1a0d95f36eb639c530dcf0c8e7c7ce0f304c3",
+    "node_count": 14,
+    "directed_edge_count": 28
+  },
+  "models": [
+    {
+      "name": "qwen3:0.6b-fp16",
+      "think": false
+    },
+    {
+      "name": "deepseek-r1:1.5b-qwen-distill-fp16",
+      "think": false
+    },
+    {
+      "name": "llama3.2:3b-instruct-q8_0"
+    },
+    {
+      "name": "qwen3:4b-q8_0",
+      "think": false
+    },
+    {
+      "name": "gemma3:4b-it-q4_K_M"
+    }
+  ],
+  "cases": [
+    {
+      "start": 0,
+      "goal": 4,
+      "expected_path": [
+        0,
+        3,
+        4
+      ],
+      "expected_distance": 0.8403537345690091
+    },
+    {
+      "start": 0,
+      "goal": 6,
+      "expected_path": [
+        0,
+        3,
+        4,
+        6
+      ],
+      "expected_distance": 1.2346176886023945
+    },
+    {
+      "start": 2,
+      "goal": 10,
+      "expected_path": [
+        2,
+        5,
+        4,
+        6,
+        10
+      ],
+      "expected_distance": 1.592143392266858
+    },
+    {
+      "start": 1,
+      "goal": 12,
+      "expected_path": [
+        1,
+        4,
+        6,
+        13,
+        12
+      ],
+      "expected_distance": 1.8990600538850246
+    },
+    {
+      "start": 7,
+      "goal": 2,
+      "expected_path": [
+        7,
+        8,
+        9,
+        10,
+        6,
+        4,
+        5,
+        2
+      ],
+      "expected_distance": 2.6722415641324937
+    }
+  ],
+  "settings": {
+    "temperature": 0,
+    "seed": 20260928,
+    "num_ctx": 2048,
+    "num_predict": 512,
+    "timeout_seconds": 120,
+    "realtime_deadline_seconds": 0.15,
+    "max_attempts": 1,
+    "repeats": 5,
+    "warmups_per_model": 1,
+    "keep_alive": "5m"
+  },
+  "prompt": "\n    You are a deterministic shortest-path solver for a directed weighted graph.\n\n    Input:\n    - start_node, target_node: node IDs\n    - route_graph: CompactRouteGraph\n    - nodes: [{id, x, y}]  (coordinates are for reference only)\n    - edges: [{from, to, weight}]  (directed)\n\n    Rules:\n    1. Traverse an edge only from \"from\" to \"to\".\n    2. Use \"weight\" exactly as given. Do NOT recalculate from coordinates.\n    3. Find the path with the minimum total weight (e.g. Dijkstra).\n    4. The path must start with start_node, end with target_node,\n    and every consecutive pair must be an existing edge.\n    5. reported_total_distance = sum of weights along the path.\n\n    Return only the JSON object matching the schema. No explanations or Markdown.\n    ",
+  "prompt_sha256": "53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44",
+  "reference_benchmark": "route-generation-v3",
+  "deployment_constraints": {
+    "target": "Jetson Orin Nano Developer Kit 8GB unified memory",
+    "estimated_available_memory_gb": 4.5,
+    "quantization": "highest official precision tag whose file is at most 4.5GB",
+    "single_loaded_model": true,
+    "single_concurrent_request": true,
+    "note": "The 4.5GB cap selects artifacts; runtime feasibility is decided by manifest.json /api/ps evidence and tegrastats because KV cache and runtime buffers consume additional unified memory.",
+    "max_model_file_gb": 4.5
+  }
+}

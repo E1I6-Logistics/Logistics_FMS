@@ -124,6 +124,27 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
             [3, 4, 5, 5, 8],
         )
 
+    def test_jetson_config_uses_highest_precision_under_4_5gb(self):
+        config_path = DEFAULT_CONFIG.with_name(
+            "route_generation_benchmark_jetson.json"
+        )
+        prepared = load_and_validate_config(config_path)
+
+        self.assertEqual(
+            [model["name"] for model in prepared["config"]["models"]],
+            [
+                "qwen3:0.6b-fp16",
+                "deepseek-r1:1.5b-qwen-distill-fp16",
+                "llama3.2:3b-instruct-q8_0",
+                "qwen3:4b-q8_0",
+                "gemma3:4b-it-q4_K_M",
+            ],
+        )
+        self.assertEqual(prepared["config"]["settings"]["num_ctx"], 2048)
+        self.assertEqual(prepared["config"]["settings"]["num_predict"], 512)
+        self.assertEqual(len(prepared["cases"]), 5)
+        self.assertEqual(prepared["config"]["settings"]["repeats"], 5)
+
     def test_mock_run_writes_expected_matrix_and_exports(self):
         manifest = run_benchmark(
             DEFAULT_CONFIG,
