@@ -57,6 +57,35 @@ class OllayaLayaSelectorTest(unittest.TestCase):
         self.assertEqual(timeout, 3)
         self.assertEqual(selector.last_inference["response"]["model"], "laya:multilingual")
 
+    def test_select_choice_supports_non_route_questions(self):
+        def reasoning_transport(_url, payload, _headers, _timeout):
+            self.assertIn("reasoning", payload["questions"])
+            self.assertEqual(
+                payload["questions"]["reasoning"]["instructions"],
+                "가장 큰 사람을 선택하세요.",
+            )
+            return {
+                "model": "laya:multilingual",
+                "answers": {
+                    "reasoning": {
+                        "choice": "minsu",
+                        "confidence": 0.75,
+                        "probabilities": {"minsu": 0.75, "younghee": 0.25},
+                    }
+                },
+            }
+
+        selector = OllayaLayaSelector(transport=reasoning_transport)
+        result = selector.select_choice(
+            "민수는 영희보다 큽니다.",
+            {"minsu": "민수", "younghee": "영희"},
+            "가장 큰 사람을 선택하세요.",
+            question_id="reasoning",
+        )
+
+        self.assertEqual(result["choice"], "minsu")
+        self.assertEqual(result["confidence"], 0.75)
+
     def test_rejects_unknown_choice(self):
         def invalid_transport(*_args):
             return {"answers": {"route": {"choice": "route_x"}}}

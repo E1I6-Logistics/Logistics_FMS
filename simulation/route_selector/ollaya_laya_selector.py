@@ -1,4 +1,4 @@
-"""Ollaya의 로컬 Laya 모델을 이용한 경로 후보 선택기."""
+"""Ollaya의 로컬 Laya 모델을 이용한 선택기."""
 
 from __future__ import annotations
 
@@ -15,9 +15,13 @@ Transport = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any
 
 
 class OllayaLayaSelector(RouteSelector):
-    """Ollaya `/api/decide`에 후보 선택 질문을 전달한다."""
+    """Ollaya `/api/decide`에 choice 질문을 전달한다."""
 
     name = "ollaya_laya"
+    ROUTE_INSTRUCTIONS = (
+        "Select the valid route with the smallest total distance. "
+        "Return the candidate ID only through the choice answer."
+    )
 
     def __init__(
         self,
@@ -38,26 +42,29 @@ class OllayaLayaSelector(RouteSelector):
         self._transport = transport or self._http_post
         self.last_inference: dict[str, Any] | None = None
 
-    def select_route(
+    def select_choice(
         self,
         state: str | dict[str, Any],
         candidates: Mapping[str, str],
+        instructions: str,
+        *,
+        question_id: str = "decision",
     ) -> dict[str, Any]:
+        """일반적인 choice 질문을 Ollaya에 보내고 공통 결과를 반환한다."""
         if len(candidates) < 2:
-            raise ValueError("경로 후보는 두 개 이상이어야 합니다.")
+            raise ValueError("후보는 두 개 이상이어야 합니다.")
         if any(not key or not description for key, description in candidates.items()):
             raise ValueError("모든 후보에는 비어 있지 않은 ID와 설명이 필요합니다.")
+        if not instructions.strip():
+            raise ValueError("질문 지시문은 비어 있을 수 없습니다.")
 
         payload = {
             "model": self.model,
             "state": state,
             "questions": {
-                "route": {
+                question_id: {
                     "type": "choice",
-                    "instructions": (
-                        "Select the valid route with the smallest total distance. "
-                        "Return the candidate ID only through the choice answer."
-                    ),
+                    "instructions": instructions,
                     "criteria": dict(candidates),
                 }
             },
@@ -75,10 +82,12 @@ class OllayaLayaSelector(RouteSelector):
         self.last_inference = {"request": payload, "response": response}
 
         try:
-            answer = response["answers"]["route"]
+            answer = response["answers"][question_id]
             choice = str(answer["choice"])
         except (KeyError, TypeError) as error:
-            raise RuntimeError("Ollaya 응답에 answers.route.choice가 없습니다.") from error
+            raise RuntimeError(
+                f"Ollaya 응답에 answers.{question_id}.choice가 없습니다."
+            ) from error
         if choice not in candidates:
             raise RuntimeError(f"Ollaya가 알 수 없는 후보를 선택했습니다: {choice}")
 
@@ -99,6 +108,19 @@ class OllayaLayaSelector(RouteSelector):
             ),
             "raw": response,
         }
+
+    def select_route(
+        self,
+        state: str | dict[str, Any],
+        candidates: Mapping[str, str],
+    ) -> dict[str, Any]:
+        """기존 경로 선택 호출을 일반 choice API에 연결한다."""
+        return self.select_choice(
+            state,
+            candidates,
+            self.ROUTE_INSTRUCTIONS,
+            question_id="route",
+        )
 
     @staticmethod
     def _nanoseconds_to_seconds(value: Any) -> float | None:

@@ -100,3 +100,50 @@ print(result)
 
 후보 순서를 무작위로 바꾸어 정확도를 측정하는 3차 반복 테스트는 이 선택기를
 사용해 별도 단계에서 구현한다.
+
+## 질문 복잡도별 지연시간 테스트
+
+동일한 Laya choice API에 다음 세 가지 질문을 전달해 복잡도에 따른 시간을
+비교한다.
+
+| 유형 | 입력 | 정답 |
+| --- | --- | --- |
+| 직관 질문 | 라벨 색상이 파란색이라고 직접 명시 | `blue` |
+| 사고 질문 | 민수 > 영희 > 철수 조건에서 가장 큰 사람 선택 | `minsu` |
+| 최단거리 질문 | 두 경로의 유효성과 거리 비교 | `route_b` |
+
+Laya는 생성형 LLM처럼 숨은 사고 과정이나 사고 토큰을 제공하지 않는다. 따라서
+여기서 사고 질문은 여러 조건을 연결해야 정답을 고를 수 있는 문제를 뜻한다.
+측정값은 실제 API 호출 전후의 시간과 Ollaya가 반환한 내부 처리시간이다.
+
+예열은 질문 유형별 1회이며 통계에서 제외한다. `--repeats 30`은 유형마다
+30회 실행한다는 뜻이므로 본 시험은 총 `3 × 30 = 90회`다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+python -m simulation.evaluation.ollaya_latency_benchmark \
+  --model laya:multilingual \
+  --warmups 1 \
+  --repeats 30 \
+  --deadline 0.15 \
+  --output simulation/benchmark_results/laya-complexity-$(date +%Y%m%d-%H%M%S)
+```
+
+`wall_seconds`는 통신과 직렬화를 포함한 체감시간이고, `ollaya_total_seconds`는
+Ollaya 서버 내부 전체 시간이며, `eval_seconds`는 모델 추론시간이다. 실시간
+기준은 `wall_seconds <= 0.15`로 판정한다. 요약 파일에는 전체 통계와 세 유형별
+정확도, 평균, 중앙값, p95, 최솟값, 최댓값, 실시간 기준 충족률이 각각 저장된다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `ollaya_laya_latency_trials.jsonl` | 유형·반복별 선택 결과, 신뢰도와 모든 시간 |
+| `ollaya_laya_latency_summary.json` | 전체 및 유형별 정확도·지연시간 통계 |
+| `ollaya_laya_latency_samples.csv` | Excel과 그래프 작성용 개별 측정값 |
+
+Ollaya를 호출하지 않고 구조만 확인하려면 다음을 실행한다.
+
+```bash
+python -m unittest tests.test_ollaya_latency_benchmark -v
+```
