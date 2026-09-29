@@ -296,11 +296,11 @@ class FmsRosNode(Node):
         client = self._precision_dock_clients.get(robot_id)
 
         if client is None:
+            print(f"[Error] [Robot {robot_id}] PrecisionDock client not available: {robot_id}")
             raise ValueError(f"PrecisionDock client not found: {robot_id}")
 
         if not client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().error(f"PrecisionDock server not available: {robot_id}")
-
+            print(f"[Error] [Robot {robot_id}] PrecisionDock server not available: {robot_id}")
             if self.precision_dock_result_callback:
                 self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
 
@@ -323,14 +323,14 @@ class FmsRosNode(Node):
         goal_handle = future.result()
 
         if not goal_handle.accepted:
-            self.get_logger().warning(f"PrecisionDock goal rejected: {robot_id}")
+            print(f"[Error] [Robot {robot_id}] PrecisionDock goal rejected: {robot_id}")
 
             if self.precision_dock_result_callback:
                 self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
 
             return
 
-        self.get_logger().info(f"PrecisionDock goal accepted: {robot_id}")
+        print(f"[Info] [Robot {robot_id}] PrecisionDock goal accepted: {robot_id}")
 
         result_future = goal_handle.get_result_async()
 
@@ -341,7 +341,9 @@ class FmsRosNode(Node):
     def _on_precision_dock_result(self, robot_id: str, future) -> None:
         result = future.result()
 
-        self.get_logger().info(f"PrecisionDock finished: {robot_id}, status={result.status}")
+        print(
+            f"[Info] [Robot {robot_id}] PrecisionDock finished: {robot_id}, status={result.status}"
+        )
 
         if self.precision_dock_result_callback:
             self.precision_dock_result_callback(robot_id, result.status)
