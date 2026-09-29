@@ -127,6 +127,11 @@ class RosGateway:
         if robot is None:
             raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
 
+        # 재계획에 실패하더라도 취소된 경로를 활성 경로로 계속 전송하지 않도록 초기화. 기존 Goal 취소가 확인된 뒤 호출
+        robot.route = None
+        robot.goal_node = None
+        robot.navigation_type = None
+
         # Zenoh 연결 상태 확인
         if not robot.connected:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
@@ -235,7 +240,13 @@ class RosGateway:
             }
 
         # Nav2 FollowWaypoints Action으로 경로 전송
-        self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
+        try:
+            self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
+        except Exception:
+            robot.route = None
+            robot.goal_node = None
+            robot.navigation_type = None
+            raise
 
         return {
             "success": True,
@@ -285,10 +296,12 @@ class RosGateway:
 
         elif status == GoalStatus.STATUS_CANCELED:
             # 취소 처리
+            robot.route = None
             pass
 
         elif status == GoalStatus.STATUS_ABORTED:
             # 실패 처리
+            robot.route = None
             pass
 
     def return_to_nearest_node(self, robot_id: str) -> dict:

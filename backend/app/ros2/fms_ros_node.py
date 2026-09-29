@@ -168,6 +168,8 @@ class FmsRosNode(Node):
 
         if not goal_handle.accepted:
             self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
+            if self.navigation_result_callback:
+                self.navigation_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
             return
         # 현재 실행 중인 Goal 저장
         self._follow_waypoints_goal_handles[robot_id] = goal_handle
@@ -190,6 +192,8 @@ class FmsRosNode(Node):
 
         if current_handle is goal_handle:
             self._follow_waypoints_goal_handles.pop(robot_id, None)
+        else:
+            return
 
         self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
 
