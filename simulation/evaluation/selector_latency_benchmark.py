@@ -16,6 +16,9 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from simulation.evaluation.device_metadata import (
+    git_metadata, selector_device_metadata,
+)
 from simulation.route_selector import get_selector
 from simulation.services.route_service import (
     build_compact_route_graph,
@@ -27,6 +30,7 @@ from simulation.services.route_service import (
 TRIALS_FILENAME = "selector_latency_trials.jsonl"
 SUMMARY_FILENAME = "selector_latency_summary.json"
 CSV_FILENAME = "selector_latency_samples.csv"
+MANIFEST_FILENAME = "manifest.json"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 ROUTE_GRAPH_PATH = ROOT / "routes" / "test_benchmark_v1.geojson"
 OPTION_IDS = ("option_a", "option_b", "option_c", "option_d", "option_e")
@@ -299,6 +303,28 @@ def run_latency_benchmark(
 
     selector = selector or get_selector()
     started_at = _utc_now()
+    settings = {
+        "question_types": 3,
+        "languages": 2,
+        "answer_positions": 5,
+        "option_count": 5,
+        "case_count": len(TEST_CASES),
+        "warmups_per_language_and_type": warmups,
+        "repeats_per_case": repeats,
+        "expected_trial_count": len(TEST_CASES) * repeats,
+        "realtime_deadline_seconds": realtime_deadline_seconds,
+    }
+    manifest = {
+        "benchmark": "route-selector-language-position-latency-v3",
+        "status": "running",
+        "started_at": started_at,
+        "source": git_metadata(ROOT),
+        "requested_model": getattr(selector, "model", None),
+        "settings": settings,
+        "device": selector_device_metadata(selector),
+    }
+    _json_dump(output / MANIFEST_FILENAME, manifest)
+    last_result = None
 
     # Warm each language/type once. Position variants use the already-warmed model.
     for question in _base_questions():
@@ -306,7 +332,7 @@ def run_latency_benchmark(
             question["answers"], question["correct_answer"], 0
         )
         for warmup in range(1, warmups + 1):
-            selector.select_choice(
+            last_result = selector.select_choice(
                 question["state"], candidates, question["instructions"],
                 question_id=f"warmup_{question['language']}_{question['type']}",
             )
@@ -325,6 +351,7 @@ def run_latency_benchmark(
                     case["state"], case["candidates"], case["instructions"],
                     question_id=case["id"],
                 )
+                last_result = result
                 wall_seconds = clock() - started
                 trial = {
                     "case_id": case["id"],
@@ -414,23 +441,22 @@ def run_latency_benchmark(
         "started_at": started_at,
         "completed_at": _utc_now(),
         "requested_model": getattr(selector, "model", None),
-        "settings": {
-            "question_types": 3,
-            "languages": 2,
-            "answer_positions": 5,
-            "option_count": 5,
-            "case_count": len(TEST_CASES),
-            "warmups_per_language_and_type": warmups,
-            "repeats_per_case": repeats,
-            "expected_trial_count": len(TEST_CASES) * repeats,
-            "realtime_deadline_seconds": realtime_deadline_seconds,
-        },
+        "device": selector_device_metadata(selector, last_result),
+        "settings": settings,
         "overall": _summarize_trials(trials),
         "groups": groups,
         "answer_positions": positions,
     }
     _json_dump(output / SUMMARY_FILENAME, summary)
     _write_csv(output / CSV_FILENAME, trials)
+    manifest.update(
+        status="complete", completed_at=_utc_now(),
+        completed_trial_count=len(trials), device=summary["device"],
+        output_files=[
+            MANIFEST_FILENAME, TRIALS_FILENAME, SUMMARY_FILENAME, CSV_FILENAME
+        ],
+    )
+    _json_dump(output / MANIFEST_FILENAME, manifest)
     return summary
 
 

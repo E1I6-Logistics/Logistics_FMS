@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from simulation.evaluation import benchmark
+from simulation.evaluation.device_metadata import ollama_model_device_metadata
 from simulation.evaluation.benchmark import (
     DEFAULT_CONFIG,
     load_and_validate_config,
@@ -52,6 +53,32 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
 
     def provider_factory(self, model: dict, _settings: dict, _prompt: str):
         return _MockProvider(model["name"], self.calls)
+
+    def test_ollama_device_metadata_classifies_cpu_gpu_and_mixed(self):
+        def payload(size_vram: int) -> dict:
+            return {
+                "models": [
+                    {
+                        "name": "model:latest",
+                        "size": 1_000,
+                        "size_vram": size_vram,
+                        "details": {"quantization_level": "Q4_K_M"},
+                    }
+                ]
+            }
+
+        self.assertEqual(
+            ollama_model_device_metadata(payload(0), "model:latest")["kind"],
+            "cpu",
+        )
+        self.assertEqual(
+            ollama_model_device_metadata(payload(1_000), "model:latest")["kind"],
+            "gpu",
+        )
+        self.assertEqual(
+            ollama_model_device_metadata(payload(500), "model:latest")["kind"],
+            "mixed",
+        )
 
     def test_frozen_graph_and_ground_truth_match(self):
         prepared = load_and_validate_config(DEFAULT_CONFIG)
@@ -117,6 +144,8 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
         self.assertEqual(summary["trial_count"], 45)
         self.assertEqual(manifest["status"], "complete")
         self.assertEqual(manifest["completed_trial_count"], 45)
+        self.assertEqual(manifest["device"]["source"], "ollama_api_ps")
+        self.assertEqual(manifest["device"]["models"], {})
         self.assertTrue(
             all(row["metrics"]["shortest_distance_match"] for row in trials)
         )

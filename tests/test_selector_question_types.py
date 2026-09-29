@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,10 @@ class SelectorQuestionTypesTest(unittest.TestCase):
                     "total_duration_seconds": 0.02,
                     "load_duration_seconds": 0.0,
                     "eval_duration_seconds": 0.01,
+                    "runtime": {
+                        "device": "cuda:0", "device_name": "Fake RTX 4070 SUPER",
+                        "precision": "float16", "cpu_fallback_count": 0,
+                    },
                     "raw": {},
                     **values,
                 }
@@ -91,6 +96,12 @@ class SelectorQuestionTypesTest(unittest.TestCase):
             )
             self.assertTrue((output / SUMMARY_FILENAME).is_file())
             self.assertTrue((output / CSV_FILENAME).is_file())
+            manifest = json.loads(
+                (output / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["device"]["actual"], "cuda:0")
+            self.assertEqual(manifest["device"]["kind"], "gpu")
+            self.assertEqual(manifest["device"]["device_name"], "Fake RTX 4070 SUPER")
 
 
 if __name__ == "__main__":

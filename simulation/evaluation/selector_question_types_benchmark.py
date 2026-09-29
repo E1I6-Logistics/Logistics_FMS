@@ -16,11 +16,15 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from simulation.evaluation.device_metadata import (
+    git_metadata, selector_device_metadata,
+)
 from simulation.route_selector import get_selector
 
 TRIALS_FILENAME = "selector_question_type_trials.jsonl"
 SUMMARY_FILENAME = "selector_question_type_summary.json"
 CSV_FILENAME = "selector_question_type_samples.csv"
+MANIFEST_FILENAME = "manifest.json"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 Clock = Callable[[], float]
 
@@ -180,10 +184,31 @@ def run_question_types_benchmark(
     if trials_path.exists() and trials_path.stat().st_size:
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
     selector = selector or get_selector()
+    started_at = _utc_now()
+    settings = {
+        "repeats_per_case": repeats,
+        "warmups_per_case": warmups,
+        "case_count": len(CASES),
+        "expected_trial_count": len(CASES) * repeats,
+    }
+    manifest = {
+        "benchmark": "route-selector-question-types-v1",
+        "status": "running",
+        "started_at": started_at,
+        "source": git_metadata(ROOT),
+        "requested_model": getattr(selector, "model", None),
+        "settings": settings,
+        "device": selector_device_metadata(selector),
+    }
+    (output / MANIFEST_FILENAME).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
+    last_result = None
     for case in CASES:
         for _ in range(warmups):
-            _call_case(selector, case)
+            _, last_result = _call_case(selector, case)
 
     rows = []
     for case in CASES:
@@ -191,6 +216,7 @@ def run_question_types_benchmark(
             started = clock()
             try:
                 value, result = _call_case(selector, case)
+                last_result = result
                 wall_seconds = clock() - started
                 row = {
                     "case_id": case["id"], "language": case["language"],
@@ -236,7 +262,8 @@ def run_question_types_benchmark(
         "benchmark": "route-selector-question-types-v1",
         "created_at": _utc_now(),
         "requested_model": getattr(selector, "model", None),
-        "settings": {"repeats_per_case": repeats, "warmups_per_case": warmups, "case_count": len(CASES), "expected_trial_count": len(CASES) * repeats},
+        "device": selector_device_metadata(selector, last_result),
+        "settings": settings,
         "overall": _summarize(rows), "groups": groups,
     }
     (output / SUMMARY_FILENAME).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -250,6 +277,17 @@ def run_question_types_benchmark(
             for field in ("probabilities", "legend"):
                 exported[field] = json.dumps(row.get(field), ensure_ascii=False, separators=(",", ":"))
             writer.writerow(exported)
+    manifest.update(
+        status="complete", completed_at=_utc_now(),
+        completed_trial_count=len(rows), device=summary["device"],
+        output_files=[
+            MANIFEST_FILENAME, TRIALS_FILENAME, SUMMARY_FILENAME, CSV_FILENAME
+        ],
+    )
+    (output / MANIFEST_FILENAME).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return summary
 
 

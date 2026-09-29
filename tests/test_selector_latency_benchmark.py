@@ -39,6 +39,10 @@ class _FakeSelector:
             "total_duration_seconds": 0.02,
             "load_duration_seconds": 0.0,
             "eval_duration_seconds": 0.015,
+            "runtime": {
+                "device": "cuda:0", "device_name": "Fake RTX 4070 SUPER",
+                "precision": "float16", "cpu_fallback_count": 0,
+            },
             "raw": {"done_reason": "decide"},
         }
 
@@ -110,6 +114,12 @@ class SelectorLatencyBenchmarkTest(unittest.TestCase):
             self.assertEqual(len(rows), 60)
             self.assertIn("answer_position", rows[0])
             self.assertIn("language", rows[0])
+            manifest = json.loads(
+                (output / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["device"]["actual"], "cuda:0")
+            self.assertEqual(manifest["device"]["kind"], "gpu")
+            self.assertEqual(manifest["device"]["device_name"], "Fake RTX 4070 SUPER")
 
 
 if __name__ == "__main__":

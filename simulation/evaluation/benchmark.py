@@ -27,6 +27,7 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from simulation.evaluation.device_metadata import ollama_model_device_metadata
 from simulation.llm_providers.ollama_provider import OllamaPathProvider
 from simulation.services.route_service import (
     build_compact_route_graph,
@@ -121,6 +122,20 @@ def _runtime_metadata(host: str) -> dict:
     except Exception as error:  # The first actual request will report full details.
         metadata["ollama_tags_error"] = f"{type(error).__name__}: {error}"
     return metadata
+
+
+def _ollama_device_metadata(host: str, model_name: str) -> dict:
+    try:
+        with urllib.request.urlopen(
+            f"{host.rstrip('/')}/api/ps", timeout=10
+        ) as response:
+            return ollama_model_device_metadata(json.load(response), model_name)
+    except Exception as error:
+        return {
+            "source": "ollama_api_ps",
+            "kind": "unknown",
+            "error": f"{type(error).__name__}: {error}",
+        }
 
 
 def load_and_validate_config(config_path: Path) -> dict:
@@ -487,6 +502,7 @@ def run_benchmark(
     config = prepared["config"]
     output = output.resolve()
     manifest_path = output / "manifest.json"
+    host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
     if resume:
         if not manifest_path.is_file():
             raise FileNotFoundError(f"resume manifest not found: {manifest_path}")
@@ -501,7 +517,6 @@ def run_benchmark(
         if output.exists() and any(output.iterdir()):
             raise FileExistsError(f"new run directory is not empty: {output}")
         output.mkdir(parents=True, exist_ok=True)
-        host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
         manifest = {
             "benchmark_id": config["benchmark_id"],
             "status": "running",
@@ -521,8 +536,10 @@ def run_benchmark(
             "runtime": runtime_metadata
             if runtime_metadata is not None
             else _runtime_metadata(host),
+            "device": {"source": "ollama_api_ps", "models": {}},
             "scope": "LLM route comparison only; no robot commands",
         }
+    manifest.setdefault("device", {"source": "ollama_api_ps", "models": {}})
     _json_dump(manifest_path, manifest)
 
     factory = provider_factory or _default_provider_factory
@@ -570,6 +587,14 @@ def run_benchmark(
             if inference is not None:
                 row["inference"] = inference
             _append_jsonl(output / "warmups.jsonl", row)
+
+        # /api/ps is sampled after warmup so the model is resident.  The raw
+        # size/size_vram evidence prevents later CPU/GPU guesses from latency.
+        if provider_factory is None:
+            manifest["device"]["models"][model["name"]] = (
+                _ollama_device_metadata(host, model["name"])
+            )
+            _json_dump(manifest_path, manifest)
 
         for case in prepared["cases"]:
             for repeat in range(1, repeats + 1):
