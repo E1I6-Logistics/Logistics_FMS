@@ -3,22 +3,39 @@
 from __future__ import annotations
 
 import os
+from abc import ABC, abstractmethod
 from importlib import import_module
 from pathlib import Path
+from typing import Any, Mapping
 
 from dotenv import load_dotenv
 
-from .base import RouteSelector
-
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
+
+class RouteSelector(ABC):
+    """여러 경로 후보 중 하나를 선택하는 모델의 공통 인터페이스."""
+
+    name = "base"
+
+    @abstractmethod
+    def select_route(
+        self,
+        state: str | dict[str, Any],
+        candidates: Mapping[str, str],
+    ) -> dict[str, Any]:
+        """후보 ID와 설명을 받아 선택 결과와 신뢰도를 반환한다."""
+        raise NotImplementedError
+
+
 _SELECTORS: dict[str, tuple[str, str]] = {
-    "ollaya_laya": (".ollaya_laya_selector", "OllayaLayaSelector"),
+    "laya": (".laya_selector", "LayaSelector"),
+    "kev": (".kev_selector", "KevSelector"),
 }
 
 
 def get_selector() -> RouteSelector:
-    selector_key = os.getenv("ROUTE_SELECTOR", "ollaya_laya").strip().lower()
+    selector_key = os.getenv("ROUTE_SELECTOR", "laya").strip().lower()
     if selector_key not in _SELECTORS:
         available = ", ".join(sorted(_SELECTORS))
         raise RuntimeError(
