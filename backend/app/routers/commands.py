@@ -44,3 +44,19 @@ async def stop_robot(payload: StopRequest):
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/return-nearest-node")
+async def return_nearest_node(payload: StopRequest):
+    try:
+        if mode_manager.mode == "simulation":
+            raise ValueError("가장 가까운 노드 복귀는 현재 Real 모드에서만 지원합니다.")
+
+        result = ros_gateway.return_to_nearest_node(payload.robot_id)
+
+        result["mode"] = mode_manager.mode
+
+        return result
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
