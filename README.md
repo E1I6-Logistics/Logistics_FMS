@@ -88,11 +88,7 @@ Logistics_FMS/
 │   ├── package.json
 │   └── vite.config.ts
 ├── robots_ws/                   # 백엔드가 source하는 ROS 2 workspace
-│   ├── src/
-│   │   └── Logistics_AMR/       # 별도 clone: jhleedev00 브랜치
-│   ├── build/                   # colcon 생성(커밋 대상 아님)
-│   ├── install/                 # colcon 생성, start_fms.sh가 source
-│   └── log/                     # colcon 생성
+│   ├──Logistics_AMR/       # 별도 clone: jhleedev00 브랜치
 ├── maps/                        # PGM/PNG/YAML Occupancy Map
 ├── routes/                      # GeoJSON 경로 그래프와 비교용 그래프
 ├── simulation/
