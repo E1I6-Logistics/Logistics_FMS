@@ -30,7 +30,11 @@ async def dashboard_websocket(websocket: WebSocket):
                 {"type": "system", "data": {"mode": mode_manager.mode, "source": "ros2"}}
             )
             for robot in fleet_manager.get_all_robots():
-                pixel_x, pixel_y = world_to_pixel(robot.x, robot.y)
+                pixel_x = None
+                pixel_y = None
+
+                if robot.x is not None and robot.y is not None:
+                    pixel_x, pixel_y = world_to_pixel(robot.x, robot.y)
 
                 state = {
                     "robot_id": robot.robot_id,

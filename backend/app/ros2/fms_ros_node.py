@@ -44,6 +44,7 @@ class FmsRosNode(Node):
 
         self.navigation_result_callback = None
         self.spin_result_callback = None
+        self.precision_dock_result_callback = None
 
     def register_robot(self, robot_id: str) -> None:
 
@@ -255,6 +256,10 @@ class FmsRosNode(Node):
 
         if not client.wait_for_server(timeout_sec=2.0):
             self.get_logger().error(f"[{robot_id}] Spin action server not available")
+
+            if self.spin_result_callback:
+                self.spin_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
             return
 
         goal = Spin.Goal()
@@ -269,6 +274,10 @@ class FmsRosNode(Node):
 
         if not goal_handle.accepted:
             self.get_logger().warning(f"Spin goal rejected: {robot_id}")
+
+            if self.spin_result_callback:
+                self.spin_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
             return
 
         self.get_logger().info(f"Spin goal accepted: {robot_id}")
@@ -324,7 +333,11 @@ class FmsRosNode(Node):
 
     def _on_precision_dock_result(self, robot_id: str, future) -> None:
         result = future.result()
+
         self.get_logger().info(f"PrecisionDock finished: {robot_id}, status={result.status}")
+
+        if self.precision_dock_result_callback:
+            self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
 
     def _on_amcl_pose(self, robot_id: str, msg: PoseWithCovarianceStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)

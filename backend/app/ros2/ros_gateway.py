@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from copy import deepcopy
 
-from backend.app.models import robot
+from ..models.robot import RobotState
 
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from ..services.fleet_manager import fleet_manager
@@ -44,6 +44,7 @@ class RosGateway:
         self._ros_node = ros_node
         ros_node.navigation_result_callback = self.on_navigation_result
         ros_node.spin_result_callback = self.on_spin_result
+        ros_node.precision_dock_result_callback = self.on_precision_dock_result
 
     def sync_connected_robots(self, connections: list[dict]) -> None:
 
@@ -91,7 +92,20 @@ class RosGateway:
     def cmd_vel(self, robot_id: str, linear_x: float, angular_z: float) -> dict:
         robot_id = self._resolve_robot_id(robot_id)
 
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if not robot.connected:
+            raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+
         self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=linear_x, angular_z=angular_z)
+
+        if linear_x == 0.0 and angular_z == 0.0:
+            robot.set_state(RobotState.IDLE)
+        else:
+            robot.set_state(RobotState.MOVING)
 
         return {
             "type": "cmd_vel_ack",
@@ -240,13 +254,8 @@ class RosGateway:
             }
 
         # Nav2 FollowWaypoints Action으로 경로 전송
-        try:
-            self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
-        except Exception:
-            robot.route = None
-            robot.goal_node = None
-            robot.navigation_type = None
-            raise
+        robot.set_state(RobotState.MOVING)
+        self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
 
         return {
             "success": True,
@@ -269,13 +278,16 @@ class RosGateway:
     def on_navigation_result(self, robot_id: str, status: int) -> None:
         robot = fleet_manager.get_robot(robot_id)
 
+        if robot is None:
+            return
+
         if status == GoalStatus.STATUS_SUCCEEDED:
             # 가장 가까운 노드 복귀 완료
             if robot.navigation_type == "return":
                 robot.current_node = robot.goal_node
                 robot.navigation_type = None
                 robot.route = None
-
+                robot.set_state(RobotState.IDLE)
                 print(f"[{robot_id}] 가장 가까운 노드 복귀 완료: " f"{robot.current_node}")
                 return
 
@@ -285,6 +297,10 @@ class RosGateway:
             target_yaw = GOAL_YAWS.get(str(robot.goal_node))
 
             if target_yaw is None:
+                robot.current_node = robot.goal_node
+                robot.navigation_type = None
+                robot.route = None
+                robot.set_state(RobotState.IDLE)
                 return
 
             current_yaw = float(robot.yaw)
@@ -292,6 +308,12 @@ class RosGateway:
             spin_yaw = target_yaw - current_yaw
             spin_yaw = math.atan2(math.sin(spin_yaw), math.cos(spin_yaw))  # -pi ~ pi 범위로 정규화
 
+            YAW_TOLERANCE = math.radians(5)
+            if abs(spin_yaw) <= YAW_TOLERANCE:
+                self.on_spin_result(robot_id, GoalStatus.STATUS_SUCCEEDED)
+                return
+
+            robot.set_state(RobotState.MOVING)
             self._ros_node.send_spin(robot_id, spin_yaw)
 
         elif status == GoalStatus.STATUS_CANCELED:
@@ -301,8 +323,7 @@ class RosGateway:
 
         elif status == GoalStatus.STATUS_ABORTED:
             # 실패 처리
-            robot.route = None
-            pass
+            robot.set_state(RobotState.PAUSED)
 
     def return_to_nearest_node(self, robot_id: str) -> dict:
         robot_id = self._resolve_robot_id(robot_id)
@@ -330,6 +351,7 @@ class RosGateway:
 
         # 복귀 명령임을 표시
         robot.navigation_type = "return"
+        robot.set_state(RobotState.MOVING)
         robot.goal_node = str(nearest_node)
 
         self._ros_node.send_follow_waypoints_goal(
@@ -350,20 +372,44 @@ class RosGateway:
             "source": "ros2",
         }
 
-    def on_spin_result(self, robot_id: str, status: int) -> None:
-        if status != GoalStatus.STATUS_SUCCEEDED:
-            print(f"[{robot_id}] Spin 실패")
-            return
-
+    def on_precision_dock_result(self, robot_id: str, status: int) -> None:
         robot = fleet_manager.get_robot(robot_id)
 
         if robot is None:
             return
 
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            robot.current_node = robot.goal_node
+            robot.set_state(RobotState.IDLE)
+            robot.navigation_type = None
+            robot.route = None
+            print(f"[{robot_id}] PrecisionDock 완료")
+        else:
+            robot.set_state(RobotState.PAUSED)
+            print(f"[{robot_id}] PrecisionDock 실패")
+
+    def on_spin_result(self, robot_id: str, status: int) -> None:
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            return
+
+        if status != GoalStatus.STATUS_SUCCEEDED:
+            robot.set_state(RobotState.PAUSED)
+            print(f"[{robot_id}] Spin 실패")
+            return
+
         # 0, 1, 2번 노드에서만 정밀 도킹
         if str(robot.goal_node) in ["0", "1", "2"]:
             print(f"[{robot_id}] PrecisionDock 시작: {robot.goal_node}")
+            robot.set_state(RobotState.DOCKING)
             self._ros_node.send_precision_dock(robot_id)
+            return
+
+        robot.current_node = robot.goal_node
+        robot.navigation_type = None
+        robot.route = None
+        robot.set_state(RobotState.IDLE)
 
 
 ros_gateway = RosGateway()
