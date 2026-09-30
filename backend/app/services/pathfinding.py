@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import heapq
 import math
+from .reservation import node_key, edge_key
 
 # decorator
 @dataclass(frozen=True)
@@ -79,3 +80,126 @@ class DistanceAStar:
                     heapq.heappush(queue, (candidate + heuristic(neighbor), candidate, neighbor))
 
         raise ValueError('방향성 그래프에서 도달 가능한 경로가 없습니다.')
+
+    # 다른 로봇의 예약을 기준으로 가장 이른 도착 경로를 탐색. 시간 기준
+    # blocked: 노드·통로별로 사용할 수 없는 시간 구간 -> 안전 여유가 반영된 기존 예약과 실제 점유를 전달.
+    # 구간 중간 출발은 허용 방향별 끝점을 모두 비교
+    def plan_timed(self, end, position, current_node, occupied_edge=None, *,
+                   blocked, now, speed_mps, safety_margin):
+        end = str(end)
+        if end not in self.nodes:
+            raise ValueError('목적지 노드가 존재하지 않습니다.')
+        if (not all(math.isfinite(v) for v in (now, speed_mps, safety_margin, *position))
+                or now < 0 or speed_mps <= 0 or safety_margin <= 0 or len(position) != 2):
+            raise ValueError('시간·속도·안전 여유·좌표가 올바르지 않습니다.')
+        if current_node is not None:
+            current_node = str(current_node)
+            if current_node not in self.nodes or math.dist(position, self.nodes[current_node]) > 1e-6:
+                raise ValueError('현재 노드와 실제 위치가 일치하지 않습니다.')
+        elif occupied_edge is None or any(n not in self.nodes for n in occupied_edge):
+            raise ValueError('구간 중간 출발에는 점유 통로가 필요합니다.')
+
+        margin = safety_margin
+        intervals = {}
+        for node in self.nodes:
+            cursor, safe = 0.0, []
+            for start, finish in sorted(blocked.get(node_key(node), ())):
+                lower, upper = max(0.0, start - margin), finish + margin
+                if lower + margin > start:
+                    lower = math.nextafter(lower, -math.inf)
+                if math.isfinite(upper) and upper - margin < finish:
+                    upper = math.nextafter(upper, math.inf)
+                if upper <= cursor:
+                    continue
+                if lower > cursor:
+                    safe.append((cursor, lower))
+                cursor = max(cursor, upper)
+            if math.isfinite(cursor):
+                safe.append((cursor, math.inf))
+            intervals[node] = safe
+
+        # 특정 다음 구간의 가장 빠른 출발 계산
+        def earliest(arrival, source_end, target_interval, resource, duration, on_edge=False):
+            lower, upper = target_interval
+            departure = max(arrival, lower - duration)
+            if departure + duration < lower:
+                departure = math.nextafter(departure, math.inf)
+            for start, finish in sorted(blocked.get(resource, ())):
+                occupied_from = now if on_edge else departure
+                if occupied_from - margin < finish and start < departure + duration + margin:
+                    # 이미 점유 중인 통로에서 다른 예약을 가로질러 기다릴 수 없다.
+                    if on_edge or not math.isfinite(finish):
+                        return None
+                    departure = finish + margin
+                    if departure - margin < finish:
+                        departure = math.nextafter(departure, math.inf)
+            reached = departure + duration
+            if (not math.isfinite(reached) or departure > source_end
+                    or reached < lower or reached > upper):
+                return None
+            return departure, reached
+
+        best, parents, seeds, queue = {}, {}, {}, []
+
+        # 직선 이동 시간은 대기나 우회를 제외한 예상치 -> 목적지에 빨리 도착할 가능성이 높은 상태부터 검사
+        def push(state, arrival):
+            heuristic = math.dist(self.nodes[state[0]], self.nodes[end]) / speed_mps
+            heapq.heappush(queue, (arrival + heuristic, arrival, state))
+
+        if current_node is not None:
+            for i, (lower, upper) in enumerate(intervals[current_node]):
+                if lower <= now <= upper:
+                    state = (current_node, i)
+                    best[state] = now
+                    seeds[state] = ([current_node], [])
+                    push(state, now)
+                    break
+        else:
+            # 양 끝점을 후보로 확인
+            a, b = occupied_edge
+            for previous, endpoint in ((a, b), (b, a)):
+                if not any(neighbor == endpoint for neighbor, _ in self.edges[previous]):
+                    continue
+                duration = math.dist(position, self.nodes[endpoint]) / speed_mps
+                for i, interval in enumerate(intervals[endpoint]):
+                    move = earliest(now, math.inf, interval, edge_key(a, b), duration, True)
+                    if move is None:
+                        continue
+                    departure, arrival = move
+                    state = (endpoint, i)
+                    if arrival < best.get(state, math.inf):
+                        best[state] = arrival
+                        seeds[state] = ([previous, endpoint], [departure])
+                        push(state, arrival)
+
+        while queue:
+            _, arrival, state = heapq.heappop(queue)
+            if arrival != best[state]:
+                continue
+            node, interval_index = state
+            source_end = intervals[node][interval_index][1]
+            # 목적지에서 계속 정차할 수 있는 구간에 도착해야 완료다.
+            if node == end and source_end == math.inf:
+                suffix, departures = [], []
+                while state in parents:
+                    suffix.append(state[0])
+                    state, departure = parents[state]
+                    departures.append(departure)
+                prefix, initial_departures = seeds[state]
+                return {
+                    'node_ids': prefix + list(reversed(suffix)),
+                    'segment_departures': initial_departures + list(reversed(departures)),
+                }
+            for neighbor, distance in self.edges[node]:
+                for i, interval in enumerate(intervals[neighbor]):
+                    move = earliest(arrival, source_end, interval, edge_key(node, neighbor),
+                                    distance / speed_mps)
+                    if move is None:
+                        continue
+                    departure, reached = move
+                    successor = (neighbor, i)
+                    if reached < best.get(successor, math.inf):
+                        best[successor] = reached
+                        parents[successor] = (state, departure)
+                        push(successor, reached)
+        return None

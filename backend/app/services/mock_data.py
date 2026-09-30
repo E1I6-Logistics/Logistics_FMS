@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-from dataclasses import replace
 from time import monotonic
 from uuid import uuid4
 from threading import RLock
@@ -29,7 +28,7 @@ from .reservation import (
 
 import math
 
-SIMULATION_SPEED_MPS = 0.025
+SIMULATION_SPEED_MPS = 0.2
 RESERVATION_MARGIN_S = 0.2
 
 _MOCK_ROBOT_DEFINITIONS = {
@@ -151,8 +150,9 @@ class MockFmsStore:
 
     def _wait_for_reservation(self, robot):
         robot["status"] = "WAITING"
-        robot["route"]["phase"] = "waiting"
-        robot["route"]["departure_at"] = None
+        if robot["route"] is not None:
+            robot["route"]["phase"] = "waiting"
+            robot["route"]["departure_at"] = None
         self._release_schedule(robot)
         self._pending.setdefault(robot["robot_id"], None)
 
@@ -219,9 +219,9 @@ class MockFmsStore:
     def _retry_waiting(self, now, graph, nodes):
         for robot_id in list(self._pending):
             robot = self._robots[robot_id]
-            if robot["route"] is None or robot["goal_node"] is None:
+            if robot["goal_node"] is None:
                 self._pending.pop(robot_id, None)
-            elif self._try_schedule(robot, now, graph, nodes):
+            elif self._try_schedule(robot, now, graph, planner):
                 self._pending.pop(robot_id, None)
 
     def advance_simulation(self, dt: float, now: float | None = None):
@@ -236,14 +236,16 @@ class MockFmsStore:
                 return
             elapsed = min(dt, now - self._last_tick)
             self._last_tick = now
-            if not any(robot["route"] is not None for robot in self._robots.values()):
+            if not any(robot["goal_node"] is not None for robot in self._robots.values()):
                 return
             graph = load_route_graph()
-            nodes = DistanceAStar(graph).nodes
-            self._retry_waiting(now, graph, nodes)
+            planner = DistanceAStar(graph)
+            self._retry_waiting(now, graph, planner)
             for robot_id in self._robots:
-                self.advance_mock_robot(robot_id, elapsed, now=now, graph=graph, nodes=nodes)
-            self._retry_waiting(now, graph, nodes)
+                self.advance_mock_robot(
+                    robot_id, elapsed, now=now, graph=graph, nodes=planner.nodes
+                )
+            self._retry_waiting(now, graph, planner)
 
     # 프론트에 보낼 Robot 상태 Snapshot 생성 기능
     @staticmethod
@@ -380,23 +382,9 @@ class MockFmsStore:
             self.stop_robot(robot_id)
             robot["navigation_id"] = uuid4().hex
             robot["goal_node"] = str(target["id"])
-            robot["current_node"] = current_node
-            if already_arrived:
-                robot["status"] = "IDLE"
-                robot["goal_node"] = None
-                robot["route"] = None
-            else:
-                robot["status"] = "NAVIGATING"
-                robot["route"] = {
-                    "node_ids": node_ids,
-                    "edge_ids": edge_ids,
-                    "waypoint_yaws": waypoint_yaws,
-                    "phase": "moving" if between_nodes else "ready",
-                    "segment_index": 0,
-                }
-            if robot["route"] is not None:
-                self._wait_for_reservation(robot)
-                self._retry_waiting(monotonic(), graph, path_plan.nodes)
+            self._wait_for_reservation(robot)
+            self._retry_waiting(monotonic(), graph, path_plan)
+            already_arrived = robot["goal_node"] is None
             response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음
             waiting = robot["status"] == "WAITING"
 
@@ -528,8 +516,6 @@ class MockFmsStore:
                 graph = load_route_graph()
             if nodes is None:
                 nodes = DistanceAStar(graph).nodes
-            robot["status"] = "NAVIGATING"
-
             # 이번 갱신에서 이동할 수 있는 거리(m)
             remaining = speed_mps * dt
             node_ids = route["node_ids"]
