@@ -71,17 +71,6 @@ python -m simulation.evaluation.benchmark \
 `--check`는 Ollama에 요청하지 않는다. 그래프 해시, 노드·간선 개수,
 코드 최단 경로와 기준값만 확인한다.
 
-Ollama 없이 전체 반복·저장·집계·재개 구조를 확인하려면 Mock 테스트를 실행한다.
-
-```bash
-python -m unittest tests.test_route_generation_benchmark -v
-python -m unittest tests.test_ollama_provider -v
-```
-
-Mock 테스트는 모델 성능을 평가하지 않는다. 5개 모델 × 3개 경로 × 3회인
-45개 본 시험과 모델별 예열 5개가 분리되는지, CSV가 생성되는지, 완료된
-결과를 재실행하지 않는지만 빠르게 확인한다.
-
 ## 4. Ollama 및 모델 준비
 
 Ollama 서버와 설치된 모델을 확인한다.
@@ -325,14 +314,27 @@ Laya Multilingual checkpoint는 약 647MB이며 Python 환경과 JetPack용 PyTo
 - `simulation/route_selector/laya_selector.py`: 모델 로드와 typed decision 처리
 - `simulation/route_selector/registry.py`: `ROUTE_SELECTOR=laya` 선택
 - `simulation/requirements-laya-jetson.txt`: Jetson용 Laya 의존성
-- `tests/test_laya_selector.py`: 모델 다운로드가 없는 Mock 구조 테스트
 - `simulation/evaluation/selector_latency_benchmark.py`: 언어·난이도·정답 위치별 경로 선택 시험
 - `simulation/evaluation/selector_question_types_benchmark.py`: choice·score·noul 시험
 
-### 10.2 Jetson CUDA PyTorch 확인
+### 10.2 Jetson CUDA PyTorch 공용 환경
 
-JetPack 버전에 맞는 NVIDIA 제공 PyTorch를 먼저 설치해야 한다. 일반 PyPI의
-CPU용 PyTorch로 교체하지 않는다.
+2026-09-30 Jetson Orin Nano의 `~/venv/robot` 환경에서 Laya와 Kev가 함께
+사용할 PyTorch를 다음과 같이 확인했다.
+
+| 항목 | 확인값 |
+| --- | --- |
+| Python | 3.12 |
+| PyTorch | `2.8.0+cu129` |
+| PyTorch CUDA runtime | 12.9 |
+| CUDA 사용 가능 | `True` |
+| 장치 | `Orin` |
+| Laya | `0.3.21` |
+| Kev | `0.1.0` editable install |
+
+설치에는 PyTorch 공식 CUDA 12.9 인덱스의 Python 3.12용 aarch64 wheel을
+사용했다. 일반 PyPI로 바꾸면 CPU wheel이 선택될 수 있으므로 같은 장비를
+재구성할 때도 CUDA 인덱스를 명시한다.
 
 ```bash
 cd ~/Logistics_FMS
@@ -348,8 +350,25 @@ cuda= True
 device= Orin
 ```
 
-`cuda=False`이면 Laya 설치보다 먼저 현재 JetPack과 호환되는 CUDA PyTorch를
-설치한다.
+라이브러리 검색만 성공하고 실제 CUDA 연산은 실패하는 경우를 구분하기 위해
+행렬 연산도 실행한다.
+
+```bash
+python - <<'PY'
+import torch
+
+a = torch.randn((1024, 1024), device="cuda")
+b = torch.randn((1024, 1024), device="cuda")
+c = a @ b
+torch.cuda.synchronize()
+
+print("result:", c.mean().item())
+print("CUDA operation: SUCCESS")
+PY
+```
+
+실제 장비에서 `CUDA operation: SUCCESS`까지 확인했다. 벤치마크 중 실제 GPU
+사용 여부는 별도 터미널의 `sudo tegrastats`에서 `GR3D_FREQ`로 확인한다.
 
 ### 10.3 저장공간과 Hugging Face cache 설정
 
@@ -363,20 +382,55 @@ export HF_HOME="$HOME/.cache/huggingface"
 15GB 저장공간 안에서 중복 다운로드를 막으려면 모든 실행 터미널에서 같은
 `HF_HOME`을 사용한다.
 
-### 10.4 Laya 런타임 설치
+### 10.4 Laya·Kev 공용 런타임 설치
 
-CUDA가 동작하는 기존 Python 환경에서 설치한다.
+별도 검증용 환경을 만들지 않고 기존 `~/venv/robot`을 직접 교체한 절차다.
+변경 전 패키지 목록을 저장한다.
+
+```bash
+source ~/venv/robot/bin/activate
+python -m pip freeze > ~/robot-before-kev-install.txt
+```
+
+CUDA PyTorch 2.8.0을 설치한다. wheel 크기는 약 3.4GB이며 다운로드가 끝난
+뒤 SD 카드에서 압축을 풀고 복사하는 동안 출력이 멈춘 것처럼 보일 수 있다.
+프롬프트가 돌아오기 전에는 설치를 중단하지 않는다.
+
+```bash
+python -m pip install \
+  --no-cache-dir \
+  --force-reinstall \
+  "torch==2.8.0" \
+  --index-url https://download.pytorch.org/whl/cu129
+```
+
+그다음 Laya와 프로젝트 의존성을 설치한다.
 
 ```bash
 cd ~/Logistics_FMS
 source ~/venv/robot/bin/activate
 
 python -m pip install -r simulation/requirements-laya-jetson.txt
+python -m pip install --no-cache-dir --upgrade "laya==0.3.21"
 python -m pip check
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-설치 후에도 `torch.cuda.is_available()`이 `True`인지 확인한다.
+설치 후에도 `torch.cuda.is_available()`이 `True`인지 확인한다. PyTorch 설치를
+중간에 중단하여 `WARNING: Ignoring invalid distribution ~orch`가 나오면 앞에서
+의존성 설치가 끝난 경우 다음 명령으로 PyTorch wheel만 다시 설치한다.
+
+```bash
+python -m pip install \
+  --no-cache-dir \
+  --force-reinstall \
+  --no-deps \
+  "torch==2.8.0" \
+  --index-url https://download.pytorch.org/whl/cu129
+```
+
+CUDA 연산 성공을 확인한 뒤에만 `site-packages`에 남은 `~orch*` 임시 항목을
+정리한다.
 
 ### 10.5 환경변수 설정
 
@@ -397,18 +451,7 @@ HF_HOME=/home/sein/.cache/huggingface
 발생할 때 오류로 처리한다. CPU 결과가 GPU 성능 측정에 섞이는 것을 방지하기
 위한 설정이다.
 
-### 10.6 모델 다운로드 없는 구조 테스트
-
-```bash
-cd ~/Logistics_FMS
-source ~/venv/robot/bin/activate
-python -m unittest tests.test_laya_selector -v
-```
-
-이 테스트는 가짜 CUDA agent를 주입하므로 Hugging Face 접속과 실제 GPU가
-필요하지 않다. 모델 성능을 평가하는 테스트는 아니다.
-
-### 10.7 실제 GPU smoke test
+### 10.6 실제 GPU smoke test
 
 첫 실행에서는 checkpoint를 다운로드하므로 이후 실행보다 오래 걸린다.
 
@@ -446,7 +489,7 @@ PY
 sudo tegrastats
 ```
 
-### 10.8 Laya 반복 벤치마크 실행
+### 10.7 Laya 반복 벤치마크 실행
 
 언어, 질문 난이도, 최단 경로, 정답 선택지 위치에 따른 정확도와 지연시간을
 측정한다. 기본값은 케이스별 5회, 예열 1회, 실시간 기준 0.15초다.
@@ -497,7 +540,7 @@ python -m simulation.evaluation.selector_question_types_benchmark \
 후 `manifest.json`의 `device.actual`, `device.kind`, `device.device_name`이 각각
 `cuda:0`, `gpu`, `NVIDIA GeForce RTX 4070 SUPER`인지 확인한다.
 
-### 10.9 오류 확인
+### 10.8 오류 확인
 
 CUDA 사용 여부:
 
@@ -535,45 +578,108 @@ TypeSafe System One 호환 API인 `GET /v1/models`와 `POST /v1/systemone`을
 호출한다. Kev의 pointer head와 temperature calibration을 포함한 공식 runtime을
 사용하므로 일반 PEFT 모델처럼 adapter만 직접 불러오지 않는다.
 
-### 11.1 서버 없는 인터페이스 테스트
+PC와 Jetson의 비교 대상 checkpoint는 모두 `jaredpalmer/kev-0.8b`로 고정한다.
+Jetson에서는 공식 BF16 runtime을 사용하며 별도의 4비트 변환은 적용하지 않는다.
+서버 실행 인자 `--run jaredpalmer/kev-0.8b`가 실제 checkpoint를 선택하고,
+FMS의 `KEV_MODEL=kev-latest`는 그 서버에 요청할 때 사용하는 API 모델 별칭이다.
+둘은 역할이 다르므로 `KEV_MODEL`을 Hugging Face checkpoint 이름으로 바꾸지 않는다.
 
-```bash
-cd ~/Logistics_FMS
-source ~/venv/robot/bin/activate
-python -m unittest tests.test_kev_selector -v
-```
+### 11.1 실제 Kev 서버 준비
 
-이 테스트는 가짜 HTTP 응답으로 API 요청, choice·score·noul 파싱, 전체 확률,
-confidence와 CUDA 강제 검사를 확인한다. 실제 Kev 모델의 정확도와 속도를
-측정하는 시험은 아니다.
-
-### 11.2 실제 Kev 서버 준비
-
-Kev 공식 저장소를 별도 디렉터리에 설치하고 가장 작은 공개 checkpoint인
-`jaredpalmer/kev-0.8b`부터 실행한다. `uv`가 없다면 먼저 공식 설치 방법으로
-설치한다.
+Kev 공식 저장소는 프로젝트 밖의 `~/kev`에 두되 Laya와 같은
+`~/venv/robot` 환경에 설치한다. Jetson에서는 가장 작은 공개 checkpoint인
+`jaredpalmer/kev-0.8b`부터 실행한다.
 
 ```bash
 git clone https://github.com/jaredpalmer/kev.git ~/kev
 cd ~/kev
-uv sync --extra serve
-uv run --extra serve python -m kev.serve \
+source ~/venv/robot/bin/activate
+python -m pip install --no-cache-dir -e ".[serve]"
+python -m pip install --no-cache-dir cffi
+python -m pip check
+```
+
+`No broken requirements found.`가 나오고 PyTorch, Laya, Kev import와 CUDA 연산이
+모두 성공해야 한다. Kev 설치는 `numpy 2.5.3` 등 일부 공용 패키지를 갱신한다.
+가상환경이 시스템 패키지를 함께 읽는 구성에서는 새 NumPy와 Ubuntu의 시스템
+pandas가 섞일 수 있으므로 pandas도 가상환경에 설치해 시스템 버전보다 먼저
+불러오도록 한다.
+
+```bash
+python -m pip install --no-cache-dir --upgrade pandas
+
+python - <<'PY'
+import numpy
+import pandas
+import sklearn
+import transformers
+
+print("numpy:", numpy.__version__)
+print("pandas:", pandas.__version__, pandas.__file__)
+print("sklearn:", sklearn.__version__)
+print("transformers:", transformers.__version__)
+print("Kev import dependencies: SUCCESS")
+PY
+```
+
+`pandas.__file__`은 `/home/.../venv/robot/lib/python3.12/site-packages` 아래여야
+한다. `/usr/lib/python3/dist-packages/pandas`가 나오면 시스템 pandas를 읽고
+있는 상태다.
+
+2026-09-30 Jetson에서 다음 조합으로 공용 의존성 import가 성공했다.
+
+| 패키지 | 확인 버전 |
+| --- | --- |
+| NumPy | `2.5.3` |
+| pandas | `3.0.6` |
+| scikit-learn | `1.9.1` |
+| Transformers | `5.17.0` |
+
+pandas는 `/home/ax_logistics/venv/robot/lib/python3.12/site-packages/pandas`에서
+로드됐으며 `Kev import dependencies: SUCCESS`를 확인했다.
+
+Kev 서버는 PyTorch·BF16을 명시하고 메모리를 줄이기 위해 prefix cache를
+끄고 실행한다.
+
+```bash
+cd ~/kev
+source ~/venv/robot/bin/activate
+export KEV_BACKEND=torch
+export KEV_DTYPE=bf16
+export KEV_PREFIX_CACHE=0
+export KEV_CUDA_GRAPHS=0
+export KEV_FUSED=0
+
+python -m kev.serve \
   --run jaredpalmer/kev-0.8b \
-  --port 8009
+  --port 8009 \
+  2>&1 | tee ~/kev-0.8b-server.log
 ```
 
 서버 터미널은 계속 실행해 둔다. 다른 터미널에서 메타데이터와 장치를 확인한다.
 
 ```bash
-curl http://127.0.0.1:8009/v1/models
+curl -s http://127.0.0.1:8009/v1/models | python -m json.tool
 ```
 
 Jetson 실제 GPU 시험에서는 응답의 `device`가 `cuda` 또는 `cuda:0`인지 먼저
-확인한다. Kev 0.8B의 공식 실행 가능 장비 표에는 L4와 Apple Silicon이 명시되어
+확인하고 `run`이 `jaredpalmer/kev-0.8b`인지 확인한다. Kev 0.8B의 공식 실행 가능 장비 표에는 L4와 Apple Silicon이 명시되어
 있으며 Jetson은 명시되어 있지 않으므로, Jetson 실행 가능 여부는 이 단계에서
 직접 검증해야 한다.
 
-### 11.3 FMS 선택기 설정
+다음 import 경로에서 서버가 종료되면 PyTorch 오류가 아니다.
+
+```text
+transformers → sklearn → /usr/lib/python3/dist-packages/pandas
+```
+
+2026-09-30 실제 로그에서는 CUDA 행렬 연산이 성공한 뒤 이 경로에서 Kev 서버가
+중단됐다. 첨부된 traceback은 마지막 예외 문장이 잘려 있었지만, 새 NumPy와
+시스템 pandas가 섞인 상태가 확인됐다. 위의 pandas 가상환경 설치와 import
+검사 후 서버를 다시 실행한다. 문제가 계속되면 traceback의 마지막 예외 문장까지
+저장해 원인을 다시 판정한다.
+
+### 11.2 FMS 선택기 설정
 
 `simulation/.env`에 다음 값을 설정한다.
 
@@ -587,7 +693,11 @@ KEV_REQUIRE_CUDA=true
 # KEV_API_KEY=
 ```
 
-### 11.4 실제 Kev 반복 시험
+`KEV_MODEL=kev-latest`는 Kev 서버가 허용하는 API 이름이다. 실제로 적재되는
+checkpoint는 서버를 시작할 때 지정한 `jaredpalmer/kev-0.8b`이며,
+`GET /v1/models` 응답의 `run` 필드로 확인한다.
+
+### 11.3 실제 Kev 반복 시험
 
 Laya와 동일한 케이스와 결과 형식으로 실행한다.
 
@@ -595,17 +705,40 @@ Laya와 동일한 케이스와 결과 형식으로 실행한다.
 cd ~/Logistics_FMS
 source ~/venv/robot/bin/activate
 
+export ROUTE_SELECTOR=kev
+export KEV_HOST=http://127.0.0.1:8009
+export KEV_MODEL=kev-latest
+export KEV_TIMEOUT_SECONDS=60
+export KEV_REQUIRE_CUDA=true
+
+python - <<'PY'
+from simulation.route_selector import get_selector
+
+selector = get_selector()
+print("selector:", selector.name)
+print("model:", selector.model)
+print("host:", getattr(selector, "host", None))
+PY
+
+RUN_ID=$(date +%Y%m%d-%H%M%S)
+RESULT_DIR="$PWD/simulation/benchmark_results/kev-0.8b-latency-$RUN_ID"
+echo "$RESULT_DIR"
+
 python -m simulation.evaluation.selector_latency_benchmark \
-  --output simulation/benchmark_results/kev-latency-$(date +%Y%m%d-%H%M%S) \
+  --output "$RESULT_DIR" \
   --repeats 5 \
   --warmups 1 \
   --deadline 0.15
 
 python -m simulation.evaluation.selector_question_types_benchmark \
-  --output simulation/benchmark_results/kev-question-types-$(date +%Y%m%d-%H%M%S) \
+  --output "simulation/benchmark_results/kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S)" \
   --repeats 5 \
   --warmups 1
 ```
+
+사전 확인 결과는 `selector: kev`, `model: kev-latest`여야 한다. 출력 폴더 이름에
+`kev`를 넣는 것만으로 선택기가 바뀌지 않는다. 결과의 `manifest.json`에서도
+`selector_name=kev`를 확인한 뒤 결과를 사용한다.
 
 결과에는 선택기 이름, 요청 모델, 응답 모델, confidence, 전체 probabilities,
 정답 여부와 wall/model 지연시간이 저장된다. `manifest.json`의 `device`에서
@@ -672,6 +805,15 @@ python -m simulation.evaluation.selector_question_types_benchmark \
 양쪽 장비에서 같은 `jaredpalmer/kev-0.8b` 서버를 로컬로 실행하고
 `simulation/.env`에는 다음 값을 사용한다.
 
+서버 실행 명령은 11.1절과 동일하며 두 장비 모두 반드시 다음 checkpoint를
+지정한다.
+
+```bash
+python -m kev.serve \
+  --run jaredpalmer/kev-0.8b \
+  --port 8009
+```
+
 ```dotenv
 ROUTE_SELECTOR=kev
 KEV_HOST=http://127.0.0.1:8009
@@ -684,11 +826,11 @@ PC 결과:
 
 ```bash
 python -m simulation.evaluation.selector_latency_benchmark \
-  --output simulation/benchmark_results/pc-rtx4070-kev-latency-$(date +%Y%m%d-%H%M%S) \
+  --output simulation/benchmark_results/pc-rtx4070-kev-0.8b-latency-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15
 
 python -m simulation.evaluation.selector_question_types_benchmark \
-  --output simulation/benchmark_results/pc-rtx4070-kev-question-types-$(date +%Y%m%d-%H%M%S) \
+  --output simulation/benchmark_results/pc-rtx4070-kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1
 ```
 
@@ -696,11 +838,11 @@ Jetson 결과:
 
 ```bash
 python -m simulation.evaluation.selector_latency_benchmark \
-  --output simulation/benchmark_results/jetson-orin-kev-latency-$(date +%Y%m%d-%H%M%S) \
+  --output simulation/benchmark_results/jetson-orin-kev-0.8b-latency-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15
 
 python -m simulation.evaluation.selector_question_types_benchmark \
-  --output simulation/benchmark_results/jetson-orin-kev-question-types-$(date +%Y%m%d-%H%M%S) \
+  --output simulation/benchmark_results/jetson-orin-kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1
 ```
 
