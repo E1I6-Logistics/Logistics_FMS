@@ -69,15 +69,8 @@ class OMX:
 
         self.job_id = data.get("job_id")
 
-        self.current_count = data.get(
-            "current",
-            self.current_count,
-        )
-
-        self.total_count = data.get(
-            "total",
-            self.total_count,
-        )
+        self.current_count = data.get("current", self.current_count)
+        self.total_count = data.get("total", self.total_count)
 
         self.state = "WORKING"
 
@@ -89,10 +82,7 @@ class OMX:
 
         success = data.get("success", False)
 
-        self.message = data.get(
-            "message",
-            "",
-        )
+        self.message = data.get("message", "")
 
         if success:
             self.state = "SUCCESS"

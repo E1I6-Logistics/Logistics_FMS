@@ -15,13 +15,10 @@ def on_result(robot, data):
 
 
 mqtt_manager.set_result_callback(on_result)
-
 mqtt_manager.start()
-
 
 # 이미 명령을 보낸 OMX 저장
 command_sent_robots = set()
-
 
 try:
     while True:
@@ -51,14 +48,7 @@ try:
             if robot.connected and robot_id not in command_sent_robots:
                 print(f"[TEST] Command Send -> {robot_id}")
 
-                robot.send_command(
-                    job_id=f"test_{robot_id}",
-                    items={
-                        "item_a": 2,
-                        "item_b": 1,
-                    },
-                )
-
+                robot.send_command(job_id=f"test_{robot_id}", items={"item_a": 2, "item_b": 1})
                 command_sent_robots.add(robot_id)
 
         print("==============================")

@@ -8,11 +8,7 @@ from ..models.omx import OMX
 
 
 class MQTTManager:
-    def __init__(
-        self,
-        broker_ip="localhost",
-        broker_port=1883,
-    ):
+    def __init__(self, broker_ip="localhost", broker_port=1883):
         self.broker_ip = broker_ip
         self.broker_port = broker_port
 
@@ -38,20 +34,13 @@ class MQTTManager:
     def start(self):
         print(f"[MQTT] Connecting to " f"{self.broker_ip}:{self.broker_port}")
 
-        self.client.connect(
-            self.broker_ip,
-            self.broker_port,
-            60,
-        )
+        self.client.connect(self.broker_ip, self.broker_port, 60)
 
         self.client.loop_start()
 
         self.running = True
 
-        self.connection_thread = threading.Thread(
-            target=self._connection_loop,
-            daemon=True,
-        )
+        self.connection_thread = threading.Thread(target=self._connection_loop, daemon=True)
 
         self.connection_thread.start()
 
@@ -71,13 +60,7 @@ class MQTTManager:
     # Broker 연결 Callback
     # =========================================================
 
-    def _on_connect(
-        self,
-        client,
-        userdata,
-        flags,
-        rc,
-    ):
+    def _on_connect(self, client, userdata, flags, rc):
         print(f"[MQTT] Connected: {rc}")
 
         client.subscribe("+/status")
@@ -91,12 +74,7 @@ class MQTTManager:
     # 메시지 수신
     # =========================================================
 
-    def _on_message(
-        self,
-        client,
-        userdata,
-        msg,
-    ):
+    def _on_message(self, client, userdata, msg):
         topic_parts = msg.topic.split("/")
 
         if len(topic_parts) != 2:
@@ -122,10 +100,7 @@ class MQTTManager:
             if message_type != "status":
                 return
 
-            self.robots[robot_id] = OMX(
-                robot_id=robot_id,
-                mqtt_client=self.client,
-            )
+            self.robots[robot_id] = OMX(robot_id=robot_id, mqtt_client=self.client)
 
             print()
             print(f"[MQTT] New OMX discovered: " f"{robot_id}")
@@ -160,10 +135,7 @@ class MQTTManager:
             print(f"[MQTT] RESULT: " f"{robot_id} / {data}")
 
             if self.result_callback is not None:
-                self.result_callback(
-                    robot,
-                    data,
-                )
+                self.result_callback(robot, data)
 
     # =========================================================
     # OMX 조회
