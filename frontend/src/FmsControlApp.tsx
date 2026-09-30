@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import WarehouseMap from './WarehouseMap'
+import RobotOrderForm from './components/RobotOrderForm'
 import {
   sendGoalNode,
   stopRobot,
@@ -258,6 +259,23 @@ export default function FmsControlApp() {
           <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: '#E7EBF0' }} aria-label="FMS 실시간 지도">
             {commandState && (
               <CommandToast state={commandState} onClose={() => setCommandState(null)} />
+            )}
+            {selectedRobot && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 14,
+                  right: 14,
+                  zIndex: 20,
+                  width: 300,
+                  maxWidth: 'calc(100% - 28px)',
+                }}
+              >
+                <RobotOrderForm
+                  robotId={selectedRobot}
+                  disabled={!connected || emergencyStopped}
+                />
+              </div>
             )}
             <WarehouseMap
               nodes={nodes}
