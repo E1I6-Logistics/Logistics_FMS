@@ -93,7 +93,7 @@
   "settings": {
     "temperature": 0,
     "seed": 20260928,
-    "num_ctx": 2048,
+    "num_ctx": 4096,
     "num_predict": 512,
     "timeout_seconds": 120,
     "realtime_deadline_seconds": 0.15,
