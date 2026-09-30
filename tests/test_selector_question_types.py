@@ -17,6 +17,7 @@ from simulation.evaluation.selector_question_types_benchmark import (
 
 
 class SelectorQuestionTypesTest(unittest.TestCase):
+    # 질문 유형 벤치마크를 변경했을 때 choice·score·noul 결과가 저장되는지 확인한다.
     def test_benchmark_exports_question_type_cases(self):
         class FakeSelector:
             name = "fake-kev"

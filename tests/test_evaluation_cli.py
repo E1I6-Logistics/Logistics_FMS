@@ -12,6 +12,7 @@ from tests.fixtures import load_graph
 
 
 class EvaluationCliTest(unittest.TestCase):
+    # CLI 인자를 변경했을 때 compare 명령이 올바른 실행기로 연결되는지 확인한다.
     def test_parser_selects_compare_command(self):
         args = cli.build_parser().parse_args(
             ["compare", "--start", "1", "--goal", "3", "--dry-run"]
@@ -22,10 +23,12 @@ class EvaluationCliTest(unittest.TestCase):
         self.assertTrue(args.dry_run)
         self.assertIs(args.handler, cli.run_compare)
 
+    # 경로 파일 검증을 변경했을 때 routes 밖의 접근을 차단하는지 확인한다.
     def test_route_file_rejects_parent_traversal(self):
         with self.assertRaisesRegex(ValueError, "routes 폴더"):
             cli.route_file("../outside.geojson")
 
+    # Compact Graph CLI를 변경했을 때 지정한 파일로 결과가 생성되는지 확인한다.
     def test_build_compact_writes_selected_output(self):
         with tempfile.TemporaryDirectory() as directory:
             route_dir = Path(directory)

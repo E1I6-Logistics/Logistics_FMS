@@ -60,6 +60,7 @@ class _SteppedClock:
 
 
 class SelectorLatencyBenchmarkTest(unittest.TestCase):
+    # 지연시간 케이스를 변경했을 때 정답이 다섯 위치에 고르게 배치되는지 확인한다.
     def test_builds_five_options_and_moves_answer_through_every_position(self):
         self.assertEqual(len(TEST_CASES), 30)
         for language in ("ko", "en"):
@@ -76,6 +77,7 @@ class SelectorLatencyBenchmarkTest(unittest.TestCase):
                 )
                 self.assertTrue(all(len(case["candidates"]) == 5 for case in cases))
 
+    # 지연시간 집계를 변경했을 때 모든 조건과 결과 파일이 생성되는지 확인한다.
     def test_all_dimensions_are_measured_and_exported(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output = Path(temporary_directory) / "result"

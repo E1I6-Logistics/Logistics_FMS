@@ -6,6 +6,7 @@ from simulation.evaluation.summary import summarize
 
 
 class LlmComparisonSummaryTest(unittest.TestCase):
+    # 집계 공식을 변경했을 때 모델·프롬프트별 성공률과 평균값을 확인한다.
     def test_rates_and_means_are_grouped_by_model_and_prompt(self):
         """성공 1건과 실패 1건을 같은 실험 그룹으로 집계한다."""
         # 두 실행이 동일 그룹으로 묶이도록 provider, model, prompt, graph를

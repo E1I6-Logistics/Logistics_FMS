@@ -11,21 +11,25 @@ class RoutePlannerServiceTest(unittest.TestCase):
     def setUp(self):
         self.graph = load_graph()
 
+    # 최단 경로 알고리즘을 변경했을 때 올바른 방향성 경로를 선택하는지 확인한다.
     def test_chooses_shortest_directed_path(self):
         route = plan_route("1", "3", self.graph)
         self.assertEqual(route["node_ids"], ["1", "2", "3"])
         self.assertEqual(route["edge_ids"], ["e12", "e23"])
         self.assertEqual(route["cost"], 2)
 
+    # cost 0 처리 방식을 변경했을 때 좌표 거리를 사용하는지 확인한다.
     def test_zero_cost_edge_uses_coordinate_distance(self):
         route = plan_route("1", "4", self.graph)
         self.assertEqual(route["node_ids"], ["1", "4"])
         self.assertAlmostEqual(route["cost"], math.sqrt(2))
 
+    # 방향성 엣지 처리를 변경했을 때 역방향 이동을 막는지 확인한다.
     def test_does_not_traverse_edge_in_reverse(self):
         with self.assertRaisesRegex(ValueError, "연결된 경로가 없습니다"):
             plan_route("3", "1", self.graph)
 
+    # 노드 검증을 변경했을 때 등록되지 않은 노드를 거부하는지 확인한다.
     def test_unknown_node_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "존재하지 않는 경로 노드"):
             plan_route("1", "99", self.graph)

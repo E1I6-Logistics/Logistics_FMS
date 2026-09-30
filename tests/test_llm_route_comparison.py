@@ -20,6 +20,7 @@ class LlmRouteComparisonTest(unittest.TestCase):
         self.result_path = Path(self.temporary_directory.name) / "comparisons.jsonl"
         self.summary_path = Path(self.temporary_directory.name) / "summary.json"
 
+    # LLM 비교·저장 흐름을 변경했을 때 성공 결과와 지표가 기록되는지 확인한다.
     def test_mocked_provider_result_is_compared_and_saved(self):
         with (
             patch.object(llm_route_comparison, "ROUTE_GRAPH_PATH", MOCK_DIR / "route_graph.geojson"),
@@ -53,6 +54,7 @@ class LlmRouteComparisonTest(unittest.TestCase):
             1,
         )
 
+    # 실패 기록 방식을 변경했을 때 유효하지 않은 모델 경로가 실패로 남는지 확인한다.
     def test_invalid_model_path_is_recorded_as_failure(self):
         with (
             patch.object(llm_route_comparison, "ROUTE_GRAPH_PATH", MOCK_DIR / "route_graph.geojson"),
@@ -74,6 +76,7 @@ class LlmRouteComparisonTest(unittest.TestCase):
         self.assertEqual(result["error"]["type"], "ValueError")
         self.assertTrue(self.result_path.exists())
 
+    # 재시도 로직을 변경했을 때 두 번째 성공이 구분되어 기록되는지 확인한다.
     def test_retry_success_is_recorded(self):
         with (
             patch.object(llm_route_comparison, "ROUTE_GRAPH_PATH", MOCK_DIR / "route_graph.geojson"),
