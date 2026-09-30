@@ -128,7 +128,7 @@ class ReservationTable:
                 if not (row.robot_id == robot_id and row.navigation_id == navigation_id)
             ]
 
-
+# 실로봇용 예약 테이블, 시뮬용 예약 테이블 분리
 reservation_tables = {
     "real": ReservationTable(),
     "simulation": ReservationTable(),
@@ -147,6 +147,7 @@ def build_schedule(
     departure_at: float,
     speed_mps: float,
     safety_margin: float,
+    segment_departures: list[float] | None = None, # 중간 노드 대기까지 예약
 ) -> tuple[Reservation, ...]:
     if not node_ids or any(node not in nodes for node in node_ids):
         raise ValueError("경로 노드가 비어 있거나 좌표가 없습니다.")
@@ -165,6 +166,12 @@ def build_schedule(
     elif len(node_ids) < 2:
         raise ValueError("구간 중간 출발에는 통로 양 끝 노드가 필요합니다.")
 
+    if segment_departures is not None:
+        if (len(segment_departures) != len(node_ids) - 1
+                or any(not isfinite(t) for t in segment_departures)
+                or (segment_departures and segment_departures[0] != departure_at)):
+            raise ValueError("구간별 출발 시각이 올바르지 않습니다.")
+
     rows = []
 
     def add(resource, index, start, end):
@@ -180,6 +187,10 @@ def build_schedule(
     entry = departure_at
     origin = position
     for index, (start, end) in enumerate(zip(node_ids, node_ids[1:])):
+        if segment_departures is not None:
+            if segment_departures[index] < entry:
+                raise ValueError("도착하기 전에 다음 구간을 출발할 수 없습니다.")
+            entry = segment_departures[index]
         arrival = entry + dist(origin, nodes[end]) / speed_mps
         if not isfinite(arrival):
             raise ValueError("예상 도착 시각이 유한하지 않습니다.")
@@ -187,8 +198,9 @@ def build_schedule(
         occupied_from = now if index == 0 and current_node is None else entry
         add(edge_key(start, end), index, occupied_from - safety_margin, arrival + safety_margin)
         last = index == len(node_ids) - 2
+        leave = arrival if segment_departures is None or last else segment_departures[index + 1]
         add(node_key(end), index, arrival - safety_margin,
-            float("inf") if last else arrival + safety_margin)
+            float("inf") if last else leave + safety_margin)
         origin = nodes[end]
         entry = arrival
 

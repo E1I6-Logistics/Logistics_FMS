@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-from dataclasses import replace
 from time import monotonic
 from uuid import uuid4
 from threading import RLock
@@ -18,11 +17,11 @@ from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from .map_service import world_to_pixel
 from .route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
 from .pathfinding import DistanceAStar
-from .reservation import ReservationTable, build_schedule, node_key, edge_key, overlaps, reservation_tables
+from .reservation import ReservationTable, build_schedule, node_key, edge_key, reservation_tables
 
 import math
 
-SIMULATION_SPEED_MPS = 0.025
+SIMULATION_SPEED_MPS = 0.2
 RESERVATION_MARGIN_S = 0.2
 
 _MOCK_ROBOT_DEFINITIONS = {
@@ -138,61 +137,77 @@ class MockFmsStore:
 
     def _wait_for_reservation(self, robot):
         robot["status"] = "WAITING"
-        robot["route"]["phase"] = "waiting"
-        robot["route"]["departure_at"] = None
+        if robot["route"] is not None:
+            robot["route"]["phase"] = "waiting"
+            robot["route"]["departure_at"] = None
         self._release_schedule(robot)
         self._pending.setdefault(robot["robot_id"], None)
 
-    def _try_schedule(self, robot, now, graph, nodes):
-        route = robot["route"]
-        index = route["segment_index"]
-        departure = now
+    def _try_schedule(self, robot, now, graph, planner):
         others = [row for row in self._reservations.snapshot()
                   if row.robot_id != robot["robot_id"]]
-        # 출발 시각만 이동한다. 무기한 점유나 해결되지 않는 대기는 다음 tick에서 재검사.
-        for _ in range(128):
-            batch = tuple(replace(row, segment_index=row.segment_index + index) for row in build_schedule(
-                robot["robot_id"], robot["navigation_id"], route["node_ids"][index:],
-                nodes, (robot["x"], robot["y"]), robot["occupied_node"],
-                now=now, departure_at=departure, speed_mps=SIMULATION_SPEED_MPS,
-                safety_margin=RESERVATION_MARGIN_S,
-            ))
-            for other in self._robots.values():
-                if other is robot:
-                    continue
-                # 예약된 출발 시각을 가진 로봇은 시간표로 검사한다.
-                other_route = other["route"]
-                scheduled = other_route is not None and other_route.get("departure_at") is not None
-                if not scheduled:
-                    occupied = self._occupied_resource(other, graph)
-                    if any(row.resource == occupied for row in batch):
-                        return False
-            conflicts = [(candidate, row) for candidate in batch for row in others
-                         if candidate.resource == row.resource and overlaps(candidate, row)]
-            if not conflicts:
-                if not self._reservations.replace_request(robot["robot_id"], robot["navigation_id"], batch):
-                    return False
-                route["departure_at"] = departure
-                route["phase"] = "ready"
-                robot["status"] = "WAITING" if departure > now else "NAVIGATING"
-                return True
-            shift = max(row.end - candidate.start for candidate, row in conflicts)
-            if not math.isfinite(shift):
-                return False
-            # 대기 장소의 예약이 충돌하면 출발을 늦춰도 해결되지 않는다.
-            occupied = self._occupied_resource(robot, graph)
-            if any(candidate.resource == occupied and candidate.start <= now
-                   for candidate, row in conflicts):
-                return False
-            departure += shift + 1e-6
-        return False
+        blocked = {}
+        for row in others:
+            blocked.setdefault(row.resource, []).append((row.start, row.end))
+        for other in self._robots.values():
+            if other is robot:
+                continue
+            resource = self._occupied_resource(other, graph)
+            route = other["route"]
+            scheduled = route is not None and route.get("departure_at") is not None
+            # 예정 시각이 지나도 실제 점유가 남아 있으면 해제하지 않는다.
+            until = max((row.end for row in others
+                         if row.robot_id == other["robot_id"] and row.resource == resource
+                         and row.start <= now < row.end), default=math.inf) if scheduled else math.inf
+            blocked.setdefault(resource, []).append((max(0., now - RESERVATION_MARGIN_S), until))
 
-    def _retry_waiting(self, now, graph, nodes):
+        resource = self._occupied_resource(robot, graph)
+        plan = planner.plan_timed(
+            robot["goal_node"], (robot["x"], robot["y"]), robot["occupied_node"],
+            resource[1:] if resource[0] == "edge" else None,
+            blocked=blocked, now=now, speed_mps=SIMULATION_SPEED_MPS,
+            safety_margin=RESERVATION_MARGIN_S,
+        )
+        if plan is None:
+            return False
+        node_ids, departures = plan["node_ids"], plan["segment_departures"]
+        edge_ids = find_edge_ids(graph, node_ids)
+        waypoint_yaws = [float(robot["yaw"])]
+        for start, end in zip(node_ids, node_ids[1:]):
+            ax, ay = planner.nodes[start]
+            bx, by = planner.nodes[end]
+            waypoint_yaws.append(math.atan2(by - ay, bx - ax)
+                                 if math.hypot(bx - ax, by - ay) > 1e-9 else waypoint_yaws[-1])
+        departure = departures[0] if departures else now
+        batch = build_schedule(
+            robot["robot_id"], robot["navigation_id"], node_ids, planner.nodes,
+            (robot["x"], robot["y"]), robot["occupied_node"], now=now,
+            departure_at=departure, speed_mps=SIMULATION_SPEED_MPS,
+            safety_margin=RESERVATION_MARGIN_S, segment_departures=departures,
+        )
+        if not self._reservations.replace_request(robot["robot_id"], robot["navigation_id"], batch):
+            return False
+        # 경로와 시간표를 예약 성공 후 함께 교체한다.
+        if not departures:
+            robot["route"] = None
+            robot["goal_node"] = None
+            robot["status"] = "IDLE"
+            self._release_schedule(robot)
+        else:
+            robot["route"] = {
+                "node_ids": node_ids, "edge_ids": edge_ids, "waypoint_yaws": waypoint_yaws,
+                "segment_index": 0, "phase": "ready", "departure_at": departure,
+                "segment_departures": departures,
+            }
+            robot["status"] = "WAITING" if departure > now else "NAVIGATING"
+        return True
+
+    def _retry_waiting(self, now, graph, planner):
         for robot_id in list(self._pending):
             robot = self._robots[robot_id]
-            if robot["route"] is None or robot["goal_node"] is None:
+            if robot["goal_node"] is None:
                 self._pending.pop(robot_id, None)
-            elif self._try_schedule(robot, now, graph, nodes):
+            elif self._try_schedule(robot, now, graph, planner):
                 self._pending.pop(robot_id, None)
 
     def advance_simulation(self, dt: float, now: float | None = None):
@@ -207,14 +222,14 @@ class MockFmsStore:
                 return
             elapsed = min(dt, now - self._last_tick)
             self._last_tick = now
-            if not any(robot["route"] is not None for robot in self._robots.values()):
+            if not any(robot["goal_node"] is not None for robot in self._robots.values()):
                 return
             graph = load_route_graph()
-            nodes = DistanceAStar(graph).nodes
-            self._retry_waiting(now, graph, nodes)
+            planner = DistanceAStar(graph)
+            self._retry_waiting(now, graph, planner)
             for robot_id in self._robots:
-                self.advance_mock_robot(robot_id, elapsed, now=now, graph=graph, nodes=nodes)
-            self._retry_waiting(now, graph, nodes)
+                self.advance_mock_robot(robot_id, elapsed, now=now, graph=graph, nodes=planner.nodes)
+            self._retry_waiting(now, graph, planner)
 
     # 프론트에 보낼 Robot 상태 Snapshot 생성 기능
     @staticmethod
@@ -284,82 +299,14 @@ class MockFmsStore:
 
             graph = load_route_graph()
             path_plan = DistanceAStar(graph)
-            current_node = robot["occupied_node"]
-            between_nodes = current_node is None and robot["occupied_edge"] is not None
-            if between_nodes:
-                occupied = next((
-                    feature["properties"] for feature in graph["features"]
-                    if str((feature.get("properties") or {}).get("id")) == robot["occupied_edge"]
-                    and "startid" in (feature.get("properties") or {})
-                    and "endid" in (feature.get("properties") or {})
-                ), None)
-                if occupied is None:
-                    raise ValueError("점유 중인 통로가 그래프에 없습니다.")
-                start, end = str(occupied["startid"]), str(occupied["endid"])
-                candidates = []
-                # 현재 pose에서 각 끝점까지의 거리 + 끝점부터의 A* 비용.
-                # 임시 pose 노드를 연결한 탐색과 같으며, 실제 그래프 ID만 유지합니다.
-                for previous, endpoint in ((start, end), (end, start)):
-                    if not any(node == endpoint for node, _ in path_plan.edges[previous]):
-                        continue
-                    try:
-                        path = path_plan.plan(endpoint, target["id"], speed_mps=SIMULATION_SPEED_MPS)
-                    except ValueError:
-                        continue  # 이 방향으로는 목적지에 도달할 수 없음
-                    distance = math.dist(
-                        (robot["x"], robot["y"]), path_plan.nodes[endpoint]
-                    ) + path.total_distance_m
-                    candidates.append((distance, [previous, *path.route]))
-                if not candidates:
-                    raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
-                node_ids = min(candidates, key=lambda candidate: candidate[0])[1]
-            else:
-                if current_node is None:
-                    raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
-                path = path_plan.plan(current_node, target["id"], speed_mps=SIMULATION_SPEED_MPS)
-                node_ids = list(path.route)
-            edge_ids = find_edge_ids(graph, node_ids)
-            # 첫 yaw는 현재 로봇 방향으로 초기화하고, 이후 yaw는 구간 방향으로 계산
-            waypoint_yaws = [float(robot["yaw"])]
-
-            for previous_id, current_id in zip(node_ids, node_ids[1:]):
-                previous = get_node(previous_id)
-                current = get_node(current_id)
-
-                dx = current["x"] - previous["x"]
-                dy = current["y"] - previous["y"]
-
-                # 동일 좌표의 노드는 직전 방향 유지
-                if math.hypot(dx, dy) > 1e-9:
-                    yaw = math.atan2(dy, dx)
-                else:
-                    yaw = waypoint_yaws[-1]
-
-                waypoint_yaws.append(yaw)
-
-            already_arrived = len(node_ids) == 1
-
-            # 계산과 검증이 모두 성공한 뒤에만 활성 상태를 교체
+            self._occupied_resource(robot, graph)
+            # 시뮬레이션은 현재 위치에서 즉시 정지한 뒤 새 요청을 탐색한다.
             self.stop_robot(robot_id)
             robot["navigation_id"] = uuid4().hex
             robot["goal_node"] = str(target["id"])
-            robot["current_node"] = current_node
-            if already_arrived:
-                robot["status"] = "IDLE"
-                robot["goal_node"] = None
-                robot["route"] = None
-            else:
-                robot["status"] = "NAVIGATING"
-                robot["route"] = {
-                    "node_ids": node_ids,
-                    "edge_ids": edge_ids,
-                    "waypoint_yaws": waypoint_yaws,
-                    "phase": "moving" if between_nodes else "ready",
-                    "segment_index": 0,
-                }
-            if robot["route"] is not None:
-                self._wait_for_reservation(robot)
-                self._retry_waiting(monotonic(), graph, path_plan.nodes)
+            self._wait_for_reservation(robot)
+            self._retry_waiting(monotonic(), graph, path_plan)
+            already_arrived = robot["goal_node"] is None
             response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음
             waiting = robot["status"] == "WAITING"
 
@@ -477,8 +424,6 @@ class MockFmsStore:
                 graph = load_route_graph()
             if nodes is None:
                 nodes = DistanceAStar(graph).nodes
-            robot["status"] = "NAVIGATING"
-
             # 이번 갱신에서 이동할 수 있는 거리(m)
             remaining = speed_mps * dt
             node_ids = route["node_ids"]
@@ -505,23 +450,28 @@ class MockFmsStore:
                         and row.segment_index == index]
                 edge = next((row for row in rows if row.resource == resource), None)
                 destination = next((row for row in rows if row.resource == node_key(node_ids[next_index])), None)
-                occupied = any(other is not robot and self._occupied_resource(other, graph)
-                               in (resource, node_key(node_ids[next_index])) for other in self._robots.values())
-                # 시각만으로 점유를 해제하지 않는다. 남은 주행이 예약을 넘으면 즉시 정지/재예약
-                finish = now + distance / speed_mps
-                if (edge is None or destination is None or occupied
-                        or finish + RESERVATION_MARGIN_S > edge.end + dt + 1e-6
-                        or finish + RESERVATION_MARGIN_S > destination.end + dt + 1e-6):
+                
+                # 계획된 대기와 재예약 대기 구분
+                if edge is None or destination is None:
                     self._wait_for_reservation(robot)
                     return
-                # 구간 진입 시각 확인 및 해당 시각 이후의 이동량만 허용
-                if now < edge.start + RESERVATION_MARGIN_S:
-                    return
-                remaining = min(remaining, speed_mps * max(
-                    0.0, now - (edge.start + RESERVATION_MARGIN_S),
-                ))
+                departure = route["segment_departures"][index]
+                if now <= departure:
+                    robot["status"] = "WAITING"
+                    route["phase"] = "waiting"
+                    return  # 계획된 대기: 예약과 점유를 유지한다.
+                remaining = min(remaining, speed_mps * (now - departure))
                 if remaining <= 0:
                     return
+                occupied = any(other is not robot and self._occupied_resource(other, graph)
+                               in (resource, node_key(node_ids[next_index])) for other in self._robots.values())
+                # 이번 tick의 허용 이동량을 제외한 잔여 이동도 시간표 안에 들어와야 한다.
+                finish = now + (distance - remaining) / speed_mps
+                if (occupied or finish + RESERVATION_MARGIN_S > edge.end + 1e-6
+                        or finish + RESERVATION_MARGIN_S > destination.end + 1e-6):
+                    self._wait_for_reservation(robot)
+                    return
+                robot["status"] = "NAVIGATING"
                 route["phase"] = "moving"
 
                 if distance > 0.0:
