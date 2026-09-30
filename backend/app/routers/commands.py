@@ -38,6 +38,24 @@ async def send_node_goal(payload: GoalNodeRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.post("/charging")
+async def charging_station(payload: StopRequest):
+    try:
+        if mode_manager.mode == "simulation":
+            raise ValueError("충전 스테이션 이동은 현재 Real 모드에서만 지원합니다.")
+
+        result = ros_gateway.navigate_to_charging_station(payload.robot_id)
+        result["mode"] = mode_manager.mode
+
+        return result
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/stop")
 async def stop_robot(payload: StopRequest):
     try:
@@ -55,7 +73,6 @@ async def return_nearest_node(payload: StopRequest):
             raise ValueError("가장 가까운 노드 복귀는 현재 Real 모드에서만 지원합니다.")
 
         result = ros_gateway.return_to_nearest_node(payload.robot_id)
-
         result["mode"] = mode_manager.mode
 
         return result

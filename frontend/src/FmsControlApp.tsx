@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import WarehouseMap from './WarehouseMap'
-import { sendGoalCoordinate, sendGoalNode, stopRobot } from './api/fmsApi'
+import { sendGoalCoordinate, sendGoalNode, stopRobot, sendCharging } from './api/fmsApi'
 import { useCmdVel } from './hooks/useCmdVel'
 import { useRobotFleet } from './hooks/useRobotFleet'
 import { useRouteGraph } from './hooks/useRouteGraph'
@@ -53,12 +53,6 @@ export default function FmsControlApp() {
       setSelectedRobot(null)
     }
   }, [managedIds, selectedRobot])
-
-  const chargingNode = useMemo(() => {
-    const explicit = nodeItems.find(item => /charge|charging|ch[-_ ]?\d|충전/i.test(`${item.id} ${item.label} ${item.mapNodeId}`))
-    if (explicit) return explicit.mapNodeId
-    return Object.keys(nodes).find(id => /charge|charging|ch[-_ ]?\d|충전/i.test(id)) ?? null
-  }, [nodeItems, nodes])
 
   const nearestNode = useMemo(() => {
     if (!selectedLiveRobot?.hasPose) return null
@@ -115,11 +109,11 @@ export default function FmsControlApp() {
 
   const moveToCharge = () => {
     if (!selectedRobot) return
-    if (!chargingNode) {
-      setCommandState({ tone: 'danger', message: '경로 그래프에 충전 스테이션 노드가 등록되어 있지 않습니다.' })
-      return
-    }
-    void runCommand('charge', () => sendGoalNode(selectedRobot, chargingNode))
+
+    void runCommand(
+      'charge',
+      () => sendCharging(selectedRobot)
+    )
   }
 
   const stopSelectedRobot = () => {
@@ -258,7 +252,6 @@ export default function FmsControlApp() {
             liveRobot={selectedLiveRobot}
             targetNode={targetNode}
             nearestNode={nearestNode}
-            chargingNode={chargingNode}
             remoteStatus={remote.status}
             remoteKeys={remote.activeKeys}
             busy={busy}
@@ -302,12 +295,11 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop }: {
+function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
-  chargingNode: string | null
   remoteStatus: 'off' | 'connecting' | 'ready'
   remoteKeys: Set<string>
   busy: string | null
@@ -422,7 +414,12 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode,
         </div>
 
         <SectionTitle>직접 제어</SectionTitle>
-        <button onClick={onCharge} disabled={!connected || busy !== null} style={secondaryButton(connected && busy === null)} title={chargingNode ? `충전 노드 ${chargingNode}` : '충전 노드 등록 필요'}>
+        <button
+          onClick={onCharge}
+          disabled={!connected || busy !== null}
+          style={secondaryButton(connected && busy === null)}
+          title="충전 스테이션으로 이동"
+        >
           {busy === 'charge' ? '충전 이동 명령 전송 중' : '충전 스테이션으로 이동'}
         </button>
         <button onClick={onStop} disabled={!connected || busy !== null} style={dangerButton(connected && busy === null)}>
