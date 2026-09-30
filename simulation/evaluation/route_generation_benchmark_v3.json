@@ -1,6 +1,6 @@
 {
   "benchmark_id": "route-generation-v3",
-  "description": "0.6B~14B 대표 로컬 모델 10종의 최단 경로 생성 정확도와 Jetson 지연시간 평가",
+  "description": "RTX 4070 SUPER PC에서 0.6B~14B 대표 로컬 모델 10종의 최단 경로 생성 정확도와 지연시간 평가",
   "reference_commit": "1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc",
   "graph": {
     "path": "routes/test_benchmark_v1.geojson",

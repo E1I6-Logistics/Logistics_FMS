@@ -1,6 +1,6 @@
 {
-  "benchmark_id": "route-generation-jetson-4_5gb-v1",
-  "description": "Jetson Orin Nano에서 공식 모델 파일 4.5GB 이하의 최고 정밀도 태그 5종을 비교",
+  "benchmark_id": "route-generation-jetson-default-tags-v1",
+  "description": "Jetson Orin Nano에서 Ollama 기본 태그 5종을 비교",
   "reference_commit": "1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc",
   "graph": {
     "path": "routes/test_benchmark_v1.geojson",
@@ -10,22 +10,22 @@
   },
   "models": [
     {
-      "name": "qwen3:0.6b-fp16",
+      "name": "qwen3:0.6b",
       "think": false
     },
     {
-      "name": "deepseek-r1:1.5b-qwen-distill-fp16",
+      "name": "deepseek-r1:1.5b",
       "think": false
     },
     {
-      "name": "llama3.2:3b-instruct-q8_0"
+      "name": "llama3.2:3b"
     },
     {
-      "name": "qwen3:4b-q8_0",
+      "name": "qwen3:4b",
       "think": false
     },
     {
-      "name": "gemma3:4b-it-q4_K_M"
+      "name": "gemma3:4b"
     }
   ],
   "cases": [
@@ -108,10 +108,10 @@
   "deployment_constraints": {
     "target": "Jetson Orin Nano Developer Kit 8GB unified memory",
     "estimated_available_memory_gb": 4.5,
-    "quantization": "highest official precision tag whose file is at most 4.5GB",
+    "quantization": "use each Ollama model's default tag",
     "single_loaded_model": true,
     "single_concurrent_request": true,
-    "note": "The 4.5GB cap selects artifacts; runtime feasibility is decided by manifest.json /api/ps evidence and tegrastats because KV cache and runtime buffers consume additional unified memory.",
+    "note": "Default tags are used as published by Ollama. Runtime feasibility is decided by manifest.json /api/ps evidence and tegrastats because KV cache and runtime buffers consume additional unified memory.",
     "max_model_file_gb": 4.5
   }
 }

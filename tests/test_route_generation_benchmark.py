@@ -124,7 +124,7 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
             [3, 4, 5, 5, 8],
         )
 
-    def test_jetson_config_uses_highest_precision_under_4_5gb(self):
+    def test_jetson_config_uses_default_ollama_tags(self):
         config_path = DEFAULT_CONFIG.with_name(
             "route_generation_benchmark_jetson.json"
         )
@@ -133,11 +133,11 @@ class RouteGenerationBenchmarkTest(unittest.TestCase):
         self.assertEqual(
             [model["name"] for model in prepared["config"]["models"]],
             [
-                "qwen3:0.6b-fp16",
-                "deepseek-r1:1.5b-qwen-distill-fp16",
-                "llama3.2:3b-instruct-q8_0",
-                "qwen3:4b-q8_0",
-                "gemma3:4b-it-q4_K_M",
+                "qwen3:0.6b",
+                "deepseek-r1:1.5b",
+                "llama3.2:3b",
+                "qwen3:4b",
+                "gemma3:4b",
             ],
         )
         self.assertEqual(prepared["config"]["settings"]["num_ctx"], 2048)
