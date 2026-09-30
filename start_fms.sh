@@ -8,7 +8,7 @@ set -Eeuo pipefail
 
 set +u
 source /opt/ros/jazzy/setup.bash
-source "./robots_ws/Logistics_AMR/install/setup.bash"
+source "./robots_ws/Logistics_AMR/install/local_setup.bash"
 set -u
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
