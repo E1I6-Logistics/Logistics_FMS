@@ -63,7 +63,7 @@ class FmsRosNode(Node):
 
         # 구독
         subscription_pose = self.create_subscription(
-            PoseWithCovarianceStamped,
+            PoseStamped,
             f"/{robot_id}/logitle_pose",
             # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
             lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
@@ -303,7 +303,7 @@ class FmsRosNode(Node):
         if self.precision_dock_result_callback:
             self.precision_dock_result_callback(robot_id, result.status)
 
-    def _on_amcl_pose(self, robot_id: str, msg: PoseWithCovarianceStamped) -> None:
+    def _on_amcl_pose(self, robot_id: str, msg: PoseStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)
         if robot is None:
             return
