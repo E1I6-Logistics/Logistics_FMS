@@ -41,7 +41,6 @@ class RosGateway:
     def set_ros_node(self, ros_node: FmsRosNode) -> None:
         self._ros_node = ros_node
         ros_node.navigation_result_callback = self.on_navigation_result
-        ros_node.spin_result_callback = self.on_spin_result
         ros_node.precision_dock_result_callback = self.on_precision_dock_result
 
     def sync_connected_robots(self, connections: list[dict]) -> None:
@@ -187,14 +186,19 @@ class RosGateway:
         }
 
         # 경로의 Node ID를 실제 Map 좌표로 변환
-
         waypoints = []
 
         # 시작 노드와 목적지 노드가 같은 경우
         if len(node_ids) == 1:
             current = get_node(node_ids[0])
+            target_yaw = GOAL_YAWS.get(str(node_ids[0]))
 
-            waypoints.append((current["x"], current["y"], float(robot.yaw)))
+            if target_yaw is not None:
+                yaw = target_yaw
+            else:
+                yaw = float(robot.yaw)
+
+            waypoints.append((current["x"], current["y"], yaw))
 
         else:
             # 경로에 포함된 모든 Node를 Waypoint로 변환
@@ -210,15 +214,25 @@ class RosGateway:
                     dx = next_node["x"] - current["x"]
                     dy = next_node["y"] - current["y"]
 
-                # 마지막 노드는 이전 노드 -> 마지막 노드 진입 방향
+                    yaw = math.atan2(dy, dx)
+
+                # 마지막 목적지 노드
                 else:
-                    previous_id = node_ids[index - 1]
-                    previous = get_node(previous_id)
+                    target_yaw = GOAL_YAWS.get(str(current_id))
 
-                    dx = current["x"] - previous["x"]
-                    dy = current["y"] - previous["y"]
+                    # 방향이 지정된 특수 노드
+                    if target_yaw is not None:
+                        yaw = target_yaw
 
-                yaw = math.atan2(dy, dx)
+                    # 일반 노드는 기존처럼 진입 방향 유지
+                    else:
+                        previous_id = node_ids[index - 1]
+                        previous = get_node(previous_id)
+
+                        dx = current["x"] - previous["x"]
+                        dy = current["y"] - previous["y"]
+
+                        yaw = math.atan2(dy, dx)
 
                 waypoints.append((current["x"], current["y"], yaw))
 
@@ -291,27 +305,18 @@ class RosGateway:
             # 일반 목적지 이동 완료
             print(f"[{robot_id}] 목적지 도착: {robot.goal_node}")
 
-            target_yaw = GOAL_YAWS.get(str(robot.goal_node))
-
-            if target_yaw is None:
-                robot.current_node = robot.goal_node
-                robot.navigation_type = None
-                robot.route = None
-                robot.set_state(RobotState.IDLE)
-                return
-
-            current_yaw = float(robot.yaw)
-
-            spin_yaw = target_yaw - current_yaw
-            spin_yaw = math.atan2(math.sin(spin_yaw), math.cos(spin_yaw))  # -pi ~ pi 범위로 정규화
-
-            YAW_TOLERANCE = math.radians(5)
-            if abs(spin_yaw) <= YAW_TOLERANCE:
-                self.on_spin_result(robot_id, GoalStatus.STATUS_SUCCEEDED)
-                return
-
             robot.set_state(RobotState.MOVING)
-            self._ros_node.send_spin(robot_id, spin_yaw)
+            # 도킹이 필요한 노드
+            if str(robot.goal_node) in ["0", "1", "2"]:
+                robot.set_state(RobotState.DOCKING)
+                self._ros_node.send_precision_dock(robot_id)
+                return
+
+            # 일반 목적지
+            robot.current_node = robot.goal_node
+            robot.navigation_type = None
+            robot.route = None
+            robot.set_state(RobotState.IDLE)
 
         elif status == GoalStatus.STATUS_CANCELED:
             # 취소 처리
