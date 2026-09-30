@@ -30,6 +30,7 @@ async def send_node_goal(payload: GoalNodeRequest):
             result = ros_gateway.navigate_to_node(payload.robot_id, payload.node_id)
             result["mode"] = mode_manager.mode
         return result
+
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -46,7 +47,6 @@ async def charging_station(payload: StopRequest):
 
         result = ros_gateway.navigate_to_charging_station(payload.robot_id)
         result["mode"] = mode_manager.mode
-
         return result
 
     except ValueError as exc:
@@ -59,11 +59,73 @@ async def charging_station(payload: StopRequest):
 @router.post("/stop")
 async def stop_robot(payload: StopRequest):
     try:
-        result = mock_fms.stop_robot(payload.robot_id)
+        if mode_manager.mode == "simulation":
+            result = mock_fms.stop_robot(payload.robot_id)
+        else:
+            result = ros_gateway.emergency_stop(payload.robot_id)
+
         result["mode"] = mode_manager.mode
         return result
+
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/stop-all")
+async def stop_all_robots():
+    try:
+        if mode_manager.mode == "simulation":
+            raise ValueError("전체 비상정지는 현재 Real 모드에서만 지원합니다.")
+
+        result = ros_gateway.emergency_stop_all()
+        result["mode"] = mode_manager.mode
+
+        return result
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/emergency-release")
+async def emergency_release(payload: StopRequest):
+    try:
+        if mode_manager.mode == "simulation":
+            raise ValueError("비상정지 해제는 현재 Real 모드에서만 지원합니다.")
+
+        result = ros_gateway.emergency_release(payload.robot_id)
+        result["mode"] = mode_manager.mode
+
+        return result
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/emergency-release-all")
+async def emergency_release_all():
+    try:
+        if mode_manager.mode == "simulation":
+            raise ValueError("전체 비상정지 해제는 현재 Real 모드에서만 지원합니다.")
+
+        result = ros_gateway.emergency_release_all()
+        result["mode"] = mode_manager.mode
+
+        return result
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/return-nearest-node")
@@ -74,7 +136,6 @@ async def return_nearest_node(payload: StopRequest):
 
         result = ros_gateway.return_to_nearest_node(payload.robot_id)
         result["mode"] = mode_manager.mode
-
         return result
 
     except ValueError as exc:

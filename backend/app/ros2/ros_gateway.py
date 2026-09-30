@@ -99,6 +99,9 @@ class RosGateway:
         if robot is None:
             raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
 
+        if robot.state == RobotState.EMERGENCY_STOP:
+            raise ValueError(f"비상정지 상태입니다: {robot_id}")
+
         if not robot.connected:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
 
@@ -117,11 +120,108 @@ class RosGateway:
             "source": "ros2",
         }
 
+    def emergency_stop(self, robot_id: str) -> dict:
+        robot_id = self._resolve_robot_id(robot_id)
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if not robot.connected:
+            raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+
+        # 실행 중인 Nav2 주행 취소
+        self._ros_node.cancel_follow_waypoints(robot_id)
+        # 속도 명령 0
+        self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=0.0, angular_z=0.0)
+
+        robot.route = None
+        robot.goal_node = None
+        robot.navigation_type = None
+        robot.set_state(RobotState.EMERGENCY_STOP)
+
+        return {
+            "success": True,
+            "robot_id": robot_id,
+            "command": "emergency-stop",
+            "source": "ros2",
+        }
+
+    def emergency_stop_all(self) -> dict:
+        robots = fleet_manager.get_all_robots()
+
+        stopped_robots = []
+
+        for robot in robots:
+            if not robot.connected:
+                continue
+
+            self.emergency_stop(robot.robot_id)
+            stopped_robots.append(robot.robot_id)
+
+        return {
+            "success": True,
+            "command": "emergency-stop-all",
+            "robots": stopped_robots,
+            "source": "ros2",
+        }
+
+    def emergency_release(self, robot_id: str) -> dict:
+        robot_id = self._resolve_robot_id(robot_id)
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if not robot.connected:
+            raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+
+        if robot.state != RobotState.EMERGENCY_STOP:
+            raise ValueError(f"비상정지 상태가 아닙니다: {robot_id}")
+
+        robot.set_state(RobotState.IDLE)
+
+        return {
+            "success": True,
+            "robot_id": robot_id,
+            "command": "emergency-release",
+            "state": RobotState.IDLE.value,
+            "source": "ros2",
+        }
+
+    def emergency_release_all(self) -> dict:
+        robots = fleet_manager.get_all_robots()
+
+        released_robots = []
+
+        for robot in robots:
+            if not robot.connected:
+                continue
+
+            if robot.state != RobotState.EMERGENCY_STOP:
+                continue
+
+            self.emergency_release(robot.robot_id)
+            released_robots.append(robot.robot_id)
+
+        return {
+            "success": True,
+            "command": "emergency-release-all",
+            "robots": released_robots,
+            "source": "ros2",
+        }
+
     # 실제 로봇을 Route Graph의 목적지 Node로 이동
     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict:
-
         # Robot ID 정규화 및 ROS 등록 여부 확인
         robot_id = self._resolve_robot_id(robot_id)
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if robot.state == RobotState.EMERGENCY_STOP:
+            raise ValueError(f"비상정지 상태입니다: {robot_id}")
 
         self._ros_node.cancel_follow_waypoints(
             robot_id, callback=lambda: self._start_navigation(robot_id, node_id)
@@ -138,6 +238,13 @@ class RosGateway:
 
     def navigate_to_charging_station(self, robot_id: str) -> dict:
         robot_id = self._resolve_robot_id(robot_id)
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            raise ValueError(f"Robot을 찾을 수 없습니다: {robot_id}")
+
+        if robot.state == RobotState.EMERGENCY_STOP:
+            raise ValueError(f"비상정지 상태입니다: {robot_id}")
 
         charging_node = CHARGING_STATION_NODES.get(robot_id)
 
@@ -371,6 +478,9 @@ class RosGateway:
 
         if not robot.connected:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+
+        if robot.state == RobotState.EMERGENCY_STOP:
+            raise ValueError(f"비상정지 상태입니다: {robot_id}")
 
         if robot.x is None or robot.y is None:
             raise ValueError(f"Robot 위치를 아직 받지 못했습니다: {robot_id}")

@@ -108,11 +108,42 @@ export function sendGoalCoordinate(robotId: string, targetX: number, targetY: nu
   })
 }
 
+export function returnNearestNode(robotId: string) {
+  return request<Record<string, unknown>>(
+    '/api/command/return-nearest-node',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ robot_id: robotId }),
+    },
+  )
+}
+
 export function stopRobot(robotId: string) {
   return request<Record<string, unknown>>('/api/command/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ robot_id: robotId }),
+  })
+}
+
+export function emergencyReleaseRobot(robotId: string) {
+  return request<Record<string, unknown>>('/api/command/emergency-release', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robot_id: robotId }),
+  })
+}
+
+export function stopAllRobots() {
+  return request<Record<string, unknown>>('/api/command/stop-all', {
+    method: 'POST',
+  })
+}
+
+export function emergencyReleaseAll() {
+  return request<Record<string, unknown>>('/api/command/emergency-release-all', {
+    method: 'POST',
   })
 }
 

@@ -17,6 +17,7 @@ class RobotState(str, Enum):
     WAITING = "WAITING"
     PAUSED = "PAUSED"
     DOCKING = "DOCKING"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
 
 
 class NavigationType(str, Enum):

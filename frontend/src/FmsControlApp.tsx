@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import WarehouseMap from './WarehouseMap'
-import { sendGoalCoordinate, sendGoalNode, stopRobot, sendCharging } from './api/fmsApi'
+import {
+  sendGoalNode,
+  stopRobot,
+  sendCharging,
+  stopAllRobots,
+  emergencyReleaseRobot,
+  returnNearestNode
+} from './api/fmsApi'
 import { useCmdVel } from './hooks/useCmdVel'
 import { useRobotFleet } from './hooks/useRobotFleet'
 import { useRouteGraph } from './hooks/useRouteGraph'
@@ -32,6 +39,7 @@ export default function FmsControlApp() {
   const selectedLiveRobot = managedRobots.find(robot => robot.id === selectedRobot)
   const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
   const connected = Boolean(selectedLiveRobot?.connected)
+  const emergencyStopped = selectedLiveRobot?.status === 'EMERGENCY_STOP'
 
   const remote = useCmdVel({
     robotId: selectedRobot,
@@ -104,7 +112,16 @@ export default function FmsControlApp() {
 
   const returnToNearestNode = () => {
     if (!selectedRobot || !nearestNode) return
-    void runCommand('returnToRoute', () => sendGoalCoordinate(selectedRobot, nearestNode.x, nearestNode.y))
+
+    if (robotMode !== 'real') {
+      setCommandState({
+        tone: 'danger',
+        message: '최근접 노드 복귀는 실제 로봇 모드에서만 사용할 수 있습니다.',
+      })
+      return
+    }
+
+    void runCommand('returnToRoute', () => returnNearestNode(selectedRobot))
   }
 
   const moveToCharge = () => {
@@ -123,15 +140,30 @@ export default function FmsControlApp() {
     void runCommand('stop', () => stopRobot(selectedRobot))
   }
 
+  const releaseSelectedRobot = () => {
+    if (!selectedRobot) return
+
+    if (!window.confirm(`${selectedRobot} 로봇의 비상정지를 해제하시겠습니까?`)) return
+    
+
+    void runCommand(
+      'release',
+      () => emergencyReleaseRobot(selectedRobot)
+    )
+  }
+
   const emergencyStopAll = () => {
     const robotIds = managedIds as RobotId[]
+
     if (robotIds.length === 0) {
       setCommandState({ tone: 'danger', message: '정지할 로봇이 없습니다.' })
       return
     }
     if (!window.confirm(`연결된 로봇 ${robotIds.length}대를 모두 비상정지하시겠습니까?`)) return
+    
     remote.stop()
-    void runCommand('emergency', () => Promise.all(robotIds.map(id => stopRobot(id))))
+
+    void runCommand( 'emergency', () => stopAllRobots())
   }
 
   const handleModeChange = (mode: 'real' | 'simulation') => {
@@ -252,6 +284,7 @@ export default function FmsControlApp() {
             liveRobot={selectedLiveRobot}
             targetNode={targetNode}
             nearestNode={nearestNode}
+            realMode={robotMode === 'real'}
             remoteStatus={remote.status}
             remoteKeys={remote.activeKeys}
             busy={busy}
@@ -295,11 +328,12 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop }: {
+function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
+  realMode: boolean
   remoteStatus: 'off' | 'connecting' | 'ready'
   remoteKeys: Set<string>
   busy: string | null
@@ -385,12 +419,22 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, remoteStatus,
           </button>
           <div style={{ margin: '10px 0 7px', borderTop: `1px solid ${C.line}` }} />
           <div style={{ marginBottom: 7, color: nearestNode ? C.muted : C.danger, fontSize: 9, lineHeight: 1.5 }}>
-            {nearestNode
-              ? `가장 가까운 경로 노드: N${nearestNode.id} · 약 ${nearestNode.distance.toFixed(2)}m`
-              : '현재 위치 또는 경로 노드 정보를 확인할 수 없습니다.'}
+            {!realMode
+              ? '최근접 노드 복귀는 실제 로봇 모드에서만 사용할 수 있습니다.'
+              : nearestNode
+                ? `가장 가까운 경로 노드: N${nearestNode.id} · 약 ${nearestNode.distance.toFixed(2)}m`
+                : '현재 위치 또는 경로 노드 정보를 확인할 수 없습니다.'}
           </div>
-          <button onClick={onReturnToRoute} disabled={!nearestNode || !connected || busy !== null} style={secondaryButton(Boolean(nearestNode && connected && busy === null))}>
-            {busy === 'returnToRoute' ? '경로 복귀 명령 전송 중' : '가장 가까운 노드로 복귀'}
+          <button
+            onClick={onReturnToRoute}
+            disabled={!realMode || !nearestNode || !connected || busy !== null}
+            style={secondaryButton(
+              Boolean(realMode && nearestNode && connected && busy === null),
+            )}
+          >
+            {busy === 'returnToRoute'
+              ? '경로 복귀 명령 전송 중'
+              : '가장 가까운 노드로 복귀'}
           </button>
         </div>
 

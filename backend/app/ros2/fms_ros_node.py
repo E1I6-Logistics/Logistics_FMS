@@ -52,23 +52,23 @@ class FmsRosNode(Node):
         # 발행
         publisher_cmd_vel = self.create_publisher(TwistStamped, f"/{robot_id}/cmd_vel", 10)
 
-        # # 구독
-        # subscription_pose = self.create_subscription(
-        #     PoseWithCovarianceStamped,
-        #     f"/{robot_id}/amcl_pose",
-        #     # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
-        #     lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
-        #     10,
-        # )
-
         # 구독
         subscription_pose = self.create_subscription(
             PoseWithCovarianceStamped,
-            f"/{robot_id}/logitle_pose",
+            f"/{robot_id}/amcl_pose",
             # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
             lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
             10,
         )
+
+        # # 구독
+        # subscription_pose = self.create_subscription(
+        #     PoseWithCovarianceStamped,
+        #     f"/{robot_id}/logitle_pose",
+        #     # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
+        #     lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
+        #     10,
+        # )
 
         subscription_battery = self.create_subscription(
             BatteryState,
