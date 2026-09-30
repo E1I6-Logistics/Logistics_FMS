@@ -8,7 +8,6 @@ from rclpy.publisher import Publisher
 from rclpy.subscription import Subscription
 from rclpy.action import ActionClient
 
-
 from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import TwistStamped
 from geometry_msgs.msg import PoseStamped
@@ -63,6 +62,7 @@ class FmsRosNode(Node):
             lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
             10,
         )
+
         subscription_battery = self.create_subscription(
             BatteryState,
             f"/{robot_id}/battery_state",
@@ -91,21 +91,18 @@ class FmsRosNode(Node):
 
         # 모든 인터페이스 생성이 끝난 후 등록 처리
         self._registered_robots.add(robot_id)
-
         self.get_logger().info(f"Robot registered: {robot_id}")
 
     def is_registered(self, robot_id: str) -> bool:
         return robot_id in self._registered_robots
 
     def _quaternion_to_yaw(self, q: Quaternion) -> float:
-
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
 
         return math.atan2(siny_cosp, cosy_cosp)
 
     def publish_cmd_vel(self, robot_id: str, linear_x: float, angular_z: float) -> None:
-
         publisher = self._cmd_vel_publishers.get(robot_id)
         if publisher is None:
             raise ValueError(f"Robot is not registered: {robot_id}")
@@ -130,7 +127,6 @@ class FmsRosNode(Node):
 
         # FollowWaypoints Goal 생성
         goal = FollowWaypoints.Goal()
-
         poses = []
 
         for x, y, yaw in waypoints:
@@ -221,7 +217,6 @@ class FmsRosNode(Node):
         self.get_logger().info(f"FollowWaypoints cancel requested: {robot_id}")
 
         future = goal_handle.cancel_goal_async()
-
         future.add_done_callback(
             lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_cancel(
                 rid, handle, future, callback
@@ -231,7 +226,6 @@ class FmsRosNode(Node):
     def _on_follow_waypoints_cancel(
         self, robot_id: str, goal_handle, future, callback=None
     ) -> None:
-
         response = future.result()
 
         if not response.goals_canceling:
@@ -259,14 +253,12 @@ class FmsRosNode(Node):
 
             if self.spin_result_callback:
                 self.spin_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
-
             return
 
         goal = Spin.Goal()
         goal.target_yaw = spin_yaw
 
         future = client.send_goal_async(goal)
-
         future.add_done_callback(lambda future: self._on_spin_goal_response(robot_id, future))
 
     def _on_spin_goal_response(self, robot_id: str, future) -> None:
@@ -330,7 +322,6 @@ class FmsRosNode(Node):
 
             if self.precision_dock_result_callback:
                 self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
-
             return
 
         print(f"[Info] [Robot {robot_id}] PrecisionDock goal accepted: {robot_id}")
@@ -366,7 +357,6 @@ class FmsRosNode(Node):
         robot = fleet_manager.get_robot(robot_id)
         if robot is None:
             return
-
         robot.update_battery(percentage=msg.percentage)
 
 

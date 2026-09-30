@@ -17,9 +17,7 @@ from ..services.route_graph import (
 )
 
 from action_msgs.msg import GoalStatus
-
 import math
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -196,13 +194,7 @@ class RosGateway:
         if len(node_ids) == 1:
             current = get_node(node_ids[0])
 
-            waypoints.append(
-                (
-                    current["x"],
-                    current["y"],
-                    float(robot.yaw),
-                )
-            )
+            waypoints.append((current["x"], current["y"], float(robot.yaw)))
 
         else:
             # 경로에 포함된 모든 Node를 Waypoint로 변환
