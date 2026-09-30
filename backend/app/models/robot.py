@@ -19,6 +19,12 @@ class RobotState(str, Enum):
     DOCKING = "DOCKING"
 
 
+class NavigationType(str, Enum):
+    GOAL = "goal"
+    RETURN = "return"
+    CHARGING = "charging"
+
+
 class Robot:
     def __init__(self, robot_id: str):
 
@@ -26,7 +32,8 @@ class Robot:
         self._lock = RLock()
 
         # 현재 로봇이 수행 중인 navigation type. None이면 navigation 중 아님
-        self.navigation_type = None
+        self.navigation_type: NavigationType | None = None
+
         # 로봇 식별자
         self.robot_id = robot_id
 

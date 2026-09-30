@@ -12,7 +12,7 @@ from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import TwistStamped
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from nav2_msgs.action import FollowWaypoints, Spin
+from nav2_msgs.action import FollowWaypoints
 
 from ..services.fleet_manager import fleet_manager
 
@@ -35,7 +35,6 @@ class FmsRosNode(Node):
         self._pose_subscribers: dict[str, Subscription] = {}
 
         self._follow_waypoints_clients: dict[str, ActionClient] = {}
-        self._spin_clients: dict[str, ActionClient] = {}
         self._precision_dock_clients: dict[str, ActionClient] = {}
 
         # 현재 실행 중인 FollowWaypoints Goal 관리
@@ -53,10 +52,19 @@ class FmsRosNode(Node):
         # 발행
         publisher_cmd_vel = self.create_publisher(TwistStamped, f"/{robot_id}/cmd_vel", 10)
 
+        # # 구독
+        # subscription_pose = self.create_subscription(
+        #     PoseWithCovarianceStamped,
+        #     f"/{robot_id}/amcl_pose",
+        #     # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
+        #     lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
+        #     10,
+        # )
+
         # 구독
         subscription_pose = self.create_subscription(
             PoseWithCovarianceStamped,
-            f"/{robot_id}/amcl_pose",
+            f"/{robot_id}/logitle_pose",
             # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
             lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
             10,
@@ -75,7 +83,6 @@ class FmsRosNode(Node):
             self, FollowWaypoints, f"/{robot_id}/follow_waypoints"
         )
 
-        action_spin_client = ActionClient(self, Spin, f"/{robot_id}/spin")
         action_precision_dock_client = ActionClient(
             self, PrecisionDock, f"/{robot_id}/precision_dock"
         )
@@ -85,7 +92,6 @@ class FmsRosNode(Node):
         self._pose_subscribers[robot_id] = subscription_pose
         self._battery_subscribers[robot_id] = subscription_battery
         self._follow_waypoints_clients[robot_id] = action_follow_waypoints_client
-        self._spin_clients[robot_id] = action_spin_client
         self._precision_dock_clients[robot_id] = action_precision_dock_client
 
         # 모든 인터페이스 생성이 끝난 후 등록 처리
@@ -240,40 +246,6 @@ class FmsRosNode(Node):
 
         if callback:
             callback()
-
-    def send_spin(self, robot_id: str, spin_yaw: float) -> None:
-        client = self._spin_clients.get(robot_id)
-
-        if client is None:
-            raise ValueError(f"Robot is not registered: {robot_id}")
-
-        if not client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().error(f"[{robot_id}] Spin action server not available")
-
-        goal = Spin.Goal()
-        goal.target_yaw = spin_yaw
-
-        future = client.send_goal_async(goal)
-        future.add_done_callback(lambda future: self._on_spin_goal_response(robot_id, future))
-
-    def _on_spin_goal_response(self, robot_id: str, future) -> None:
-        goal_handle = future.result()
-
-        if not goal_handle.accepted:
-            self.get_logger().warning(f"Spin goal rejected: {robot_id}")
-            return
-
-        self.get_logger().info(f"Spin goal accepted: {robot_id}")
-
-        result_future = goal_handle.get_result_async()
-
-        result_future.add_done_callback(
-            lambda future, rid=robot_id: self._on_spin_result(rid, future)
-        )
-
-    def _on_spin_result(self, robot_id: str, future) -> None:
-        result = future.result()
-        self.get_logger().info(f"Spin finished: {robot_id}, status={result.status}")
 
     def send_precision_dock(self, robot_id):
         client = self._precision_dock_clients.get(robot_id)

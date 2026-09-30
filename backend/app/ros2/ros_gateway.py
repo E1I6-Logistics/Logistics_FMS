@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Any
 from copy import deepcopy
 
-from ..models.robot import RobotState
-
+from ..models.robot import RobotState, NavigationType
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from ..services.fleet_manager import fleet_manager
 from ..services.pathfinding import DistanceAStar
@@ -31,6 +30,12 @@ GOAL_YAWS = {
     "4": 0.0,
     "5": -math.pi / 2,
     "6": -math.pi / 2,
+}
+
+CHARGING_STATION_NODES = {
+    "robot1": "0",
+    "robot2": "1",
+    "robot3": "2",
 }
 
 
@@ -131,7 +136,36 @@ class RosGateway:
             "source": "ros2",
         }
 
-    def _start_navigation(self, robot_id: str, node_id: str | int) -> None:
+    def navigate_to_charging_station(self, robot_id: str) -> dict:
+        robot_id = self._resolve_robot_id(robot_id)
+
+        charging_node = CHARGING_STATION_NODES.get(robot_id)
+
+        if charging_node is None:
+            raise ValueError(f"충전 스테이션이 지정되지 않은 Robot입니다: {robot_id}")
+
+        self._ros_node.cancel_follow_waypoints(
+            robot_id,
+            callback=lambda: self._start_navigation(
+                robot_id, charging_node, NavigationType.CHARGING
+            ),
+        )
+
+        return {
+            "success": True,
+            "status": "PROCESSING",
+            "robot_id": robot_id,
+            "command": "charging",
+            "target_node": charging_node,
+            "source": "ros2",
+        }
+
+    def _start_navigation(
+        self,
+        robot_id: str,
+        node_id: str | int,
+        navigation_type: NavigationType = NavigationType.GOAL,
+    ) -> None:
         # FleetManager에서 실제 Robot 객체 조회
         robot = fleet_manager.get_robot(robot_id)
 
@@ -176,7 +210,7 @@ class RosGateway:
         edge_ids = find_edge_ids(graph, node_ids)
         robot.current_node = current_node
         robot.goal_node = str(target["id"])
-        robot.navigation_type = "goal"
+        robot.navigation_type = navigation_type
 
         robot.route = {
             "node_ids": node_ids,
@@ -294,7 +328,7 @@ class RosGateway:
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             # 가장 가까운 노드 복귀 완료
-            if robot.navigation_type == "return":
+            if robot.navigation_type == NavigationType.RETURN:
                 robot.current_node = robot.goal_node
                 robot.navigation_type = None
                 robot.route = None
@@ -302,15 +336,15 @@ class RosGateway:
                 print(f"[{robot_id}] 가장 가까운 노드 복귀 완료: " f"{robot.current_node}")
                 return
 
-            # 일반 목적지 이동 완료
-            print(f"[{robot_id}] 목적지 도착: {robot.goal_node}")
+            if robot.navigation_type == NavigationType.CHARGING:
+                print(f"[{robot_id}] 충전 스테이션 도착: {robot.goal_node}")
 
-            robot.set_state(RobotState.MOVING)
-            # 도킹이 필요한 노드
-            if str(robot.goal_node) in ["0", "1", "2"]:
                 robot.set_state(RobotState.DOCKING)
                 self._ros_node.send_precision_dock(robot_id)
                 return
+
+            # 일반 목적지 이동 완료
+            print(f"[{robot_id}] 목적지 도착: {robot.goal_node}")
 
             # 일반 목적지
             robot.current_node = robot.goal_node
@@ -352,7 +386,7 @@ class RosGateway:
         target = get_node(nearest_node)
 
         # 복귀 명령임을 표시
-        robot.navigation_type = "return"
+        robot.navigation_type = NavigationType.RETURN
         robot.set_state(RobotState.MOVING)
         robot.goal_node = str(nearest_node)
 
@@ -396,29 +430,6 @@ class RosGateway:
         else:
             robot.set_state(RobotState.PAUSED)
             print(f"[{robot_id}] PrecisionDock 실패")
-
-    def on_spin_result(self, robot_id: str, status: int) -> None:
-        robot = fleet_manager.get_robot(robot_id)
-
-        if robot is None:
-            return
-
-        if status != GoalStatus.STATUS_SUCCEEDED:
-            robot.set_state(RobotState.PAUSED)
-            print(f"[{robot_id}] Spin 실패")
-            return
-
-        # 0, 1, 2번 노드에서만 정밀 도킹
-        if str(robot.goal_node) in ["0", "1", "2"]:
-            print(f"[{robot_id}] PrecisionDock 시작: {robot.goal_node}")
-            robot.set_state(RobotState.DOCKING)
-            self._ros_node.send_precision_dock(robot_id)
-            return
-
-        robot.current_node = robot.goal_node
-        robot.navigation_type = None
-        robot.route = None
-        robot.set_state(RobotState.IDLE)
 
 
 ros_gateway = RosGateway()
