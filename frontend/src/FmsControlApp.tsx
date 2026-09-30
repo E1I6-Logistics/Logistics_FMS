@@ -43,7 +43,11 @@ export default function FmsControlApp() {
 
   const remote = useCmdVel({
     robotId: selectedRobot,
-    enabled: Boolean(selectedRobot && connected),
+    enabled: Boolean(
+      selectedRobot &&
+      connected &&
+      !emergencyStopped
+    ),
   })
 
   useEffect(() => {
@@ -285,6 +289,7 @@ export default function FmsControlApp() {
             targetNode={targetNode}
             nearestNode={nearestNode}
             realMode={robotMode === 'real'}
+            emergencyStopped={emergencyStopped}
             remoteStatus={remote.status}
             remoteKeys={remote.activeKeys}
             busy={busy}
@@ -295,6 +300,7 @@ export default function FmsControlApp() {
             onReturnToRoute={returnToNearestNode}
             onCharge={moveToCharge}
             onStop={stopSelectedRobot}
+            onRelease={releaseSelectedRobot}
           />
         </div>
       </main>
@@ -328,12 +334,13 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop }: {
+function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
   realMode: boolean
+  emergencyStopped: boolean
   remoteStatus: 'off' | 'connecting' | 'ready'
   remoteKeys: Set<string>
   busy: string | null
@@ -344,6 +351,7 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, rem
   onReturnToRoute: () => void
   onCharge: () => void
   onStop: () => void
+  onRelease: () => void
 }) {
   if (!robotId) {
     return (
@@ -364,7 +372,7 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, rem
   const statusColor = !connected ? C.danger : /MOV|RUN|이동|작업/i.test(status) ? C.success : C.warning
   const batteryColor = battery < 30 ? C.danger : battery < 50 ? C.warning : C.success
   const route = liveRobot?.route?.node_ids?.length ? liveRobot.route.node_ids.map(id => `N${id}`).join(' → ') : '—'
-  const controlsEnabled = connected && remoteStatus === 'ready'
+  const controlsEnabled = connected && !emergencyStopped && remoteStatus === 'ready'
 
   return (
     <aside style={{ width: 390, flexShrink: 0, borderLeft: `1px solid ${C.line}`, background: C.surface, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '-2px 0 8px rgba(0,0,0,.05)' }} aria-label={`${robotId} 정보 및 제어`}>
@@ -414,7 +422,13 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, rem
           <div style={{ marginBottom: 9, color: targetNode ? C.primary : C.muted, fontSize: 10, fontWeight: 700 }}>
             {targetNode ? `선택 노드: N${targetNode}` : '맵에서 이동할 노드를 선택하세요.'}
           </div>
-          <button onClick={onMove} disabled={!targetNode || !connected || busy !== null} style={primaryButton(Boolean(targetNode && connected && busy === null))}>
+          <button 
+            onClick={onMove} 
+            disabled={ !targetNode || !connected || emergencyStopped || busy !== null }
+            style={primaryButton(
+              Boolean(targetNode && connected && !emergencyStopped && busy === null),
+            )}
+          >
             {busy === 'nodeMove' ? '이동 명령 전송 중' : '선택 노드로 이동'}
           </button>
           <div style={{ margin: '10px 0 7px', borderTop: `1px solid ${C.line}` }} />
@@ -427,14 +441,12 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, rem
           </div>
           <button
             onClick={onReturnToRoute}
-            disabled={!realMode || !nearestNode || !connected || busy !== null}
+            disabled={ !realMode || !nearestNode || !connected || emergencyStopped || busy !== null }
             style={secondaryButton(
-              Boolean(realMode && nearestNode && connected && busy === null),
+              Boolean(realMode && nearestNode && connected && !emergencyStopped && busy === null),
             )}
           >
-            {busy === 'returnToRoute'
-              ? '경로 복귀 명령 전송 중'
-              : '가장 가까운 노드로 복귀'}
+            {busy === 'returnToRoute' ? '경로 복귀 명령 전송 중' : '가장 가까운 노드로 복귀'}
           </button>
         </div>
 
@@ -460,16 +472,45 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, rem
         <SectionTitle>직접 제어</SectionTitle>
         <button
           onClick={onCharge}
-          disabled={!connected || busy !== null}
-          style={secondaryButton(connected && busy === null)}
+          disabled={!connected || emergencyStopped || busy !== null}
+          style={secondaryButton(connected && !emergencyStopped && busy === null)}
           title="충전 스테이션으로 이동"
         >
           {busy === 'charge' ? '충전 이동 명령 전송 중' : '충전 스테이션으로 이동'}
         </button>
-        <button onClick={onStop} disabled={!connected || busy !== null} style={dangerButton(connected && busy === null)}>
-          {busy === 'stop' ? '정지 명령 전송 중' : '정지'}
-          <span style={{ display: 'block', marginTop: 2, fontSize: 8, fontWeight: 500 }}>현재 선택된 로봇만 정지</span>
-        </button>
+
+        {emergencyStopped ? (
+          <button
+            onClick={onRelease}
+            disabled={!connected || busy !== null}
+            style={secondaryButton(connected && busy === null)}
+          >
+            {busy === 'release'
+              ? '비상정지 해제 중'
+              : '소프트웨어 비상정지 해제'}
+          </button>
+        ) : (
+          <button
+            onClick={onStop}
+            disabled={!connected || busy !== null}
+            style={dangerButton(connected && busy === null)}
+          >
+            {busy === 'stop'
+              ? '비상정지 명령 전송 중'
+              : '소프트웨어 비상정지'}
+
+            <span
+              style={{
+                display: 'block',
+                marginTop: 2,
+                fontSize: 8,
+                fontWeight: 500,
+              }}
+            >
+              현재 선택된 로봇의 모든 이동 잠금
+            </span>
+          </button>
+        )}
       </div>
     </aside>
   )
