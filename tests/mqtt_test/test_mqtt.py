@@ -19,19 +19,25 @@ mqtt_manager.set_result_callback(on_result)
 mqtt_manager.start()
 
 
-command_sent = False
+# 이미 명령을 보낸 OMX 저장
+command_sent_robots = set()
 
 
 try:
     while True:
 
-        robot = mqtt_manager.get_robot("omx1")
+        # 현재 발견된 모든 OMX 가져오기
+        robots = mqtt_manager.get_robots()
 
-        # OMX가 발견되면 명령 1회 전송
-        if robot is not None:
+        print()
+        print("========== OMX LIST ==========")
+
+        if len(robots) == 0:
+            print("연결된 OMX 없음")
+
+        for robot_id, robot in robots.items():
 
             print(
-                f"[STATE] "
                 f"{robot.robot_id} "
                 f"connected={robot.connected} "
                 f"state={robot.state} "
@@ -40,20 +46,22 @@ try:
                 f"{robot.total_count}"
             )
 
-            if robot.connected and not command_sent:
-
-                print()
-                print("[TEST] Command Send")
+            # 새로 발견된 OMX이고 연결 상태이면
+            # 테스트 명령 1회 전송
+            if robot.connected and robot_id not in command_sent_robots:
+                print(f"[TEST] Command Send -> {robot_id}")
 
                 robot.send_command(
-                    job_id="test_001",
+                    job_id=f"test_{robot_id}",
                     items={
                         "item_a": 2,
                         "item_b": 1,
                     },
                 )
 
-                command_sent = True
+                command_sent_robots.add(robot_id)
+
+        print("==============================")
 
         time.sleep(2)
 
