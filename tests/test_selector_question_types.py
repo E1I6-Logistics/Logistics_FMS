@@ -19,6 +19,7 @@ from simulation.evaluation.selector_question_types_benchmark import (
 class SelectorQuestionTypesTest(unittest.TestCase):
     def test_benchmark_exports_question_type_cases(self):
         class FakeSelector:
+            name = "fake-kev"
             model = "test-model"
 
             def select_choice(self, *_args, **_kwargs):
@@ -99,6 +100,10 @@ class SelectorQuestionTypesTest(unittest.TestCase):
             manifest = json.loads(
                 (output / "manifest.json").read_text(encoding="utf-8")
             )
+            self.assertEqual(summary["selector_name"], "fake-kev")
+            self.assertEqual(manifest["selector_name"], "fake-kev")
+            trials = [json.loads(line) for line in (output / TRIALS_FILENAME).read_text(encoding="utf-8").splitlines()]
+            self.assertEqual({row["selector_name"] for row in trials}, {"fake-kev"})
             self.assertEqual(manifest["device"]["actual"], "cuda:0")
             self.assertEqual(manifest["device"]["kind"], "gpu")
             self.assertEqual(manifest["device"]["device_name"], "Fake RTX 4070 SUPER")

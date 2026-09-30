@@ -184,6 +184,7 @@ def run_question_types_benchmark(
     if trials_path.exists() and trials_path.stat().st_size:
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
     selector = selector or get_selector()
+    selector_name = getattr(selector, "name", selector.__class__.__name__)
     started_at = _utc_now()
     settings = {
         "repeats_per_case": repeats,
@@ -196,6 +197,7 @@ def run_question_types_benchmark(
         "status": "running",
         "started_at": started_at,
         "source": git_metadata(ROOT),
+        "selector_name": selector_name,
         "requested_model": getattr(selector, "model", None),
         "settings": settings,
         "device": selector_device_metadata(selector),
@@ -221,7 +223,8 @@ def run_question_types_benchmark(
                 row = {
                     "case_id": case["id"], "language": case["language"],
                     "question_type": case["question_type"], "repeat": repeat,
-                    "timestamp": _utc_now(), "value": value,
+                    "timestamp": _utc_now(), "selector_name": selector_name,
+                    "value": value,
                     "correct": result["correct"],
                     "confidence": result.get("confidence"),
                     "probabilities": result.get("probabilities"),
@@ -239,7 +242,8 @@ def run_question_types_benchmark(
                 row = {
                     "case_id": case["id"], "language": case["language"],
                     "question_type": case["question_type"], "repeat": repeat,
-                    "timestamp": _utc_now(), "value": None, "correct": False,
+                    "timestamp": _utc_now(), "selector_name": selector_name,
+                    "value": None, "correct": False,
                     "confidence": None, "probabilities": None, "legend": None,
                     "requested_model": getattr(selector, "model", None),
                     "response_model": None, "wall_seconds": wall_seconds,
@@ -261,6 +265,7 @@ def run_question_types_benchmark(
     summary = {
         "benchmark": "route-selector-question-types-v1",
         "created_at": _utc_now(),
+        "selector_name": selector_name,
         "requested_model": getattr(selector, "model", None),
         "device": selector_device_metadata(selector, last_result),
         "settings": settings,
@@ -268,7 +273,7 @@ def run_question_types_benchmark(
     }
     (output / SUMMARY_FILENAME).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    fields = ["case_id", "language", "question_type", "repeat", "timestamp", "value", "correct", "confidence", "requested_model", "response_model", "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds", "probabilities", "legend", "error"]
+    fields = ["case_id", "language", "question_type", "repeat", "timestamp", "selector_name", "value", "correct", "confidence", "requested_model", "response_model", "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds", "probabilities", "legend", "error"]
     with (output / CSV_FILENAME).open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()

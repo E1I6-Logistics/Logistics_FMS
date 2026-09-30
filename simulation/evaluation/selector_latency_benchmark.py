@@ -259,7 +259,7 @@ def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
 def _write_csv(path: Path, trials: list[dict[str, Any]]) -> None:
     fieldnames = [
         "case_id", "question_type", "language", "answer_position", "repeat",
-        "timestamp", "requested_model", "response_model", "choice",
+        "timestamp", "selector_name", "requested_model", "response_model", "choice",
         "expected_choice", "correct_answer", "correct", "confidence",
         "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds",
         "realtime_deadline_seconds", "realtime_met", "probabilities", "routing",
@@ -302,6 +302,7 @@ def run_latency_benchmark(
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
 
     selector = selector or get_selector()
+    selector_name = getattr(selector, "name", selector.__class__.__name__)
     started_at = _utc_now()
     settings = {
         "question_types": 3,
@@ -319,6 +320,7 @@ def run_latency_benchmark(
         "status": "running",
         "started_at": started_at,
         "source": git_metadata(ROOT),
+        "selector_name": selector_name,
         "requested_model": getattr(selector, "model", None),
         "settings": settings,
         "device": selector_device_metadata(selector),
@@ -360,6 +362,7 @@ def run_latency_benchmark(
                     "answer_position": case["answer_position"],
                     "repeat": repeat,
                     "timestamp": _utc_now(),
+                    "selector_name": selector_name,
                     "requested_model": selector.model,
                     "response_model": result.get("model"),
                     "choice": result.get("choice"),
@@ -387,6 +390,7 @@ def run_latency_benchmark(
                     "answer_position": case["answer_position"],
                     "repeat": repeat,
                     "timestamp": _utc_now(),
+                    "selector_name": selector_name,
                     "requested_model": getattr(selector, "model", None),
                     "response_model": None,
                     "choice": None,
@@ -440,6 +444,7 @@ def run_latency_benchmark(
         "benchmark": "route-selector-language-position-latency-v3",
         "started_at": started_at,
         "completed_at": _utc_now(),
+        "selector_name": selector_name,
         "requested_model": getattr(selector, "model", None),
         "device": selector_device_metadata(selector, last_result),
         "settings": settings,

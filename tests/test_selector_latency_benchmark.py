@@ -15,6 +15,7 @@ from simulation.evaluation.selector_latency_benchmark import (
 
 
 class _FakeSelector:
+    name = "fake-laya"
     model = "laya:multilingual"
 
     def __init__(self):
@@ -105,6 +106,7 @@ class SelectorLatencyBenchmarkTest(unittest.TestCase):
                 ).splitlines()
             ]
             self.assertEqual(len(trials), 60)
+            self.assertEqual({row["selector_name"] for row in trials}, {"fake-laya"})
             self.assertEqual({row["language"] for row in trials}, {"ko", "en"})
             self.assertTrue((output / SUMMARY_FILENAME).is_file())
             with (output / CSV_FILENAME).open(
@@ -114,9 +116,11 @@ class SelectorLatencyBenchmarkTest(unittest.TestCase):
             self.assertEqual(len(rows), 60)
             self.assertIn("answer_position", rows[0])
             self.assertIn("language", rows[0])
+            self.assertEqual(rows[0]["selector_name"], "fake-laya")
             manifest = json.loads(
                 (output / "manifest.json").read_text(encoding="utf-8")
             )
+            self.assertEqual(manifest["selector_name"], "fake-laya")
             self.assertEqual(manifest["device"]["actual"], "cuda:0")
             self.assertEqual(manifest["device"]["kind"], "gpu")
             self.assertEqual(manifest["device"]["device_name"], "Fake RTX 4070 SUPER")
