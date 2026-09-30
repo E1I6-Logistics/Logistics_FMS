@@ -309,9 +309,9 @@ class FmsRosNode(Node):
             return
 
         robot.update_pose(
-            x=msg.pose.pose.position.x,
-            y=msg.pose.pose.position.y,
-            yaw=self._quaternion_to_yaw(msg.pose.pose.orientation),
+            x=msg.pose.position.x,
+            y=msg.pose.position.y,
+            yaw=self._quaternion_to_yaw(msg.pose.orientation),
         )
 
     def _on_battery_state(self, robot_id: str, msg: BatteryState) -> None:
