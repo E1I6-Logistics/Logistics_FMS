@@ -1,4 +1,0 @@
-# JetPack과 맞는 NVIDIA CUDA PyTorch를 먼저 설치해야 한다.
-# 이 파일은 기존 Ollama/OpenAI/Anthropic 의존성과 분리해 Jetson 환경만 설치한다.
-# laya가 Hugging Face Hub에서 multilingual checkpoint 하나만 내려받는다.
-laya==0.3.21

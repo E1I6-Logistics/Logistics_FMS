@@ -2,3 +2,4 @@ openai==1.63.2
 anthropic
 ollama
 python-dotenv==1.2.3
+laya==0.3.21

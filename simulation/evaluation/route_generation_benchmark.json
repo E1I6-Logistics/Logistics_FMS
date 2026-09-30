@@ -1,6 +1,6 @@
 {
-  "benchmark_id": "route-generation-v2",
-  "description": "2026-09-28 Ollama 2차 반복 테스트 조건에 deepseek-r1:14b를 추가한 Jetson 평가",
+  "benchmark_id": "route-generation-v3",
+  "description": "RTX 4070 SUPER PC에서 0.6B~14B 대표 로컬 모델 10종의 최단 경로 생성 정확도와 지연시간 평가",
   "reference_commit": "1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc",
   "graph": {
     "path": "routes/test_benchmark_v1.geojson",
@@ -14,22 +14,47 @@
       "think": false
     },
     {
-      "name": "qwen3:1.7b",
+      "name": "deepseek-r1:1.5b",
       "think": false
     },
     {
-      "name": "gemma3:1b"
+      "name": "llama3.2:3b"
     },
     {
       "name": "qwen3:4b",
       "think": false
     },
     {
+      "name": "gemma3:4b"
+    },
+    {
+      "name": "llama3.1:8b"
+    },
+    {
+      "name": "mistral-nemo:12b"
+    },
+    {
+      "name": "gemma3:12b"
+    },
+    {
       "name": "deepseek-r1:14b",
       "think": false
+    },
+    {
+      "name": "phi4:14b"
     }
   ],
   "cases": [
+    {
+      "start": 0,
+      "goal": 4,
+      "expected_path": [
+        0,
+        3,
+        4
+      ],
+      "expected_distance": 0.8403537345690091
+    },
     {
       "start": 0,
       "goal": 6,
@@ -40,6 +65,18 @@
         6
       ],
       "expected_distance": 1.2346176886023945
+    },
+    {
+      "start": 2,
+      "goal": 10,
+      "expected_path": [
+        2,
+        5,
+        4,
+        6,
+        10
+      ],
+      "expected_distance": 1.592143392266858
     },
     {
       "start": 1,
@@ -54,16 +91,19 @@
       "expected_distance": 1.8990600538850246
     },
     {
-      "start": 2,
-      "goal": 10,
+      "start": 7,
+      "goal": 2,
       "expected_path": [
-        2,
-        5,
-        4,
+        7,
+        8,
+        9,
+        10,
         6,
-        10
+        4,
+        5,
+        2
       ],
-      "expected_distance": 1.592143392266858
+      "expected_distance": 2.6722415641324937
     }
   ],
   "settings": {
@@ -74,11 +114,10 @@
     "timeout_seconds": 120,
     "realtime_deadline_seconds": 0.15,
     "max_attempts": 1,
-    "repeats": 3,
+    "repeats": 5,
     "warmups_per_model": 1,
     "keep_alive": "5m"
   },
   "prompt": "\n    You are a deterministic shortest-path solver for a directed weighted graph.\n\n    Input:\n    - start_node, target_node: node IDs\n    - route_graph: CompactRouteGraph\n    - nodes: [{id, x, y}]  (coordinates are for reference only)\n    - edges: [{from, to, weight}]  (directed)\n\n    Rules:\n    1. Traverse an edge only from \"from\" to \"to\".\n    2. Use \"weight\" exactly as given. Do NOT recalculate from coordinates.\n    3. Find the path with the minimum total weight (e.g. Dijkstra).\n    4. The path must start with start_node, end with target_node,\n    and every consecutive pair must be an existing edge.\n    5. reported_total_distance = sum of weights along the path.\n\n    Return only the JSON object matching the schema. No explanations or Markdown.\n    ",
-  "prompt_sha256": "53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44",
-  "reference_benchmark": "route-generation-v1"
+  "prompt_sha256": "53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44"
 }
