@@ -13,20 +13,17 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--robot-id",
     required=True,
-    help="OMX Robot ID (ex: omx1)",
 )
 
 parser.add_argument(
     "--broker-ip",
     required=True,
-    help="Main PC MQTT Broker IP",
 )
 
 parser.add_argument(
     "--broker-port",
     type=int,
     default=1883,
-    help="MQTT Broker Port",
 )
 
 args = parser.parse_args()
@@ -43,13 +40,11 @@ broker_port = args.broker_port
 
 client = mqtt.Client()
 
-
-# 현재 작업
 current_job_id = None
 
 
 # =============================================================
-# 공통 Publish
+# Publish
 # =============================================================
 
 
@@ -62,11 +57,72 @@ def publish(topic, payload):
         message,
     )
 
-    print(f"[MQTT] Published {topic}: " f"{payload}")
+    print(f"[SEND] {topic}: {payload}")
 
 
 # =============================================================
-# Main -> OMX 명령 수신
+# OMX -> Main
+# =============================================================
+
+
+def send_status():
+
+    publish(
+        f"{robot_id}/status",
+        {
+            "state": "online",
+        },
+    )
+
+
+def send_ack(
+    job_id,
+    accepted=True,
+):
+
+    publish(
+        f"{robot_id}/ack",
+        {
+            "job_id": job_id,
+            "accepted": accepted,
+        },
+    )
+
+
+def send_progress(
+    job_id,
+    current,
+    total,
+):
+
+    publish(
+        f"{robot_id}/progress",
+        {
+            "job_id": job_id,
+            "current": current,
+            "total": total,
+        },
+    )
+
+
+def send_result(
+    job_id,
+    success,
+    message="",
+):
+
+    publish(
+        f"{robot_id}/result",
+        {
+            "job_id": job_id,
+            "success": success,
+            "message": message,
+        },
+    )
+
+
+# =============================================================
+# Command 처리
 # =============================================================
 
 
@@ -78,100 +134,45 @@ def on_command(data):
     items = data["items"]
 
     print()
-    print("==========================")
-    print("New OMX Command")
-    print("==========================")
-    print(f"Job ID : {current_job_id}")
-    print(f"Items  : {items}")
-    print("==========================")
+    print("==============================")
+    print("COMMAND RECEIVED")
+    print("==============================")
+    print(f"Job   : {current_job_id}")
+    print(f"Items : {items}")
+    print("==============================")
 
-    # =========================================================
-    # 여기서 실제 로봇팔 동작 시작
-    # =========================================================
-
-    print("[OMX] Robot arm started")
-
-    # Main에게 작업 시작 응답
+    # 작업 시작
     send_ack(
         current_job_id,
         True,
     )
 
+    # =========================================================
+    # 테스트용 가짜 작업
+    #
+    # 나중에는 이 부분을 실제 OMX 로봇팔 동작으로 교체
+    # =========================================================
 
-# =============================================================
-# OMX -> Main
-# =============================================================
+    total = sum(items.values())
 
+    for current in range(
+        1,
+        total + 1,
+    ):
 
-def send_ack(
-    job_id,
-    accepted=True,
-):
+        time.sleep(1)
 
-    topic = f"{robot_id}/ack"
+        send_progress(
+            current_job_id,
+            current,
+            total,
+        )
 
-    payload = {
-        "job_id": job_id,
-        "accepted": accepted,
-    }
-
-    publish(
-        topic,
-        payload,
-    )
-
-
-def send_progress(
-    job_id,
-    current,
-    total,
-):
-
-    topic = f"{robot_id}/progress"
-
-    payload = {
-        "job_id": job_id,
-        "current": current,
-        "total": total,
-    }
-
-    publish(
-        topic,
-        payload,
-    )
-
-
-def send_result(
-    job_id,
-    success,
-    message="",
-):
-
-    topic = f"{robot_id}/result"
-
-    payload = {
-        "job_id": job_id,
-        "success": success,
-        "message": message,
-    }
-
-    publish(
-        topic,
-        payload,
-    )
-
-
-def send_status():
-
-    topic = f"{robot_id}/status"
-
-    payload = {
-        "state": "online",
-    }
-
-    publish(
-        topic,
-        payload,
+    # 작업 성공
+    send_result(
+        current_job_id,
+        True,
+        "Test completed",
     )
 
 
@@ -189,13 +190,12 @@ def on_connect(
 
     print(f"[MQTT] Connected: {rc}")
 
-    command_topic = f"{robot_id}/command"
+    topic = f"{robot_id}/command"
 
-    client.subscribe(command_topic)
+    client.subscribe(topic)
 
-    print(f"[MQTT] Subscribe: " f"{command_topic}")
+    print(f"[MQTT] Subscribe: {topic}")
 
-    # 접속 직후 자신의 존재 알림
     send_status()
 
 
@@ -225,16 +225,16 @@ client.on_message = on_message
 
 
 # =============================================================
-# Main
+# 실행
 # =============================================================
 
-print("==========================")
+print("==============================")
 print("OMX MQTT Client")
-print("==========================")
-print(f"Robot ID   : {robot_id}")
-print(f"Broker IP  : {broker_ip}")
-print(f"Broker Port: {broker_port}")
-print("==========================")
+print("==============================")
+print(f"Robot ID    : {robot_id}")
+print(f"Broker      : {broker_ip}")
+print(f"Broker Port : {broker_port}")
+print("==============================")
 
 
 client.connect(
@@ -246,10 +246,6 @@ client.connect(
 client.loop_start()
 
 
-# =============================================================
-# Heartbeat
-# =============================================================
-
 try:
 
     while True:
@@ -258,9 +254,11 @@ try:
 
         time.sleep(2)
 
+
 except KeyboardInterrupt:
 
-    print("[OMX] Stopping...")
+    print("Stopping...")
+
 
 finally:
 
