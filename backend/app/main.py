@@ -122,6 +122,7 @@ async def health():
         "data_source": "mock",
     }
 
+
 async def run_mock_simulation() -> None:
     interval = 0.1  # 약 10Hz
     previous_time = monotonic()
@@ -141,7 +142,9 @@ async def run_mock_simulation() -> None:
 
         # 갱신 후의 상태를 웹에 전송
         for state in mock_fms.robot_snapshots(mode):
-            await manager.broadcast({
-                "type": "telemetry",
-                "data": state,
-            })
+            await manager.broadcast(
+                {
+                    "type": "telemetry",
+                    "data": state,
+                }
+            )
