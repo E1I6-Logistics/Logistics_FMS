@@ -99,50 +99,30 @@ Jetson에서는 모델 하나와 요청 하나만 처리하도록 서버를 실�
 OLLAMA_MAX_LOADED_MODELS=1 OLLAMA_NUM_PARALLEL=1 ollama serve
 ```
 
-Jetson 후보는 **공식 Ollama 모델 파일이 4.5GB 이하인 가장 높은 정밀도 태그**로
-통일한다. 그래서 모델별 정밀도는 FP16, Q8, Q4가 섞인다.
-
-| 모델 계열 | 선택 태그 | 공식 파일 크기 | 선택 이유 |
-| --- | --- | ---: | --- |
-| Qwen3 0.6B | `qwen3:0.6b-fp16` | 1.5GB | FP16이 4.5GB 이하 |
-| DeepSeek R1 1.5B | `deepseek-r1:1.5b-qwen-distill-fp16` | 3.6GB | FP16이 4.5GB 이하 |
-| Llama 3.2 3B | `llama3.2:3b-instruct-q8_0` | 3.4GB | FP16 6.4GB는 초과, Q8 선택 |
-| Qwen3 4B | `qwen3:4b-q8_0` | 4.4GB | FP16 8.1GB는 초과, Q8 선택 |
-| Gemma 3 4B | `gemma3:4b-it-q4_K_M` | 3.3GB | Q8 5.0GB는 초과, Q4 선택 |
-
-태그를 생략한 `ollama pull qwen3:0.6b`와
-`ollama pull deepseek-r1:1.5b`는 FP16 원본을 받는 명령이 아니다. 각각
-기본 Q4 태그인 523MB와 1.1GB 모델을 받는다. FP16을 시험하려면 위 표의
-`-fp16` 태그를 명시해야 한다.
-
-필요한 모델은 다음과 같이 내려받는다.
+Jetson 시험은 별도 FP16·Q8 태그를 지정하지 않고 각 모델의 **Ollama 기본
+태그**를 사용한다. 같은 명령으로 다시 설치할 수 있고, `ollama list`에 표시된
+실제 크기와 양자화 방식도 결과와 함께 기록한다.
 
 ```bash
-ollama pull qwen3:0.6b-fp16
-ollama pull deepseek-r1:1.5b-qwen-distill-fp16
-ollama pull llama3.2:3b-instruct-q8_0
-ollama pull qwen3:4b-q8_0
-ollama pull gemma3:4b-it-q4_K_M
+ollama pull qwen3:0.6b
+ollama pull deepseek-r1:1.5b
+ollama pull llama3.2:3b
+ollama pull qwen3:4b
+ollama pull gemma3:4b
 ```
 
-다섯 파일의 합은 약 16.2GB이므로 저장공간이 15GB라면 동시에 보관할 수 없다.
-모델을 하나씩 받아 시험하고 결과를 백업한 뒤 다음 모델을 받을 때 이전 모델을
-제거한다.
+다운로드 후 실제 태그, 파일 크기, 양자화 방식과 실행 장치를 확인한다.
 
 ```bash
-ollama rm 이전에_시험한_모델태그
+ollama list
+ollama show qwen3:0.6b
+ollama ps
 ```
 
-4.5GB는 모델 파일 선택 상한이다. 실제 실행에서는 모델 가중치 외에 KV cache,
-Ollama 버퍼, 운영체제 메모리가 필요하다. 특히 3.6GB와 4.4GB 모델은 파일이
-기준 안에 들어와도 OOM 또는 CPU/GPU 분할 실행이 발생할 수 있다. 최종 판정은
-`manifest.json`의 `device.models`, `ollama ps`, `tegrastats`로 한다.
-
-모델 태그와 파일 크기 출처:
-[`qwen3`](https://ollama.com/library/qwen3/tags),
-[`deepseek-r1`](https://ollama.com/library/deepseek-r1/tags),
-[`llama3.2`](https://ollama.com/library/llama3.2/tags),
-[`gemma3`](https://ollama.com/library/gemma3/tags).
+실제 실행 메모리는 모델 파일 크기와 같지 않다. KV cache, Ollama 버퍼와
+운영체제 메모리가 추가되므로 최종 구동 여부는 `manifest.json`의
+`device.models`, `ollama ps`, `tegrastats`로 판정한다. 저장공간이 부족하면
+모델별 결과를 백업한 후 `ollama rm 모델태그`로 이전 모델을 제거한다.
 
 다른 컴퓨터의 Ollama 서버를 사용하면 실행 전에 주소를 지정한다.
 
@@ -153,8 +133,8 @@ export OLLAMA_HOST=http://서버주소:11434
 ## 5. Jetson 또는 원격 컴퓨터에서 본 시험 실행
 
 Jetson용 설정은 `simulation/evaluation/route_generation_benchmark_jetson.json`이다.
-모델 파일 상한은 4.5GB이며 `num_ctx=2048`, `num_predict=512`로 모델 하나를
-한 번에 하나씩 실행한다.
+Ollama 기본 태그 5개를 `num_ctx=2048`, `num_predict=512`로 모델 하나씩
+실행한다.
 `num_ctx`는 입력과 출력을 포함하는 문맥 창이고 `num_predict`는 출력 생성
 상한이므로 서로 같은 값이 아니다.
 
@@ -164,7 +144,7 @@ source ~/venv/robot/bin/activate
 
 python -m simulation.evaluation.benchmark \
   --config simulation/evaluation/route_generation_benchmark_jetson.json \
-  --output simulation/benchmark_results/jetson-4_5gb-$(date +%Y%m%d-%H%M%S)
+  --output simulation/benchmark_results/jetson-default-tags-$(date +%Y%m%d-%H%M%S)
 ```
 
 실행기는 모델별 예열 1회를 집계에서 제외하고 5개 경로를 각 5회 실행한다.
@@ -176,7 +156,7 @@ python -m simulation.evaluation.benchmark \
 ```bash
 python -m simulation.evaluation.benchmark \
   --config simulation/evaluation/route_generation_benchmark_jetson.json \
-  --resume simulation/benchmark_results/jetson-4_5gb-실행시각
+  --resume simulation/benchmark_results/jetson-default-tags-실행시각
 ```
 
 설치하지 않은 모델이 있으면 해당 요청은 실패한다. 모델 일부만 시험하려면
@@ -203,7 +183,7 @@ Ollama를 다시 실행하지 않고 저장된 `trials.jsonl`에서 요약과 CS
 
 ```bash
 python -m simulation.evaluation.benchmark \
-  --export-results simulation/benchmark_results/jetson-4_5gb-실행시각
+  --export-results simulation/benchmark_results/jetson-default-tags-실행시각
 ```
 
 이 명령은 모델에 요청하지 않고 `summary.json`, `model_summary.csv`,
@@ -281,11 +261,12 @@ python -m simulation.evaluation.benchmark \
   --output simulation/benchmark_results/pc-v3-$(date +%Y%m%d-%H%M%S)
 ```
 
-### 9.2 Jetson 4.5GB 제한 5종
+### 9.2 Jetson Ollama 기본 태그 5종
 
 Jetson에서는 `simulation/evaluation/route_generation_benchmark_jetson.json`을
-사용한다. 각 계열에서 공식 파일 크기가 4.5GB 이하인 가장 높은 정밀도 태그를
-선택하며, 경로는 PC 시험과 동일한 다섯 개다.
+사용한다. `qwen3:0.6b`, `deepseek-r1:1.5b`, `llama3.2:3b`,
+`qwen3:4b`, `gemma3:4b`의 Ollama 기본 태그를 사용하며, 경로는 PC 시험과
+동일한 다섯 개다.
 
 | 출발→도착 | 기준 최단 경로 | 거리 |
 | --- | --- | ---: |
@@ -545,3 +526,198 @@ df -h ~
 ```
 
 cache를 삭제하면 다음 실행 때 모델을 다시 다운로드한다.
+
+## 11. Kev 경로 선택 시험
+
+Kev는 경로를 생성하는 Ollama 모델이 아니라 `choice`, `score`, `noul` 질문에
+확률을 반환하는 결정 모델이다. 이 저장소의 `KevSelector`는 Kev 서버가 제공하는
+TypeSafe System One 호환 API인 `GET /v1/models`와 `POST /v1/systemone`을
+호출한다. Kev의 pointer head와 temperature calibration을 포함한 공식 runtime을
+사용하므로 일반 PEFT 모델처럼 adapter만 직접 불러오지 않는다.
+
+### 11.1 서버 없는 인터페이스 테스트
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+python -m unittest tests.test_kev_selector -v
+```
+
+이 테스트는 가짜 HTTP 응답으로 API 요청, choice·score·noul 파싱, 전체 확률,
+confidence와 CUDA 강제 검사를 확인한다. 실제 Kev 모델의 정확도와 속도를
+측정하는 시험은 아니다.
+
+### 11.2 실제 Kev 서버 준비
+
+Kev 공식 저장소를 별도 디렉터리에 설치하고 가장 작은 공개 checkpoint인
+`jaredpalmer/kev-0.8b`부터 실행한다. `uv`가 없다면 먼저 공식 설치 방법으로
+설치한다.
+
+```bash
+git clone https://github.com/jaredpalmer/kev.git ~/kev
+cd ~/kev
+uv sync --extra serve
+uv run --extra serve python -m kev.serve \
+  --run jaredpalmer/kev-0.8b \
+  --port 8009
+```
+
+서버 터미널은 계속 실행해 둔다. 다른 터미널에서 메타데이터와 장치를 확인한다.
+
+```bash
+curl http://127.0.0.1:8009/v1/models
+```
+
+Jetson 실제 GPU 시험에서는 응답의 `device`가 `cuda` 또는 `cuda:0`인지 먼저
+확인한다. Kev 0.8B의 공식 실행 가능 장비 표에는 L4와 Apple Silicon이 명시되어
+있으며 Jetson은 명시되어 있지 않으므로, Jetson 실행 가능 여부는 이 단계에서
+직접 검증해야 한다.
+
+### 11.3 FMS 선택기 설정
+
+`simulation/.env`에 다음 값을 설정한다.
+
+```dotenv
+ROUTE_SELECTOR=kev
+KEV_HOST=http://127.0.0.1:8009
+KEV_MODEL=kev-latest
+KEV_TIMEOUT_SECONDS=60
+KEV_REQUIRE_CUDA=true
+# 로컬 기본 서버에 인증을 설정하지 않았다면 비워 둔다.
+# KEV_API_KEY=
+```
+
+### 11.4 실제 Kev 반복 시험
+
+Laya와 동일한 케이스와 결과 형식으로 실행한다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/kev-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 \
+  --warmups 1 \
+  --deadline 0.15
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output simulation/benchmark_results/kev-question-types-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 \
+  --warmups 1
+```
+
+결과에는 선택기 이름, 요청 모델, 응답 모델, confidence, 전체 probabilities,
+정답 여부와 wall/model 지연시간이 저장된다. `manifest.json`의 `device`에서
+실제 Kev 서버가 보고한 backend, dtype과 장치를 함께 확인한다.
+
+## 12. PC와 Jetson 선택 모델 비교
+
+Laya와 Kev는 Ollama 모델의 경로 직접 생성 시험과 분리하여 비교한다. 두 장비에서
+동일한 Git 커밋, checkpoint, 케이스, 반복 횟수와 입력 제한을 사용하고 출력
+폴더만 장비별로 구분한다.
+
+### 12.1 고정 조건
+
+| 항목 | Laya | Kev |
+| --- | --- | --- |
+| checkpoint | `convaiinnovations/laya-multilingual` | `jaredpalmer/kev-0.8b` |
+| 역할 | 경로 후보 선택 | 경로 후보 선택 |
+| 시험 | latency 및 choice·score·noul | latency 및 choice·score·noul |
+| 반복 | 케이스별 5회 | 케이스별 5회 |
+| 예열 | 케이스 그룹별 1회 | 케이스 그룹별 1회 |
+| 실시간 기준 | 0.15초 | 0.15초 |
+
+checkpoint나 입력 길이를 바꾸면 장비 차이와 모델 차이가 섞이므로 같은 비교에
+포함하지 않는다. 변경 시험은 별도 출력 폴더와 별도 결과로 보관한다.
+
+### 12.2 Laya 실행
+
+PC와 Jetson 모두 `simulation/.env`에서 다음 값은 동일하게 사용한다.
+
+```dotenv
+ROUTE_SELECTOR=laya
+LAYA_HF_MODEL=convaiinnovations/laya-multilingual
+LAYA_DEVICE=cuda:0
+LAYA_REQUIRE_CUDA=true
+LAYA_MAX_LENGTH=1024
+```
+
+PC에서는 다음처럼 실행한다.
+
+```bash
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/pc-rtx4070-laya-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output simulation/benchmark_results/pc-rtx4070-laya-question-types-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1
+```
+
+Jetson에서도 같은 명령과 인자를 사용하고 출력 이름만 구분한다.
+
+```bash
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/jetson-orin-laya-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output simulation/benchmark_results/jetson-orin-laya-question-types-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1
+```
+
+### 12.3 Kev 실행
+
+양쪽 장비에서 같은 `jaredpalmer/kev-0.8b` 서버를 로컬로 실행하고
+`simulation/.env`에는 다음 값을 사용한다.
+
+```dotenv
+ROUTE_SELECTOR=kev
+KEV_HOST=http://127.0.0.1:8009
+KEV_MODEL=kev-latest
+KEV_TIMEOUT_SECONDS=60
+KEV_REQUIRE_CUDA=true
+```
+
+PC 결과:
+
+```bash
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/pc-rtx4070-kev-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output simulation/benchmark_results/pc-rtx4070-kev-question-types-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1
+```
+
+Jetson 결과:
+
+```bash
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/jetson-orin-kev-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output simulation/benchmark_results/jetson-orin-kev-question-types-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1
+```
+
+### 12.4 비교 지표
+
+장비별 `manifest.json`, summary JSON과 CSV에서 다음 값을 비교한다.
+
+- `selector_name`, `requested_model`, `response_model`
+- `device.actual`, `device.device_name`, `device.precision`
+- CPU fallback 횟수와 오류 횟수
+- 전체 정확도와 한국어·영어 정확도
+- 직관·사고·최단거리 질문별 정확도
+- choice·score·noul 질문별 정확도
+- wall latency와 model latency의 평균·중앙값·p95
+- 0.15초 실시간 기준 충족률
+- confidence 및 전체 선택지 probabilities
+
+PC와 Jetson의 정확도는 원칙적으로 같아야 한다. 차이가 발생하면 precision,
+checkpoint revision, 라이브러리 버전과 입력 잘림 여부를 먼저 확인한다. 속도는
+중앙값과 p95를 함께 사용하고, 첫 모델 로드 시간은 예열 결과로 분리한다.
