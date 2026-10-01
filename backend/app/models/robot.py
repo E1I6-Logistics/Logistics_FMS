@@ -61,14 +61,20 @@ class Robot:
 
         # 현재 요청된 최종 목적지
         self.goal_node: str | None = None
-        # 현재 위치한 Route Graph Node. 구간 사이에서는 None
-        self.current_node = None
         # 현재 계획된 경로
         self.route = None
 
-        # 점유 상태
+        # 현재 위치한 Route Graph Node. 구간 사이에서는 None
+        self.current_node = None
+
+        # 현재 점유 중인 Node (ex. "3")
         self.occupied_node: str | None = None
+        # 현재 이동 중인 Edge의 도착 Node (ex. "4")
+        self.next_node: str | None = None
+        # 현재 점유 중인 Edge (ex. "edge_3_4")
         self.occupied_edge: str | None = None
+        # 현재 occupied_edge 주행 완료 후 다음으로 점유할 Edge (ex. "edge_4_5")
+        self.next_edge: str | None = None
 
         # 예약 상태
         self.reserved_nodes: list[str] = []
