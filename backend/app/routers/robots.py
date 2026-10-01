@@ -44,6 +44,9 @@ async def fetch_robots():
                 "mode": "real",
                 "source": "ros2",
                 "pose_source": "AMCL",
+                "order_items": robot.order_items.copy(),
+                "pickup_nodes": robot.pickup_nodes.copy(),
+                "workstation_node": robot.workstation_node,
             }
         )
 

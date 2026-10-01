@@ -54,7 +54,7 @@ export default function FmsControlApp() {
   })
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTime(new Date()), 400)
+    const timer = window.setInterval(() => setTime(new Date()), 1000)
     return () => window.clearInterval(timer)
   }, [])
 

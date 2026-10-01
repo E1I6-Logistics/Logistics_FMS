@@ -80,6 +80,19 @@ class Robot:
         self.reserved_nodes: list[str] = []
         self.reserved_edges: list[str] = []
 
+        # 현재 로봇에 할당된 주문
+        self.order_items = {
+            "A": 0,
+            "B": 0,
+            "C": 0,
+            "D": 0,
+        }
+
+        # 주문으로 결정된 픽업 노드
+        self.pickup_nodes: list[str] = []
+        # 주문 완료 후 이동할 작업대 Node
+        self.workstation_node: str | None = None
+
     def set_connected(self, connected: bool) -> None:
         self.connected = connected
 
