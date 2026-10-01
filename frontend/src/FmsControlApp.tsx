@@ -46,6 +46,7 @@ export default function FmsControlApp() {
 
   const remote = useCmdVel({
     robotId: selectedRobot,
+    stopRepeatingOnReject: robotMode === 'real',
     enabled: Boolean(
       selectedRobot &&
       connected &&

@@ -84,8 +84,14 @@ export function useRobotFleet() {
 
   useEffect(() => {
     let cancelled = false
+    let bootComplete = false
     let connectionTimer: number | null = null
     let robotTimer: number | null = null
+    const realMode = mode === 'real'
+    const connectionPollMs = realMode ? 5000 : 2000
+    const robotPollMs = realMode ? 300 : 200
+    const initialRobotPollMs = realMode ? 300 : 1000
+    const pollingPaused = () => realMode && document.hidden
 
     const boot = async () => {
       setLoading(true)
@@ -94,27 +100,54 @@ export function useRobotFleet() {
     }
 
     const pollConnections = async () => {
+      connectionTimer = null
+      if (pollingPaused()) return
       await refreshConnections()
-      if (!cancelled) connectionTimer = window.setTimeout(pollConnections, 2000)
+      if (!cancelled && !pollingPaused()) {
+        connectionTimer = window.setTimeout(pollConnections, connectionPollMs)
+      }
     }
 
     const pollRobots = async () => {
+      robotTimer = null
+      if (pollingPaused()) return
       await refreshRobots()
-      if (!cancelled) robotTimer = window.setTimeout(pollRobots, 200)
+      if (!cancelled && !pollingPaused()) {
+        robotTimer = window.setTimeout(pollRobots, robotPollMs)
+      }
+    }
+
+    const clearPollingTimers = () => {
+      if (connectionTimer !== null) window.clearTimeout(connectionTimer)
+      if (robotTimer !== null) window.clearTimeout(robotTimer)
+      connectionTimer = null
+      robotTimer = null
+    }
+
+    const handleVisibilityChange = () => {
+      if (!realMode || cancelled) return
+      clearPollingTimers()
+      if (document.hidden || !bootComplete) return
+      void pollConnections()
+      void pollRobots()
     }
 
     void boot().then(() => {
       if (cancelled) return
-      connectionTimer = window.setTimeout(pollConnections, 2000)
-      robotTimer = window.setTimeout(pollRobots, 1000)
+      bootComplete = true
+      if (pollingPaused()) return
+      connectionTimer = window.setTimeout(pollConnections, connectionPollMs)
+      robotTimer = window.setTimeout(pollRobots, initialRobotPollMs)
     })
+
+    if (realMode) document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
       cancelled = true
-      if (connectionTimer !== null) window.clearTimeout(connectionTimer)
-      if (robotTimer !== null) window.clearTimeout(robotTimer)
+      if (realMode) document.removeEventListener('visibilitychange', handleVisibilityChange)
+      clearPollingTimers()
     }
-  }, [refreshConnections, refreshMode, refreshRobots])
+  }, [mode, refreshConnections, refreshMode, refreshRobots])
 
   useEffect(() => {
     let socket: WebSocket | null = null

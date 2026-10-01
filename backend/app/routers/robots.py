@@ -47,6 +47,7 @@ async def fetch_robots():
                 "order_items": robot.order_items.copy(),
                 "pickup_nodes": robot.pickup_nodes.copy(),
                 "workstation_node": robot.workstation_node,
+                "current_pickup_node": robot.current_pickup_node,
             }
         )
 

@@ -29,6 +29,12 @@ SLOW_REQUEST_MS = int(os.getenv("FMS_SLOW_REQUEST_MS", "1000"))
 ZENOH_STALE_GRACE_SECONDS = float(
     os.getenv("FMS_ZENOH_STALE_GRACE_SECONDS", "6.0")
 )
+ZENOH_REST_TIMEOUT_SECONDS = float(
+    os.getenv("FMS_ZENOH_REST_TIMEOUT_SECONDS", "2.0")
+)
+ZENOH_CONNECTION_CACHE_TTL_SECONDS = float(
+    os.getenv("FMS_ZENOH_CONNECTION_CACHE_TTL_SECONDS", "3.0")
+)
 
 
 # ============================================================

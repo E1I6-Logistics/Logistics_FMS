@@ -7,6 +7,7 @@ type RemoteConn = 'off' | 'connecting' | 'ready' | 'degraded'
 type Options = {
   robotId: string | null
   enabled: boolean
+  stopRepeatingOnReject?: boolean
   linearSpeed?: number
   angularSpeed?: number
 }
@@ -23,6 +24,7 @@ function isTypingTarget(target: EventTarget | null) {
 export function useCmdVel({
   robotId,
   enabled,
+  stopRepeatingOnReject = false,
   linearSpeed = 0.20,
   angularSpeed = 0.80,
 }: Options) {
@@ -147,6 +149,12 @@ export function useCmdVel({
           if (message?.type === 'cmd_vel_ack') {
             setLastAckAt(Date.now())
           } else if (message?.type === 'error') {
+            if (stopRepeatingOnReject) {
+              // In real mode, a rejected command must not continue at the
+              // 10 Hz hold rate. Simulation behavior remains unchanged.
+              pressedRef.current.clear()
+              setActiveKeys(new Set())
+            }
             reportClientIssue('warning', 'cmd_vel_rejected', message.message ?? 'Command rejected', {
               robot_id: robotId,
             })
@@ -204,7 +212,7 @@ export function useCmdVel({
       pressedRef.current.clear()
       setActiveKeys(new Set())
     }
-  }, [enabled, robotId, stop])
+  }, [enabled, robotId, stop, stopRepeatingOnReject])
 
   useEffect(() => {
     if (!enabled || status !== 'ready') return

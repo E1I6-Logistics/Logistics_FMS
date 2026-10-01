@@ -17,6 +17,8 @@ from .routers.mode import router as mode_router
 from .routers.robots import router as robots_router
 from .routers.websocket import router as websocket_router
 from .routers.client_logs import router as client_logs_router
+from .routers.orders import router as orders_router
+
 from .logging_config import configure_logging
 from .config import SLOW_REQUEST_MS
 from .services.map_service import load_map_metadata
@@ -37,7 +39,6 @@ from time import monotonic
 
 from .services.mock_data import mock_fms
 from .services.websocket_manager import manager
-
 
 configure_logging()
 logger = logging.getLogger("fms.main")
@@ -165,6 +166,7 @@ async def request_logging(request: Request, call_next):
         )
     return response
 
+
 app.include_router(map_router)
 app.include_router(mode_router)
 app.include_router(robots_router)
@@ -172,6 +174,7 @@ app.include_router(commands_router)
 app.include_router(connections_router)
 app.include_router(websocket_router)
 app.include_router(client_logs_router)
+app.include_router(orders_router)
 
 
 @app.get("/")

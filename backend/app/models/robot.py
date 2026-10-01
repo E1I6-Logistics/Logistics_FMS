@@ -64,12 +64,12 @@ class Robot:
         # 현재 계획된 경로
         self.route = None
 
-        # 현재 위치한 Route Graph Node. 구간 사이에서는 None
+        # 현재 위치한 Route Graph 노드. 구간 사이에서는 None
         self.current_node = None
 
-        # 현재 점유 중인 Node (ex. "3")
+        # 현재 점유 중인 노드 (ex. "3")
         self.occupied_node: str | None = None
-        # 현재 이동 중인 Edge의 도착 Node (ex. "4")
+        # 현재 이동 중인 Edge의 도착 노드 (ex. "4")
         self.next_node: str | None = None
         # 현재 점유 중인 Edge (ex. "edge_3_4")
         self.occupied_edge: str | None = None
@@ -90,7 +90,9 @@ class Robot:
 
         # 주문으로 결정된 픽업 노드
         self.pickup_nodes: list[str] = []
-        # 주문 완료 후 이동할 작업대 Node
+        # 현재 처리 중인 주문 픽업 노드
+        self.current_pickup_node: str | None = None
+        # 주문 완료 후 이동할 작업대 노드
         self.workstation_node: str | None = None
 
     def set_connected(self, connected: bool) -> None:
