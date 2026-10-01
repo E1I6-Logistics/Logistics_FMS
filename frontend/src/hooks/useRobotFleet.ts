@@ -10,6 +10,7 @@ import {
   type RobotStateDto,
   type RobotRoute,
 } from '../api/fmsApi'
+import { reportClientIssue } from '../utils/clientLogger'
 
 export type RobotId = 'R-01' | 'R-02' | 'R-03'
 
@@ -52,7 +53,9 @@ export function useRobotFleet() {
   const [modeSwitching, setModeSwitching] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [dashboardStatus, setDashboardStatus] = useState<'connecting' | 'ready' | 'degraded'>('connecting')
   const reconnectTimer = useRef<number | null>(null)
+  const reconnectAttempt = useRef(0)
 
   const refreshMode = useCallback(async () => {
     const result = await getRobotMode()
@@ -81,26 +84,35 @@ export function useRobotFleet() {
 
   useEffect(() => {
     let cancelled = false
+    let connectionTimer: number | null = null
+    let robotTimer: number | null = null
+
     const boot = async () => {
       setLoading(true)
-      await Promise.all([refreshMode(), refreshConnections(), refreshRobots()])
+      await Promise.allSettled([refreshMode(), refreshConnections(), refreshRobots()])
       if (!cancelled) setLoading(false)
     }
-    boot()
-    const connectionTimer = window.setInterval(
-      refreshConnections,
-      2000,
-    )
 
-    const robotTimer = window.setInterval(
-      refreshRobots,
-      100,
-    )
+    const pollConnections = async () => {
+      await refreshConnections()
+      if (!cancelled) connectionTimer = window.setTimeout(pollConnections, 2000)
+    }
+
+    const pollRobots = async () => {
+      await refreshRobots()
+      if (!cancelled) robotTimer = window.setTimeout(pollRobots, 200)
+    }
+
+    void boot().then(() => {
+      if (cancelled) return
+      connectionTimer = window.setTimeout(pollConnections, 2000)
+      robotTimer = window.setTimeout(pollRobots, 1000)
+    })
 
     return () => {
       cancelled = true
-      window.clearInterval(connectionTimer)
-      window.clearInterval(robotTimer)
+      if (connectionTimer !== null) window.clearTimeout(connectionTimer)
+      if (robotTimer !== null) window.clearTimeout(robotTimer)
     }
   }, [refreshConnections, refreshMode, refreshRobots])
 
@@ -109,7 +121,13 @@ export function useRobotFleet() {
     let closedByEffect = false
 
     const connect = () => {
+      setDashboardStatus('connecting')
       socket = new WebSocket(dashboardWsUrl())
+
+      socket.onopen = () => {
+        reconnectAttempt.current = 0
+        setDashboardStatus('ready')
+      }
 
       socket.onmessage = event => {
         try {
@@ -129,15 +147,25 @@ export function useRobotFleet() {
           })
         } catch (e) {
           console.warn('dashboard telemetry parse failed:', e)
+          reportClientIssue('warning', 'dashboard_message_invalid', e)
         }
       }
 
       socket.onclose = () => {
         if (closedByEffect) return
-        reconnectTimer.current = window.setTimeout(connect, 1500)
+        setDashboardStatus('degraded')
+        const attempt = reconnectAttempt.current++
+        const delay = Math.min(15000, 1000 * 2 ** attempt) + Math.round(Math.random() * 500)
+        reportClientIssue('warning', 'dashboard_ws_closed', 'Dashboard WebSocket closed', {
+          reconnect_delay_ms: delay,
+        })
+        reconnectTimer.current = window.setTimeout(connect, delay)
       }
 
-      socket.onerror = () => socket?.close()
+      socket.onerror = () => {
+        reportClientIssue('warning', 'dashboard_ws_error', 'Dashboard WebSocket error')
+        socket?.close()
+      }
     }
 
     connect()
@@ -231,6 +259,7 @@ export function useRobotFleet() {
     modeSwitching,
     loading,
     error,
+    dashboardStatus,
     refreshConnections,
     changeMode,
   }

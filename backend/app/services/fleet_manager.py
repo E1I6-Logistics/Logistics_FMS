@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from ..models.robot import Robot
+
+
+logger = logging.getLogger("fms.fleet")
 
 
 class FleetManager:
@@ -20,8 +25,12 @@ class FleetManager:
         if robot is None:
             robot = Robot(robot_id)
             self._robots[robot_id] = robot
+            logger.info("event=robot_registered robot_id=%s", robot_id)
 
+        was_connected = robot.connected
         robot.set_connected(True)
+        if not was_connected:
+            logger.info("event=robot_connected robot_id=%s", robot_id)
 
         return robot
 
@@ -36,7 +45,9 @@ class FleetManager:
         if robot is None:
             return
 
-        robot.set_connected(False)
+        if robot.connected:
+            logger.warning("event=robot_disconnected robot_id=%s", robot_id)
+            robot.set_connected(False)
 
     def get_robot(self, robot_id: str) -> Robot | None:
         """

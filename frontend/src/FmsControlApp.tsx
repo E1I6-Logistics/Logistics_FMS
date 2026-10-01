@@ -34,10 +34,12 @@ export default function FmsControlApp() {
     modeSwitching,
     changeMode,
     error: fleetError,
+    dashboardStatus,
   } = useRobotFleet()
   const { nodes, edges, nodeItems, loading: graphLoading, error: graphError } = useRouteGraph()
 
   const selectedLiveRobot = managedRobots.find(robot => robot.id === selectedRobot)
+  const knownRobotIds = useMemo(() => managedRobots.map(robot => robot.id), [managedRobots])
   const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
   const connected = Boolean(selectedLiveRobot?.connected)
   const emergencyStopped = selectedLiveRobot?.status === 'EMERGENCY_STOP'
@@ -52,7 +54,7 @@ export default function FmsControlApp() {
   })
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTime(new Date()), 1000)
+    const timer = window.setInterval(() => setTime(new Date()), 400)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -62,10 +64,10 @@ export default function FmsControlApp() {
   }, [selectedRobot])
 
   useEffect(() => {
-    if (selectedRobot && !(managedIds as RobotId[]).includes(selectedRobot)) {
+    if (selectedRobot && !(knownRobotIds as RobotId[]).includes(selectedRobot)) {
       setSelectedRobot(null)
     }
-  }, [managedIds, selectedRobot])
+  }, [knownRobotIds, selectedRobot])
 
   const nearestNode = useMemo(() => {
     if (!selectedLiveRobot?.hasPose) return null
@@ -211,9 +213,13 @@ export default function FmsControlApp() {
             <span style={{ color: C.muted, font: `11px ${MONO}` }}>{clock}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: fleetError ? C.danger : C.success, fontSize: 10.5, fontWeight: 700 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: fleetError ? C.danger : C.success }} />
-              {fleetError ? 'FMS 서버 오류' : `FMS 연결 · 로봇 ${connectedRobotCount}대 온라인`}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: fleetError ? C.danger : dashboardStatus === 'ready' ? C.success : C.warning, fontSize: 10.5, fontWeight: 700 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: fleetError ? C.danger : dashboardStatus === 'ready' ? C.success : C.warning }} />
+              {fleetError
+                ? 'FMS 서버 오류'
+                : dashboardStatus === 'ready'
+                  ? `FMS 연결 · 로봇 ${connectedRobotCount}대 온라인`
+                  : `FMS 실시간 통신 재연결 중 · 로봇 ${connectedRobotCount}대 온라인`}
             </div>
             <div role="group" aria-label="로봇 운용 모드" style={{ display: 'flex', padding: 2, borderRadius: 7, background: '#EEF1F5', border: `1px solid ${C.line}` }}>
               {([
@@ -250,7 +256,7 @@ export default function FmsControlApp() {
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <RobotRail
-            robotIds={managedIds as RobotId[]}
+            robotIds={knownRobotIds as RobotId[]}
             selectedRobot={selectedRobot}
             getStatus={id => managedRobots.find(robot => robot.id === id)?.status ?? ROBOT_DATA[id].status}
             onSelect={setSelectedRobot}
@@ -309,6 +315,7 @@ export default function FmsControlApp() {
             realMode={robotMode === 'real'}
             emergencyStopped={emergencyStopped}
             remoteStatus={remote.status}
+            remoteLastAckAt={remote.lastAckAt}
             remoteKeys={remote.activeKeys}
             busy={busy}
             onRemoteDown={remote.pressKey}
@@ -352,14 +359,15 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
+function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteLastAckAt, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
   realMode: boolean
   emergencyStopped: boolean
-  remoteStatus: 'off' | 'connecting' | 'ready'
+  remoteStatus: 'off' | 'connecting' | 'ready' | 'degraded'
+  remoteLastAckAt: number | null
   remoteKeys: Set<string>
   busy: string | null
   onRemoteDown: (key: string) => void
@@ -418,7 +426,13 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
           <div>
             <div style={{ fontSize: 10, color: C.muted }}>원격제어</div>
             <strong style={{ display: 'block', marginTop: 3, color: connected ? C.success : C.danger, fontSize: 12 }}>
-              {remoteStatus === 'connecting' ? '자동 연결 중' : controlsEnabled ? '● 항상 활성화' : '● 통신 연결 대기'}
+              {remoteStatus === 'connecting'
+                ? '자동 연결 중'
+                : remoteStatus === 'degraded'
+                  ? '● 통신 복구 중'
+                  : controlsEnabled
+                    ? `● 활성${remoteLastAckAt ? ` · ACK ${Math.max(0, Math.round((Date.now() - remoteLastAckAt) / 1000))}초 전` : ''}`
+                    : '● 통신 연결 대기'}
             </strong>
           </div>
           <span style={{ padding: '3px 8px', borderRadius: 20, background: connected ? '#DDF4EA' : '#F1F3F6', color: connected ? '#167A55' : C.muted, fontSize: 9, fontWeight: 800 }}>AUTO</span>

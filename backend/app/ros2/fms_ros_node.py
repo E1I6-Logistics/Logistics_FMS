@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import rclpy as rp
 from rclpy.node import Node
+import logging
 import math
 
 from rclpy.publisher import Publisher
@@ -19,6 +20,9 @@ from ..services.fleet_manager import fleet_manager
 from action_msgs.msg import GoalStatus
 from sensor_msgs.msg import BatteryState
 from turtlebot3_my_msg.action import PrecisionDock
+
+
+logger = logging.getLogger("fms.ros")
 
 
 class FmsRosNode(Node):
@@ -97,6 +101,14 @@ class FmsRosNode(Node):
         # 모든 인터페이스 생성이 끝난 후 등록 처리
         self._registered_robots.add(robot_id)
         self.get_logger().info(f"Robot registered: {robot_id}")
+        logger.info(
+            "event=ros_interfaces_registered robot_id=%s pose_topic=/%s/logitle_pose "
+            "battery_topic=/%s/battery_state cmd_vel_topic=/%s/cmd_vel",
+            robot_id,
+            robot_id,
+            robot_id,
+            robot_id,
+        )
 
     def is_registered(self, robot_id: str) -> bool:
         return robot_id in self._registered_robots
@@ -128,6 +140,10 @@ class FmsRosNode(Node):
 
         # Nav2 FollowWaypoints Action Server 연결 확인
         if not client.wait_for_server(timeout_sec=2.0):
+            logger.warning(
+                "event=navigation_server_unavailable robot_id=%s action=follow_waypoints",
+                robot_id,
+            )
             raise RuntimeError(f"FollowWaypoints Action Server를 찾을 수 없습니다: {robot_id}")
 
         # FollowWaypoints Goal 생성
@@ -160,16 +176,28 @@ class FmsRosNode(Node):
                 rid, feedback
             ),
         )
+        logger.info(
+            "event=navigation_goal_sent robot_id=%s waypoint_count=%s",
+            robot_id,
+            len(poses),
+        )
 
         future.add_done_callback(
             lambda future, rid=robot_id: self._on_follow_waypoints_goal_response(rid, future)
         )
 
     def _on_follow_waypoints_goal_response(self, robot_id: str, future) -> None:
-        goal_handle = future.result()
+        try:
+            goal_handle = future.result()
+        except Exception:
+            logger.exception(
+                "event=navigation_goal_response_failed robot_id=%s", robot_id
+            )
+            raise
 
         if not goal_handle.accepted:
             self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
+            logger.warning("event=navigation_goal_rejected robot_id=%s", robot_id)
             if self.navigation_result_callback:
                 self.navigation_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
             return
@@ -177,6 +205,7 @@ class FmsRosNode(Node):
         self._follow_waypoints_goal_handles[robot_id] = goal_handle
 
         self.get_logger().info(f"FollowWaypoints goal accepted: {robot_id}")
+        logger.info("event=navigation_goal_accepted robot_id=%s", robot_id)
 
         result_future = goal_handle.get_result_async()
 
@@ -187,7 +216,11 @@ class FmsRosNode(Node):
         )
 
     def _on_follow_waypoints_result(self, robot_id: str, goal_handle, future) -> None:
-        result = future.result()
+        try:
+            result = future.result()
+        except Exception:
+            logger.exception("event=navigation_result_failed robot_id=%s", robot_id)
+            raise
 
         # 종료된 Goal이 현재 실행 중인 Goal일 때만 삭제
         current_handle = self._follow_waypoints_goal_handles.get(robot_id)
@@ -198,6 +231,9 @@ class FmsRosNode(Node):
             return
 
         self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
+        logger.info(
+            "event=navigation_finished robot_id=%s status=%s", robot_id, result.status
+        )
 
         if self.navigation_result_callback:
             self.navigation_result_callback(robot_id, result.status)
@@ -231,10 +267,17 @@ class FmsRosNode(Node):
     def _on_follow_waypoints_cancel(
         self, robot_id: str, goal_handle, future, callback=None
     ) -> None:
-        response = future.result()
+        try:
+            response = future.result()
+        except Exception:
+            logger.exception("event=navigation_cancel_failed robot_id=%s", robot_id)
+            raise
 
         if not response.goals_canceling:
             self.get_logger().warning(f"FollowWaypoints cancel failed: {robot_id}")
+            logger.warning(
+                "event=navigation_cancel_rejected robot_id=%s", robot_id
+            )
             return
 
         self.get_logger().info(f"FollowWaypoints cancel accepted: {robot_id}")

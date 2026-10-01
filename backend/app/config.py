@@ -20,6 +20,16 @@ MAP_DIR = BASE_DIR / "maps"
 # Route Graph 파일 저장 디렉터리 경로 생성
 ROUTE_DIR = BASE_DIR / "routes"
 
+# Runtime log directory and rotation settings.
+LOG_DIR = BASE_DIR / os.getenv("FMS_LOG_DIR", "logs")
+LOG_LEVEL = os.getenv("FMS_LOG_LEVEL", "INFO").strip().upper()
+LOG_MAX_BYTES = int(os.getenv("FMS_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+LOG_BACKUP_COUNT = int(os.getenv("FMS_LOG_BACKUP_COUNT", "10"))
+SLOW_REQUEST_MS = int(os.getenv("FMS_SLOW_REQUEST_MS", "1000"))
+ZENOH_STALE_GRACE_SECONDS = float(
+    os.getenv("FMS_ZENOH_STALE_GRACE_SECONDS", "6.0")
+)
+
 
 # ============================================================
 # Map / Route Graph

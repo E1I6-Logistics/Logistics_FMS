@@ -1,3 +1,5 @@
+import { reportClientIssue } from '../utils/clientLogger'
+
 const DEFAULT_API_BASE = `${window.location.protocol}//${window.location.hostname}:8000`
 const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? DEFAULT_API_BASE).replace(/\/$/, '')
 
@@ -68,12 +70,35 @@ export function setRobotMode(mode: RobotMode) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init)
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text}` : ''}`)
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 5000)
+  const started = performance.now()
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal })
+    if (!response.ok) {
+      const text = await response.text()
+      const error = new Error(`${response.status} ${response.statusText}${text ? `: ${text}` : ''}`)
+      reportClientIssue(response.status >= 500 ? 'error' : 'warning', 'http_error', error, {
+        method: init?.method ?? 'GET',
+        path,
+        status: response.status,
+        duration_ms: Math.round(performance.now() - started),
+      })
+      throw error
+    }
+    return response.json() as Promise<T>
+  } catch (error) {
+    if (!(error instanceof Error && /^\d{3} /.test(error.message))) {
+      reportClientIssue('warning', 'fetch_failed', error, {
+        method: init?.method ?? 'GET',
+        path,
+        duration_ms: Math.round(performance.now() - started),
+      })
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
   }
-  return response.json() as Promise<T>
 }
 
 export function getRouteNodes() {

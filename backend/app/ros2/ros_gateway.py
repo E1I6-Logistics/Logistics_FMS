@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from copy import deepcopy
 
@@ -21,6 +22,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .fms_ros_node import FmsRosNode
+
+
+logger = logging.getLogger("fms.ros_gateway")
 
 GOAL_YAWS = {
     "0": 0.0,
@@ -106,6 +110,9 @@ class RosGateway:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
 
         self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=linear_x, angular_z=angular_z)
+
+        if linear_x == 0.0 and angular_z == 0.0:
+            logger.info("event=cmd_vel_stop_published robot_id=%s", robot_id)
 
         if linear_x == 0.0 and angular_z == 0.0:
             robot.set_state(RobotState.IDLE)
@@ -222,6 +229,13 @@ class RosGateway:
 
         if robot.state == RobotState.EMERGENCY_STOP:
             raise ValueError(f"비상정지 상태입니다: {robot_id}")
+
+        logger.info(
+            "event=navigation_requested robot_id=%s target_node=%s connected=%s",
+            robot_id,
+            node_id,
+            robot.connected,
+        )
 
         self._ros_node.cancel_follow_waypoints(
             robot_id, callback=lambda: self._start_navigation(robot_id, node_id)
@@ -404,6 +418,11 @@ class RosGateway:
         try:
             self._ros_node.send_follow_waypoints_goal(robot_id=robot_id, waypoints=waypoints)
         except (ValueError, RuntimeError):
+            logger.exception(
+                "event=navigation_dispatch_failed robot_id=%s target_node=%s",
+                robot_id,
+                node_id,
+            )
             robot.set_state(RobotState.PAUSED)
             raise
 

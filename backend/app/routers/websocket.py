@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..ros2.ros_gateway import ros_gateway
@@ -11,6 +12,7 @@ from ..services.map_service import world_to_pixel
 from ..schemas.robot import to_ui_robot_id
 
 router = APIRouter(tags=["websocket"])
+logger = logging.getLogger("fms.websocket")
 
 
 @router.websocket("/ws/dashboard")
@@ -61,6 +63,10 @@ async def dashboard_websocket(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
+    except Exception:
+        logger.exception(
+            "event=dashboard_ws_unexpected_error connection_id=%s", id(websocket)
+        )
     finally:
         manager.disconnect(websocket)
 
@@ -68,6 +74,7 @@ async def dashboard_websocket(websocket: WebSocket):
 @router.websocket("/ws/cmd_vel")
 async def cmd_vel_websocket(websocket: WebSocket):
     await websocket.accept()
+    logger.info("event=cmd_vel_ws_connected connection_id=%s", id(websocket))
     try:
         while True:
             data = await websocket.receive_json()
@@ -92,6 +99,18 @@ async def cmd_vel_websocket(websocket: WebSocket):
                 await websocket.send_json(acknowledgement)
 
             except (TypeError, ValueError, RuntimeError) as exc:
+                logger.warning(
+                    "event=cmd_vel_rejected connection_id=%s robot_id=%s error=%s",
+                    id(websocket),
+                    robot_id or "unknown",
+                    exc,
+                )
                 await websocket.send_json({"type": "error", "message": str(exc)})
     except WebSocketDisconnect:
         pass
+    except Exception:
+        logger.exception(
+            "event=cmd_vel_ws_unexpected_error connection_id=%s", id(websocket)
+        )
+    finally:
+        logger.info("event=cmd_vel_ws_disconnected connection_id=%s", id(websocket))

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cmdVelWsUrl } from '../api/fmsApi'
+import { reportClientIssue } from '../utils/clientLogger'
 
-type RemoteConn = 'off' | 'connecting' | 'ready'
+type RemoteConn = 'off' | 'connecting' | 'ready' | 'degraded'
 
 type Options = {
   robotId: string | null
@@ -26,8 +27,11 @@ export function useCmdVel({
   angularSpeed = 0.80,
 }: Options) {
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const reconnectAttemptRef = useRef(0)
   const pressedRef = useRef<Set<string>>(new Set())
   const [status, setStatus] = useState<RemoteConn>('off')
+  const [lastAckAt, setLastAckAt] = useState<number | null>(null)
   const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set())
 
   const computeTwist = useCallback(() => {
@@ -50,11 +54,15 @@ export function useCmdVel({
     const ws = wsRef.current
     if (!robotId || !ws || ws.readyState !== WebSocket.OPEN) return
     const { linearX, angularZ } = computeTwist()
-    ws.send(JSON.stringify({
-      robot_id: robotId,
-      linear_x: linearX,
-      angular_z: angularZ,
-    }))
+    try {
+      ws.send(JSON.stringify({
+        robot_id: robotId,
+        linear_x: linearX,
+        angular_z: angularZ,
+      }))
+    } catch (error) {
+      reportClientIssue('warning', 'cmd_vel_send_failed', error, { robot_id: robotId })
+    }
   }, [robotId, computeTwist])
 
   const stop = useCallback(() => {
@@ -62,7 +70,11 @@ export function useCmdVel({
     setActiveKeys(new Set())
     const ws = wsRef.current
     if (!robotId || !ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({ robot_id: robotId, linear_x: 0, angular_z: 0 }))
+    try {
+      ws.send(JSON.stringify({ robot_id: robotId, linear_x: 0, angular_z: 0 }))
+    } catch (error) {
+      reportClientIssue('warning', 'cmd_vel_stop_failed', error, { robot_id: robotId })
+    }
   }, [robotId])
 
   const pressKey = useCallback((key: string) => {
@@ -83,6 +95,7 @@ export function useCmdVel({
   }, [sendCurrent])
 
   useEffect(() => {
+    setLastAckAt(null)
     if (!enabled || !robotId) {
       stop()
       if (wsRef.current) {
@@ -93,24 +106,100 @@ export function useCmdVel({
       return
     }
 
-    setStatus('connecting')
-    const ws = new WebSocket(cmdVelWsUrl())
-    wsRef.current = ws
+    let disposed = false
 
-    ws.onopen = () => setStatus('ready')
-    ws.onerror = () => setStatus('off')
-    ws.onclose = () => {
-      if (wsRef.current === ws) wsRef.current = null
-      setStatus('off')
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimerRef.current !== null) return
+      const attempt = reconnectAttemptRef.current++
+      const delay = Math.min(15000, 1000 * 2 ** attempt) + Math.round(Math.random() * 500)
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null
+        connect()
+      }, delay)
     }
 
+    const connect = () => {
+      if (disposed) return
+      if (!navigator.onLine) {
+        setStatus('degraded')
+        scheduleReconnect()
+        return
+      }
+
+      setStatus('connecting')
+      const ws = new WebSocket(cmdVelWsUrl())
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        if (disposed) return
+        const restoredConnection = reconnectAttemptRef.current > 0
+        reconnectAttemptRef.current = 0
+        setStatus('ready')
+        // Only a restored channel needs an explicit stop. Initial selection keeps
+        // the existing control behavior unchanged.
+        if (restoredConnection) {
+          ws.send(JSON.stringify({ robot_id: robotId, linear_x: 0, angular_z: 0 }))
+        }
+      }
+      ws.onmessage = event => {
+        try {
+          const message = JSON.parse(event.data)
+          if (message?.type === 'cmd_vel_ack') {
+            setLastAckAt(Date.now())
+          } else if (message?.type === 'error') {
+            reportClientIssue('warning', 'cmd_vel_rejected', message.message ?? 'Command rejected', {
+              robot_id: robotId,
+            })
+          }
+        } catch (error) {
+          reportClientIssue('warning', 'cmd_vel_message_invalid', error, { robot_id: robotId })
+        }
+      }
+      ws.onerror = () => {
+        reportClientIssue('warning', 'cmd_vel_ws_error', 'cmd_vel WebSocket error', {
+          robot_id: robotId,
+        })
+        ws.close()
+      }
+      ws.onclose = event => {
+        if (wsRef.current === ws) wsRef.current = null
+        if (disposed) return
+        pressedRef.current.clear()
+        setActiveKeys(new Set())
+        setStatus('degraded')
+        reportClientIssue('warning', 'cmd_vel_ws_closed', 'cmd_vel WebSocket closed', {
+          robot_id: robotId,
+          close_code: event.code,
+        })
+        scheduleReconnect()
+      }
+    }
+
+    const reconnectNow = () => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      if (!wsRef.current) connect()
+    }
+
+    window.addEventListener('online', reconnectNow)
+    connect()
+
     return () => {
+      disposed = true
+      window.removeEventListener('online', reconnectNow)
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      const ws = wsRef.current
       try {
-        if (ws.readyState === WebSocket.OPEN && robotId) {
+        if (ws?.readyState === WebSocket.OPEN && robotId) {
           ws.send(JSON.stringify({ robot_id: robotId, linear_x: 0, angular_z: 0 }))
         }
       } catch { /* ignore */ }
-      ws.close()
+      ws?.close()
       if (wsRef.current === ws) wsRef.current = null
       pressedRef.current.clear()
       setActiveKeys(new Set())
@@ -164,6 +253,7 @@ export function useCmdVel({
 
   return {
     status,
+    lastAckAt,
     activeKeys,
     pressKey,
     releaseKey,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter
@@ -10,6 +11,7 @@ from ..services.mode_service import mode_manager
 from ..services.websocket_manager import manager
 
 router = APIRouter(prefix="/api/mode", tags=["mode"])
+logger = logging.getLogger("fms.mode")
 
 
 class ModeRequest(BaseModel):
@@ -32,7 +34,14 @@ async def get_mode():
 
 @router.put("")
 async def set_mode(payload: ModeRequest):
+    previous_mode = mode_manager.mode
     mode_manager.set_mode(payload.mode)
+    if previous_mode != mode_manager.mode:
+        logger.info(
+            "event=mode_changed previous=%s current=%s",
+            previous_mode,
+            mode_manager.mode,
+        )
     await manager.broadcast(
         {"type": "system", "data": {"mode": mode_manager.mode, "source": "mock"}}
     )

@@ -2,6 +2,16 @@
 
 set -Eeuo pipefail
 
+ROS_DOMAIN_ID="${FMS_ROS_DOMAIN_ID:-15}"
+RMW_IMPLEMENTATION="rmw_cyclonedds_cpp"
+ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST"
+
+export ROS_DOMAIN_ID
+export RMW_IMPLEMENTATION
+export ROS_AUTOMATIC_DISCOVERY_RANGE
+unset ROS_LOCALHOST_ONLY
+
+
 # FMS development launcher
 # - Docker: Zenoh Router only
 # - Host: FastAPI, Vite, ROS 2 daemon, zenoh-bridge-ros2dds
@@ -193,11 +203,11 @@ cd "$PROJECT_DIR"
 nohup "$PYTHON_BIN" -m uvicorn backend.app.main:app \
     --host 0.0.0.0 \
     --port "$BACKEND_PORT" \
-    >"$LOG_DIR/backend.log" 2>&1 &
+    >"$LOG_DIR/backend-console.log" 2>&1 &
 BACKEND_PID=$!
 printf '%s\n' "$BACKEND_PID" >"$LOG_DIR/backend.pid"
 wait_for_http "http://127.0.0.1:$BACKEND_PORT/health" 60 || {
-    tail -n 100 "$LOG_DIR/backend.log" || true
+    tail -n 100 "$LOG_DIR/backend-console.log" || true
     fail "Backend health check failed"
 }
 
@@ -216,7 +226,7 @@ wait_for_http "http://127.0.0.1:$FRONTEND_PORT/" 60 || {
 
 CLEANUP_ON_EXIT=0
 
-cat <<EOF
+cat << EOF
 
 ========================================
  FMS start complete
@@ -226,7 +236,7 @@ Backend      : http://127.0.0.1:$BACKEND_PORT
 Zenoh Router : $ZENOH_CONNECT_ENDPOINT
 
 Logs:
-  Backend      : $LOG_DIR/backend.log
+  Backend      : $LOG_DIR/backend-console.log
   Frontend     : $LOG_DIR/frontend.log
   Zenoh Bridge : $LOG_DIR/zenoh_bridge.log
   Zenoh Router : ${DOCKER[*]} compose -f $COMPOSE_FILE logs -f zenoh-router

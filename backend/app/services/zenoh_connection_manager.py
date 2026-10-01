@@ -1,20 +1,50 @@
 from __future__ import annotations
 
 import json
+import logging
+from threading import RLock
+from time import monotonic
 from urllib.request import urlopen
 from typing import Any
 
+from ..config import ZENOH_STALE_GRACE_SECONDS
+
 ZENOH_REST_BASE = "http://127.0.0.1:8001"
+logger = logging.getLogger("fms.zenoh")
 
 
 class ZenohConnectionManager:
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._known_devices: dict[str, dict[str, Any]] = {}
+        self._last_seen: dict[str, float] = {}
+        self._last_success_at: float | None = None
+        self._consecutive_failures = 0
 
     def _get_json(self, path: str) -> list[dict[str, Any]]:
-        with urlopen(
-            f"{ZENOH_REST_BASE}{path}",
-            timeout=2.0,
-        ) as response:
-            return json.load(response)
+        started = monotonic()
+        try:
+            with urlopen(
+                f"{ZENOH_REST_BASE}{path}",
+                timeout=2.0,
+            ) as response:
+                result = json.load(response)
+        except Exception:
+            logger.exception(
+                "event=zenoh_rest_failed path=%s duration_ms=%.1f",
+                path,
+                (monotonic() - started) * 1000,
+            )
+            raise
+
+        duration_ms = (monotonic() - started) * 1000
+        if duration_ms >= 1000:
+            logger.warning(
+                "event=zenoh_rest_slow path=%s duration_ms=%.1f",
+                path,
+                duration_ms,
+            )
+        return result
 
     def _get_sessions(self) -> dict[str, str]:
         data = self._get_json("/@/local/router")
@@ -83,12 +113,21 @@ class ZenohConnectionManager:
         return result
 
     def connections(self) -> list[dict[str, Any]]:
+        now = monotonic()
         try:
             sessions = self._get_sessions()
             robot_routes = self._get_robot_routes()
-        except Exception:
-            sessions = {}
-            robot_routes = {}
+        except Exception as exc:
+            with self._lock:
+                self._consecutive_failures += 1
+                logger.warning(
+                    "event=zenoh_snapshot_unavailable consecutive_failures=%s "
+                    "known_robots=%s error=%r",
+                    self._consecutive_failures,
+                    len(self._known_devices),
+                    exc,
+                )
+                return self._unavailable_snapshot()
 
         connected: dict[str, dict[str, Any]] = {}
 
@@ -113,7 +152,71 @@ class ZenohConnectionManager:
                 "zid": zid,
             }
 
-        return sorted(connected.values(), key=lambda device: device["name"])
+        with self._lock:
+            previous_connected = {
+                robot_id
+                for robot_id, device in self._known_devices.items()
+                if device.get("connected")
+            }
+            current_connected = set(connected)
+
+            for robot_id, device in connected.items():
+                self._known_devices[robot_id] = device
+                self._last_seen[robot_id] = now
+
+            # Preserve known robots in API responses so a transient discovery
+            # gap does not make UI rows disappear. They are deliberately marked
+            # disconnected, so commands remain blocked until Zenoh confirms them.
+            for robot_id, device in list(self._known_devices.items()):
+                if robot_id in current_connected:
+                    continue
+                last_seen = self._last_seen.get(robot_id)
+                age = None if last_seen is None else now - last_seen
+                retained = dict(device)
+                retained["connected"] = False
+                retained["state"] = (
+                    "DEGRADED"
+                    if age is not None and age <= ZENOH_STALE_GRACE_SECONDS
+                    else "OFFLINE"
+                )
+                self._known_devices[robot_id] = retained
+
+            self._last_success_at = now
+            self._consecutive_failures = 0
+
+            newly_connected = current_connected - previous_connected
+            newly_disconnected = previous_connected - current_connected
+            if newly_connected:
+                logger.info(
+                    "event=zenoh_robots_connected robots=%s session_count=%s "
+                    "route_robot_count=%s",
+                    sorted(newly_connected),
+                    len(sessions),
+                    len(robot_routes),
+                )
+            if newly_disconnected:
+                logger.warning(
+                    "event=zenoh_robots_disconnected robots=%s "
+                    "session_count=%s route_robot_count=%s",
+                    sorted(newly_disconnected),
+                    len(sessions),
+                    len(robot_routes),
+                )
+
+            return sorted(
+                (dict(device) for device in self._known_devices.values()),
+                key=lambda device: device["name"],
+            )
+
+    def _unavailable_snapshot(self) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for robot_id, device in list(self._known_devices.items()):
+            retained = dict(device)
+            retained["connected"] = False
+            retained["state"] = "DEGRADED"
+            self._known_devices[robot_id] = retained
+            result.append(retained)
+        return sorted(result, key=lambda device: device["name"])
 
 
 zenoh_connection_manager = ZenohConnectionManager()

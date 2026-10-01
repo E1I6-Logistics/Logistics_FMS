@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
+import os
+from time import perf_counter
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS
@@ -12,6 +16,9 @@ from .routers.map import router as map_router
 from .routers.mode import router as mode_router
 from .routers.robots import router as robots_router
 from .routers.websocket import router as websocket_router
+from .routers.client_logs import router as client_logs_router
+from .logging_config import configure_logging
+from .config import SLOW_REQUEST_MS
 from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
 from .services.route_graph import load_route_graph
@@ -19,7 +26,7 @@ from .services.route_graph import load_route_graph
 import threading
 
 import rclpy
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 
 from .ros2.fms_ros_node import FmsRosNode
 from .ros2.ros_gateway import ros_gateway
@@ -32,8 +39,20 @@ from .services.mock_data import mock_fms
 from .services.websocket_manager import manager
 
 
+configure_logging()
+logger = logging.getLogger("fms.main")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
+    logger.info(
+        "event=backend_start mode=%s ros_domain_id=%s rmw=%s discovery_range=%s",
+        mode_manager.mode,
+        os.getenv("ROS_DOMAIN_ID", "unset"),
+        os.getenv("RMW_IMPLEMENTATION", "unset"),
+        os.getenv("ROS_AUTOMATIC_DISCOVERY_RANGE", "unset"),
+    )
 
     load_map_metadata()
     load_route_graph()
@@ -50,9 +69,18 @@ async def lifespan(app: FastAPI):
     ros_gateway.set_ros_node(ros_node)
 
     # FastAPI와 별도 Thread에서 ROS2 spin
+    def spin_ros() -> None:
+        try:
+            executor.spin()
+        except ExternalShutdownException:
+            logger.info("event=ros_executor_shutdown")
+        except Exception:
+            logger.exception("event=ros_executor_stopped_unexpectedly")
+
     ros_thread = threading.Thread(
-        target=executor.spin,
+        target=spin_ros,
         daemon=True,
+        name="fms-ros-executor",
     )
 
     ros_thread.start()
@@ -66,6 +94,7 @@ async def lifespan(app: FastAPI):
         yield
 
     finally:
+        logger.info("event=backend_shutdown_started")
         simulation_task.cancel()
 
         try:
@@ -79,6 +108,7 @@ async def lifespan(app: FastAPI):
                 rclpy.shutdown()
 
             ros_thread.join(timeout=2.0)
+            logger.info("event=backend_shutdown_complete")
 
 
 app = FastAPI(
@@ -95,12 +125,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid4().hex[:12]
+    started = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (perf_counter() - started) * 1000
+        logger.exception(
+            "event=http_request_failed request_id=%s method=%s path=%s duration_ms=%.1f",
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = (perf_counter() - started) * 1000
+    response.headers["x-request-id"] = request_id
+    if response.status_code >= 400:
+        logger.warning(
+            "event=http_error request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    elif duration_ms >= SLOW_REQUEST_MS:
+        logger.warning(
+            "event=http_slow request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    return response
+
 app.include_router(map_router)
 app.include_router(mode_router)
 app.include_router(robots_router)
 app.include_router(commands_router)
 app.include_router(connections_router)
 app.include_router(websocket_router)
+app.include_router(client_logs_router)
 
 
 @app.get("/")
