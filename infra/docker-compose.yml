@@ -1,4 +1,13 @@
 services:
+  mqtt-broker:
+    image: eclipse-mosquitto:2
+    container_name: fms-mqtt-broker
+    network_mode: host
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+    volumes:
+      - ./mosquitto.conf:/mosquitto-no-auth.conf:ro
+    restart: unless-stopped
+
   zenoh-router:
     image: eclipse/zenoh:1.9.0
     container_name: fms-zenoh-router

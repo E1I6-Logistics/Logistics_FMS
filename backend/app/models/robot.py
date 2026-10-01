@@ -15,6 +15,7 @@ class RobotState(str, Enum):
     TASK_ASSIGNED = "TASK_ASSIGNED"
     MOVING = "MOVING"
     WAITING = "WAITING"
+    ALIGNING = "ALIGNING"
     PAUSED = "PAUSED"
     DOCKING = "DOCKING"
     EMERGENCY_STOP = "EMERGENCY_STOP"
@@ -94,6 +95,17 @@ class Robot:
         self.current_pickup_node: str | None = None
         # 주문 완료 후 이동할 작업대 노드
         self.workstation_node: str | None = None
+
+        # 현재 주문 진행 상태
+        self.order_id: str | None = None
+        self.order_status: str | None = None
+        self.order_phase: str | None = None
+
+        # OMX가 보고한 현재 적재 수량
+        self.loaded_count: int = 0
+
+        # 새 행동 요청이 이전 취소 콜백보다 최신인지 확인하는 번호
+        self.action_request_id: int = 0
 
     def set_connected(self, connected: bool) -> None:
         self.connected = connected

@@ -207,6 +207,11 @@ export type RobotStateDto = {
   pixel_y?: number | null
   map_pose_received: boolean
   connection_state: string
+  order_items?: { A: number; B: number; C: number; D: number }
+  order_id?: string | null
+  order_status?: string | null
+  order_phase?: string | null
+  loaded_count?: number
 }
 
 export function getConnections() {

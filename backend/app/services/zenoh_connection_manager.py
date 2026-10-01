@@ -165,7 +165,7 @@ class ZenohConnectionManager:
                         len(self._known_devices),
                         exc,
                     )
-                    return self._unavailable_snapshot()
+                    return self._unavailable_snapshot(monotonic())
 
             connected: dict[str, dict[str, Any]] = {}
 
@@ -204,28 +204,30 @@ class ZenohConnectionManager:
                     self._known_devices[robot_id] = device
                     self._last_seen[robot_id] = now
 
-                # Preserve known robots in API responses so a transient discovery
-                # gap does not make UI rows disappear. They are deliberately marked
-                # disconnected, so commands remain blocked until Zenoh confirms them.
+                # 짧은 Admin route 누락은 실제 로봇 단절로 확정하지 않는다.
                 for robot_id, device in list(self._known_devices.items()):
                     if robot_id in current_connected:
                         continue
                     last_seen = self._last_seen.get(robot_id)
                     age = None if last_seen is None else now - last_seen
                     retained = dict(device)
-                    retained["connected"] = False
-                    retained["state"] = (
-                        "DEGRADED"
-                        if age is not None and age <= ZENOH_STALE_GRACE_SECONDS
-                        else "OFFLINE"
+                    within_grace = (
+                        age is not None and age <= ZENOH_STALE_GRACE_SECONDS
                     )
+                    retained["connected"] = within_grace
+                    retained["state"] = "DEGRADED" if within_grace else "OFFLINE"
                     self._known_devices[robot_id] = retained
 
                 self._last_success_at = now
                 self._consecutive_failures = 0
 
-                newly_connected = current_connected - previous_connected
-                newly_disconnected = previous_connected - current_connected
+                effective_connected = {
+                    robot_id
+                    for robot_id, device in self._known_devices.items()
+                    if device.get("connected")
+                }
+                newly_connected = effective_connected - previous_connected
+                newly_disconnected = previous_connected - effective_connected
                 if newly_connected:
                     logger.info(
                         "event=zenoh_robots_connected robots=%s session_count=%s "
@@ -259,12 +261,15 @@ class ZenohConnectionManager:
             key=lambda device: device["name"],
         )
 
-    def _unavailable_snapshot(self) -> list[dict[str, Any]]:
+    def _unavailable_snapshot(self, now: float) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         for robot_id, device in list(self._known_devices.items()):
             retained = dict(device)
-            retained["connected"] = False
-            retained["state"] = "DEGRADED"
+            last_seen = self._last_seen.get(robot_id)
+            age = None if last_seen is None else now - last_seen
+            within_grace = age is not None and age <= ZENOH_STALE_GRACE_SECONDS
+            retained["connected"] = within_grace
+            retained["state"] = "DEGRADED" if within_grace else "OFFLINE"
             self._known_devices[robot_id] = retained
             result.append(retained)
         return sorted(result, key=lambda device: device["name"])

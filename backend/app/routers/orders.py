@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 @router.post("")
 async def create_order(request: CreateOrderRequest):
-
+    order_result = None
     try:
         # ====================================================
         # 1. 주문 저장 + 픽업 Node 결정
@@ -34,7 +34,9 @@ async def create_order(request: CreateOrderRequest):
         # ====================================================
 
         navigation_result = ros_gateway.navigate_to_node(
-            robot_id=order_result["robot_id"], node_id=destination_node
+            robot_id=order_result["robot_id"],
+            node_id=destination_node,
+            preserve_order=True,
         )
 
         # ====================================================
@@ -42,15 +44,23 @@ async def create_order(request: CreateOrderRequest):
         # ====================================================
 
         return {
+            "order_id": order_result["order_id"],
             "robot_id": order_result["robot_id"],
             "items": order_result["items"],
             "total_quantity": request.total_quantity,
             "pickup_nodes": order_result["pickup_nodes"],
             "workstation_node": order_result["workstation_node"],
             "destination_node": destination_node,
-            "status": "PROCESSING",
+            "status": order_result["status"],
+            "phase": order_result["phase"],
             "navigation": navigation_result,
         }
 
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except (KeyError, ValueError) as exc:
+        if order_result is not None:
+            order_service.mark_dispatch_failed(order_result["robot_id"], exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if order_result is not None:
+            order_service.mark_dispatch_failed(order_result["robot_id"], exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

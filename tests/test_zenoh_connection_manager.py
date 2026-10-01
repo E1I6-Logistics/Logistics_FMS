@@ -21,7 +21,7 @@ def test_transient_admin_failure_retains_robot_as_degraded(monkeypatch):
     degraded = manager.connections()
 
     assert degraded[0]["name"] == "robot1"
-    assert degraded[0]["connected"] is False
+    assert degraded[0]["connected"] is True
     assert degraded[0]["state"] == "DEGRADED"
 
 

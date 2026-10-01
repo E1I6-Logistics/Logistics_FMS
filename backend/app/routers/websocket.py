@@ -54,7 +54,12 @@ async def dashboard_websocket(websocket: WebSocket):
                     "map_pose_received": robot.x is not None and robot.y is not None,
                     "mode": mode_manager.mode,
                     "source": "ros2",
-                    "pose_source": "AMCL",
+                    "pose_source": "logitle_pose",
+                    "order_items": robot.order_items.copy(),
+                    "order_id": robot.order_id,
+                    "order_status": robot.order_status,
+                    "order_phase": robot.order_phase,
+                    "loaded_count": robot.loaded_count,
                 }
                 print("[REAL WS]", robot.robot_id, "route=", robot.route)
                 await websocket.send_json({"type": "telemetry", "data": state})

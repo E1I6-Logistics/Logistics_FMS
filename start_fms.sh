@@ -29,6 +29,7 @@ LOG_DIR="${FMS_LOG_DIR:-$PROJECT_DIR/logs}"
 BACKEND_PORT="${FMS_BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FMS_FRONTEND_PORT:-5173}"
 ZENOH_PORT="${FMS_ZENOH_PORT:-7447}"
+MQTT_PORT="${FMS_MQTT_BROKER_PORT:-1883}"
 
 VENV_DIR="${FMS_VENV_DIR:-$HOME/venv/robot}"
 PYTHON_BIN="${FMS_PYTHON:-$VENV_DIR/bin/python}"
@@ -173,8 +174,12 @@ if [ "${FMS_CLEAN_START:-1}" = "1" ]; then
 fi
 CLEANUP_ON_EXIT=1
 
-log "Starting Zenoh Router with Docker Compose"
-"${DOCKER[@]}" compose -f "$COMPOSE_FILE" up -d zenoh-router
+log "Starting MQTT Broker and Zenoh Router with Docker Compose"
+"${DOCKER[@]}" compose -f "$COMPOSE_FILE" up -d mqtt-broker zenoh-router
+wait_for_tcp "127.0.0.1" "$MQTT_PORT" 30 || {
+    "${DOCKER[@]}" compose -f "$COMPOSE_FILE" logs --tail 100 mqtt-broker || true
+    fail "MQTT Broker did not open port $MQTT_PORT"
+}
 wait_for_tcp "127.0.0.1" "$ZENOH_PORT" 30 || {
     "${DOCKER[@]}" compose -f "$COMPOSE_FILE" logs --tail 100 zenoh-router || true
     fail "Zenoh Router did not open port $ZENOH_PORT"
@@ -234,11 +239,13 @@ cat << EOF
 Frontend     : http://127.0.0.1:$FRONTEND_PORT
 Backend      : http://127.0.0.1:$BACKEND_PORT
 Zenoh Router : $ZENOH_CONNECT_ENDPOINT
+MQTT Broker   : tcp://127.0.0.1:$MQTT_PORT
 
 Logs:
   Backend      : $LOG_DIR/backend-console.log
   Frontend     : $LOG_DIR/frontend.log
   Zenoh Bridge : $LOG_DIR/zenoh_bridge.log
   Zenoh Router : ${DOCKER[*]} compose -f $COMPOSE_FILE logs -f zenoh-router
+  MQTT Broker   : ${DOCKER[*]} compose -f $COMPOSE_FILE logs -f mqtt-broker
 ========================================
 EOF

@@ -32,6 +32,11 @@ export type ManagedRobot = {
   updatedAt?: string | null
   mode: 'real' | 'simulation'
   route: RobotRoute | null
+  orderItems: { A: number; B: number; C: number; D: number }
+  orderId: string | null
+  orderStatus: string | null
+  orderPhase: string | null
+  loadedCount: number
 }
 
 function backendToUiId(value: string): RobotId | null {
@@ -270,6 +275,11 @@ export function useRobotFleet() {
         pixelY: state?.pixel_y ?? null,
         hasPose: state?.map_pose_received === true,
         connectionState: mode === 'real' ? (device?.state ?? 'OFFLINE') : (state?.connection_state ?? 'OFFLINE'),
+        orderItems: state?.order_items ?? { A: 0, B: 0, C: 0, D: 0 },
+        orderId: state?.order_id ?? null,
+        orderStatus: state?.order_status ?? null,
+        orderPhase: state?.order_phase ?? null,
+        loadedCount: state?.loaded_count ?? 0,
       }
     })
   }, [devices, mode, robotIds, robotStates])

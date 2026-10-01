@@ -14,6 +14,7 @@ LOG_DIR="${FMS_LOG_DIR:-$PROJECT_DIR/logs}"
 BACKEND_PORT="${FMS_BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FMS_FRONTEND_PORT:-5173}"
 ZENOH_PORT="${FMS_ZENOH_PORT:-7447}"
+MQTT_PORT="${FMS_MQTT_BROKER_PORT:-1883}"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 ROS_SETUP="${FMS_ROS_SETUP:-/opt/ros/$ROS_DISTRO/setup.bash}"
 
@@ -124,8 +125,8 @@ fi
 # Stop the Compose-managed Zenoh Router.
 if select_docker_command; then
     if [ -f "$COMPOSE_FILE" ]; then
-        "${DOCKER[@]}" compose -f "$COMPOSE_FILE" stop zenoh-router >/dev/null 2>&1 || true
-        log "Zenoh Router: stop requested"
+        "${DOCKER[@]}" compose -f "$COMPOSE_FILE" stop zenoh-router mqtt-broker >/dev/null 2>&1 || true
+        log "Zenoh Router and MQTT Broker: stop requested"
     fi
 
     # Migration cleanup: stop containers created by the discarded
@@ -144,6 +145,7 @@ stop_matching_processes "Host zenohd" '[z]enohd'
 # Run after Docker stop so a host-networked container is not restarted by its
 # Docker restart policy when fuser terminates the listener.
 stop_port_owner "Zenoh" "$ZENOH_PORT"
+stop_port_owner "MQTT" "$MQTT_PORT"
 
 echo "========================================"
 echo " FMS stop complete"

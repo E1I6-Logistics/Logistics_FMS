@@ -43,11 +43,15 @@ async def fetch_robots():
                 "map_pose_received": robot.x is not None and robot.y is not None,
                 "mode": "real",
                 "source": "ros2",
-                "pose_source": "AMCL",
+                "pose_source": "logitle_pose",
                 "order_items": robot.order_items.copy(),
                 "pickup_nodes": robot.pickup_nodes.copy(),
                 "workstation_node": robot.workstation_node,
                 "current_pickup_node": robot.current_pickup_node,
+                "order_id": robot.order_id,
+                "order_status": robot.order_status,
+                "order_phase": robot.order_phase,
+                "loaded_count": robot.loaded_count,
             }
         )
 

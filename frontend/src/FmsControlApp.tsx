@@ -11,6 +11,8 @@ import {
 } from './api/fmsApi'
 import { useCmdVel } from './hooks/useCmdVel'
 import { useRobotFleet } from './hooks/useRobotFleet'
+import { useOmxFleet } from './hooks/useOmxFleet'
+import type { OmxDevice } from './api/omxApi'
 import { useRouteGraph } from './hooks/useRouteGraph'
 import { C, FONT, MONO } from './constants/theme'
 import { KEY_ROWS, ROBOT_DATA, type RobotId } from './constants/appData'
@@ -22,6 +24,7 @@ const allLayers = { nodeEdge: true, route: true, station: true, robotId: true }
 export default function FmsControlApp() {
   const [time, setTime] = useState(new Date())
   const [selectedRobot, setSelectedRobot] = useState<RobotId | null>(null)
+  const [selectedOmx, setSelectedOmx] = useState<string | null>(null)
   const [targetNode, setTargetNode] = useState<string | null>(null)
   const [commandState, setCommandState] = useState<CommandState>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -36,9 +39,11 @@ export default function FmsControlApp() {
     error: fleetError,
     dashboardStatus,
   } = useRobotFleet()
+  const { devices: omxDevices, brokerConnected: mqttConnected, error: omxError } = useOmxFleet()
   const { nodes, edges, nodeItems, loading: graphLoading, error: graphError } = useRouteGraph()
 
   const selectedLiveRobot = managedRobots.find(robot => robot.id === selectedRobot)
+  const selectedOmxDevice = omxDevices.find(device => device.omx_id === selectedOmx)
   const knownRobotIds = useMemo(() => managedRobots.map(robot => robot.id), [managedRobots])
   const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
   const connected = Boolean(selectedLiveRobot?.connected)
@@ -259,8 +264,17 @@ export default function FmsControlApp() {
           <RobotRail
             robotIds={knownRobotIds as RobotId[]}
             selectedRobot={selectedRobot}
+            omxDevices={omxDevices}
+            selectedOmx={selectedOmx}
             getStatus={id => managedRobots.find(robot => robot.id === id)?.status ?? ROBOT_DATA[id].status}
-            onSelect={setSelectedRobot}
+            onSelect={id => {
+              setSelectedOmx(null)
+              setSelectedRobot(id)
+            }}
+            onSelectOmx={id => {
+              setSelectedRobot(null)
+              setSelectedOmx(id)
+            }}
           />
 
           <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: '#E7EBF0' }} aria-label="FMS 실시간 지도">
@@ -280,7 +294,14 @@ export default function FmsControlApp() {
               >
                 <RobotOrderForm
                   robotId={selectedRobot}
-                  disabled={!connected || emergencyStopped}
+                  currentItems={selectedLiveRobot?.orderItems}
+                  orderStatus={selectedLiveRobot?.orderStatus}
+                  disabled={
+                    !connected ||
+                    emergencyStopped ||
+                    selectedLiveRobot?.orderStatus === 'PROCESSING' ||
+                    selectedLiveRobot?.orderStatus === 'WAITING_OMX'
+                  }
                 />
               </div>
             )}
@@ -289,7 +310,10 @@ export default function FmsControlApp() {
               edges={edges}
               layers={allLayers}
               selectedRobot={selectedRobot}
-              onSelect={setSelectedRobot}
+              onSelect={id => {
+                setSelectedOmx(null)
+                setSelectedRobot(id)
+              }}
               picking={Boolean(selectedRobot)}
               targetNode={targetNode ?? undefined}
               onPick={setTargetNode}
@@ -308,37 +332,48 @@ export default function FmsControlApp() {
             </button>
           </section>
 
-          <RobotPanel
-            robotId={selectedRobot}
-            liveRobot={selectedLiveRobot}
-            targetNode={targetNode}
-            nearestNode={nearestNode}
-            realMode={robotMode === 'real'}
-            emergencyStopped={emergencyStopped}
-            remoteStatus={remote.status}
-            remoteLastAckAt={remote.lastAckAt}
-            remoteKeys={remote.activeKeys}
-            busy={busy}
-            onRemoteDown={remote.pressKey}
-            onRemoteUp={remote.releaseKey}
-            onRemoteStop={remote.stop}
-            onMove={moveToSelectedNode}
-            onReturnToRoute={returnToNearestNode}
-            onCharge={moveToCharge}
-            onStop={stopSelectedRobot}
-            onRelease={releaseSelectedRobot}
-          />
+          {selectedOmx ? (
+            <OmxPanel
+              device={selectedOmxDevice}
+              mqttConnected={mqttConnected}
+              error={omxError}
+            />
+          ) : (
+            <RobotPanel
+              robotId={selectedRobot}
+              liveRobot={selectedLiveRobot}
+              targetNode={targetNode}
+              nearestNode={nearestNode}
+              realMode={robotMode === 'real'}
+              emergencyStopped={emergencyStopped}
+              remoteStatus={remote.status}
+              remoteLastAckAt={remote.lastAckAt}
+              remoteKeys={remote.activeKeys}
+              busy={busy}
+              onRemoteDown={remote.pressKey}
+              onRemoteUp={remote.releaseKey}
+              onRemoteStop={remote.stop}
+              onMove={moveToSelectedNode}
+              onReturnToRoute={returnToNearestNode}
+              onCharge={moveToCharge}
+              onStop={stopSelectedRobot}
+              onRelease={releaseSelectedRobot}
+            />
+          )}
         </div>
       </main>
     </div>
   )
 }
 
-function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
+function RobotRail({ robotIds, selectedRobot, omxDevices, selectedOmx, getStatus, onSelect, onSelectOmx }: {
   robotIds: RobotId[]
   selectedRobot: RobotId | null
+  omxDevices: OmxDevice[]
+  selectedOmx: string | null
   getStatus: (id: RobotId) => string
   onSelect: (id: RobotId) => void
+  onSelectOmx: (id: string) => void
 }) {
   return (
     <aside style={{ width: 64, flexShrink: 0, padding: '10px 0', overflowY: 'auto', background: C.surface, borderRight: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }} aria-label="로봇 목록">
@@ -354,6 +389,73 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
           </button>
         )
       })}
+      <span style={{ width: 38, marginTop: 6, borderTop: `1px solid ${C.line}` }} />
+      <span style={{ color: '#A5AFBB', fontSize: 8, lineHeight: 1.35, textAlign: 'center' }}>OMX<br />목록</span>
+      {omxDevices.map((device, index) => {
+        const selected = device.omx_id === selectedOmx
+        const color = device.connected ? C.success : C.danger
+        return (
+          <button
+            key={device.omx_id}
+            onClick={() => onSelectOmx(device.omx_id)}
+            title={`${device.omx_id} · ${device.state}`}
+            aria-pressed={selected}
+            style={{ width: 40, height: 40, borderRadius: 9, border: `2.5px solid ${selected ? C.primary : color}`, background: selected ? '#EDF6FF' : '#F8FAFC', color: selected ? C.primary : C.text, fontSize: 9, fontWeight: 900, cursor: 'pointer' }}
+          >
+            O{index + 1}
+          </button>
+        )
+      })}
+    </aside>
+  )
+}
+
+function OmxPanel({ device, mqttConnected, error }: {
+  device?: OmxDevice
+  mqttConnected: boolean
+  error: string | null
+}) {
+  if (!device) {
+    return (
+      <aside style={{ width: 390, flexShrink: 0, borderLeft: `1px solid ${C.line}`, background: C.surface, display: 'grid', placeItems: 'center', padding: 32 }}>
+        <span style={{ color: C.danger, fontSize: 11 }}>OMX 상태를 불러올 수 없습니다.</span>
+      </aside>
+    )
+  }
+
+  const progress = device.total_count > 0
+    ? Math.min(100, Math.round(device.current_count / device.total_count * 100))
+    : 0
+
+  return (
+    <aside style={{ width: 390, flexShrink: 0, borderLeft: `1px solid ${C.line}`, background: C.surface, padding: '18px 16px', boxSizing: 'border-box', overflowY: 'auto' }} aria-label={`${device.omx_id} 상태`}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 14, borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ width: 38, height: 38, borderRadius: 9, display: 'grid', placeItems: 'center', background: '#EDF6FF', border: `2px solid ${C.primary}`, color: C.primary, fontWeight: 900 }}>OMX</div>
+        <div>
+          <strong style={{ display: 'block', fontSize: 16 }}>{device.omx_id}</strong>
+          <span style={{ color: device.connected ? C.success : C.danger, fontSize: 10, fontWeight: 800 }}>
+            {device.connected ? '● 장비 연결됨' : '● 장비 연결 끊김'}
+          </span>
+        </div>
+      </div>
+
+      <SectionTitle>통신 상태</SectionTitle>
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: 9, padding: '4px 12px', background: '#F8FAFC' }}>
+        <InfoRow label="MQTT 브로커" value={mqttConnected ? '연결됨' : '연결 끊김'} danger={!mqttConnected} />
+        <InfoRow label="OMX 상태" value={device.state} danger={!device.connected || device.state === 'FAILED'} />
+        <InfoRow label="마지막 신호" value={`${device.last_seen_seconds_ago.toFixed(1)}초 전`} last />
+      </div>
+
+      <SectionTitle>현재 작업</SectionTitle>
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: 9, padding: '4px 12px', background: '#F8FAFC' }}>
+        <InfoRow label="작업 ID" value={device.job_id ?? '—'} />
+        <InfoRow label="진행 수량" value={`${device.current_count} / ${device.total_count}`} />
+        <InfoRow label="메시지" value={device.message || '—'} last />
+      </div>
+      <div style={{ height: 7, marginTop: 10, borderRadius: 7, overflow: 'hidden', background: '#E3E8EF' }}>
+        <div style={{ width: `${progress}%`, height: '100%', background: device.state === 'FAILED' ? C.danger : C.success }} />
+      </div>
+      {error && <div style={{ marginTop: 12, color: C.danger, fontSize: 10 }}>{error}</div>}
     </aside>
   )
 }
@@ -421,6 +523,8 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
             <div style={{ height: 5, borderRadius: 5, overflow: 'hidden', background: '#E3E8EF', marginTop: 8 }}><div style={{ width: `${battery}%`, height: '100%', background: batteryColor }} /></div>
           </StatusCard>
           <StatusCard label="통신 상태" value={connected ? '● 정상' : '● 끊김'} color={connected ? C.success : C.danger} />
+          <StatusCard label="현재 적재" value={`${liveRobot?.loadedCount ?? 0}개`} color={C.primary} />
+          <StatusCard label="주문 단계" value={liveRobot?.orderPhase ?? '—'} color={C.text} />
         </div>
 
         <div style={{ marginTop: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: `1px solid ${C.line}`, borderRadius: 9, background: '#F3FBF7' }}>

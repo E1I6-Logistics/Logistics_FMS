@@ -6,6 +6,8 @@ import { C, MONO } from '../constants/theme'
 type Props = {
   robotId: string
   disabled?: boolean
+  currentItems?: OrderItems
+  orderStatus?: string | null
 }
 
 const INITIAL_ITEMS: OrderItems = {
@@ -15,7 +17,12 @@ const INITIAL_ITEMS: OrderItems = {
   D: 0,
 }
 
-export default function RobotOrderForm({ robotId, disabled = false }: Props) {
+export default function RobotOrderForm({
+  robotId,
+  disabled = false,
+  currentItems,
+  orderStatus,
+}: Props) {
   const [items, setItems] = useState<OrderItems>(INITIAL_ITEMS)
   const [workstationNode, setWorkstationNode] = useState<'3' | '4'>('3')
   const [submitting, setSubmitting] = useState(false)
@@ -32,10 +39,25 @@ export default function RobotOrderForm({ robotId, disabled = false }: Props) {
   const formDisabled = disabled || submitting
 
   useEffect(() => {
-    setItems(INITIAL_ITEMS)
+    setItems(currentItems ?? INITIAL_ITEMS)
     setWorkstationNode('3')
     setMessage(null)
   }, [robotId])
+
+  useEffect(() => {
+    if (
+      currentItems &&
+      (orderStatus === 'PROCESSING' || orderStatus === 'WAITING_OMX')
+    ) {
+      setItems(currentItems)
+    }
+  }, [
+    currentItems?.A,
+    currentItems?.B,
+    currentItems?.C,
+    currentItems?.D,
+    orderStatus,
+  ])
 
   const updateQuantity = (item: keyof OrderItems, rawValue: string) => {
     const parsed = Number(rawValue)
@@ -65,7 +87,7 @@ export default function RobotOrderForm({ robotId, disabled = false }: Props) {
         tone: 'success',
         text: `주문 ${order.order_id}이 등록되었습니다.`,
       })
-      setItems(INITIAL_ITEMS)
+      setItems(order.items)
     } catch (error) {
       setMessage({
         tone: 'danger',
@@ -102,6 +124,12 @@ export default function RobotOrderForm({ robotId, disabled = false }: Props) {
           최대 5개
         </span>
       </div>
+
+      {orderStatus && (
+        <div style={{ marginTop: 6, color: C.muted, fontSize: 8.5 }}>
+          현재 주문 상태: {orderStatus}
+        </div>
+      )}
 
       <div
         style={{

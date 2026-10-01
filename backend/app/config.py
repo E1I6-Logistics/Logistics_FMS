@@ -26,15 +26,55 @@ LOG_LEVEL = os.getenv("FMS_LOG_LEVEL", "INFO").strip().upper()
 LOG_MAX_BYTES = int(os.getenv("FMS_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
 LOG_BACKUP_COUNT = int(os.getenv("FMS_LOG_BACKUP_COUNT", "10"))
 SLOW_REQUEST_MS = int(os.getenv("FMS_SLOW_REQUEST_MS", "1000"))
-ZENOH_STALE_GRACE_SECONDS = float(
-    os.getenv("FMS_ZENOH_STALE_GRACE_SECONDS", "6.0")
-)
-ZENOH_REST_TIMEOUT_SECONDS = float(
-    os.getenv("FMS_ZENOH_REST_TIMEOUT_SECONDS", "2.0")
-)
+ZENOH_STALE_GRACE_SECONDS = float(os.getenv("FMS_ZENOH_STALE_GRACE_SECONDS", "6.0"))
+ZENOH_REST_TIMEOUT_SECONDS = float(os.getenv("FMS_ZENOH_REST_TIMEOUT_SECONDS", "2.0"))
 ZENOH_CONNECTION_CACHE_TTL_SECONDS = float(
     os.getenv("FMS_ZENOH_CONNECTION_CACHE_TTL_SECONDS", "3.0")
 )
+
+# MQTT / OMX
+MQTT_ENABLED = os.getenv("FMS_MQTT_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+MQTT_BROKER_HOST = os.getenv("FMS_MQTT_BROKER_HOST", "127.0.0.1")
+MQTT_BROKER_PORT = int(os.getenv("FMS_MQTT_BROKER_PORT", "1883"))
+MQTT_DEVICE_TIMEOUT_SECONDS = float(os.getenv("FMS_MQTT_DEVICE_TIMEOUT_SECONDS", "5.0"))
+
+# Nav2가 성공을 반환해도 실제 위치가 목적 노드에서 이 거리보다 멀면
+# 도착으로 처리하지 않는다.
+ARRIVAL_TOLERANCE_METERS = float(os.getenv("FMS_ARRIVAL_TOLERANCE_METERS", "0.2"))
+POSE_STALE_SECONDS = float(os.getenv("FMS_POSE_STALE_SECONDS", "3.0"))
+
+
+def _parse_name_map(value: str) -> dict[str, str]:
+    result = {}
+    for pair in value.split(","):
+        if ":" not in pair:
+            continue
+        key, item = pair.split(":", 1)
+        if key.strip() and item.strip():
+            result[key.strip()] = item.strip()
+    return result
+
+
+PICKUP_OMX_MAP = _parse_name_map(os.getenv("FMS_PICKUP_OMX_MAP", "5:omx1,6:omx2"))
+ROBOT_WAITING_NODE_MAP = _parse_name_map(
+    os.getenv("FMS_ROBOT_WAITING_NODE_MAP", "robot1:0,robot2:1,robot3:2")
+)
+WORKSTATION_OMX_MAP = _parse_name_map(
+    os.getenv("FMS_WORKSTATION_OMX_MAP", "3:omx3,4:omx4")
+)
+
+# 0은 아직 정하지 않은 marker ID 자리표시자이다.
+ARUCO_MARKER_MAP = {
+    node_id: int(marker_id)
+    for node_id, marker_id in _parse_name_map(
+        os.getenv("FMS_ARUCO_MARKER_MAP", "3:0,4:0,5:0,6:25")
+    ).items()
+}
 
 
 # ============================================================
