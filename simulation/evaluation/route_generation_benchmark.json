@@ -1,12 +1,12 @@
 {
-  "benchmark_id": "route-generation-v3",
-  "description": "RTX 4070 SUPER PC에서 0.6B~14B 대표 로컬 모델 10종의 최단 경로 생성 정확도와 지연시간 평가",
-  "reference_commit": "1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc",
+  "benchmark_id": "route-generation-direct-live-map",
+  "description": "PC actual frontend map direct path generation",
   "graph": {
-    "path": "routes/test_benchmark_v1.geojson",
-    "sha256": "00e1f02cce0f5007342dfef4c7c1a0d95f36eb639c530dcf0c8e7c7ce0f304c3",
-    "node_count": 14,
-    "directed_edge_count": 28
+    "path": "routes/test.geojson",
+    "sha256": "9b0ca28cca7c3c55fc795a7a0f8145c3b7f781511567dc92bdb54c0e97d48d68",
+    "node_count": 12,
+    "directed_edge_count": 38,
+    "weight_property": "weight"
   },
   "models": [
     {
@@ -14,8 +14,7 @@
       "think": false
     },
     {
-      "name": "deepseek-r1:1.5b",
-      "think": false
+      "name": "deepseek-coder:1.3b"
     },
     {
       "name": "llama3.2:3b"
@@ -37,8 +36,7 @@
       "name": "gemma3:12b"
     },
     {
-      "name": "deepseek-r1:14b",
-      "think": false
+      "name": "deepseek-coder:6.7b"
     },
     {
       "name": "phi4:14b"
@@ -47,63 +45,58 @@
   "cases": [
     {
       "start": 0,
-      "goal": 4,
+      "goal": 2,
       "expected_path": [
         0,
-        3,
-        4
+        1,
+        2
       ],
-      "expected_distance": 0.8403537345690091
+      "expected_distance": 0.7888975962857319
     },
     {
-      "start": 0,
-      "goal": 6,
+      "start": 3,
+      "goal": 15,
       "expected_path": [
-        0,
         3,
-        4,
-        6
+        19,
+        15
       ],
-      "expected_distance": 1.2346176886023945
+      "expected_distance": 0.9079639151037295
     },
     {
-      "start": 2,
-      "goal": 10,
+      "start": 5,
+      "goal": 18,
       "expected_path": [
-        2,
         5,
-        4,
-        6,
-        10
+        15,
+        16,
+        18
       ],
-      "expected_distance": 1.592143392266858
+      "expected_distance": 1.1957974846863562
     },
     {
       "start": 1,
-      "goal": 12,
+      "goal": 4,
       "expected_path": [
         1,
-        4,
-        6,
-        13,
-        12
+        17,
+        15,
+        19,
+        4
       ],
-      "expected_distance": 1.8990600538850246
+      "expected_distance": 1.9782743545908796
     },
     {
-      "start": 7,
+      "start": 6,
       "goal": 2,
       "expected_path": [
-        7,
-        8,
-        9,
-        10,
         6,
-        4,
-        5,
+        19,
+        15,
+        17,
         2
       ],
-      "expected_distance": 2.6722415641324937
+      "expected_distance": 2.0830581681796576
     }
   ],
   "settings": {
@@ -116,8 +109,16 @@
     "max_attempts": 1,
     "repeats": 5,
     "warmups_per_model": 1,
-    "keep_alive": "5m"
+    "keep_alive": "5m",
+    "response_format": "direct",
+    "execution_strategy": "single_call"
   },
-  "prompt": "\n    You are a deterministic shortest-path solver for a directed weighted graph.\n\n    Input:\n    - start_node, target_node: node IDs\n    - route_graph: CompactRouteGraph\n    - nodes: [{id, x, y}]  (coordinates are for reference only)\n    - edges: [{from, to, weight}]  (directed)\n\n    Rules:\n    1. Traverse an edge only from \"from\" to \"to\".\n    2. Use \"weight\" exactly as given. Do NOT recalculate from coordinates.\n    3. Find the path with the minimum total weight (e.g. Dijkstra).\n    4. The path must start with start_node, end with target_node,\n    and every consecutive pair must be an existing edge.\n    5. reported_total_distance = sum of weights along the path.\n\n    Return only the JSON object matching the schema. No explanations or Markdown.\n    ",
-  "prompt_sha256": "53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44"
+  "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\n\nInput contains start_node, target_node, and the complete CompactRouteGraph.\nNodes are integer IDs. Edges are directed objects with from, to, and weight.\nTraverse only from from to to. Use every stored weight exactly as given and never\nrecalculate it from coordinates. Return the valid path with minimum total weight and\nthe sum of its edge weights. Return only JSON matching the schema.",
+  "prompt_sha256": "f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72",
+  "experiment_mode": "V1_DIRECT",
+  "comparison_condition_sha256": "5ac9ffdb2821b56a021460a4f2e3215a8aa12eaf55a34880abb26c528f1639a8",
+  "retrieval": {
+    "enabled": false,
+    "policy": "full_graph"
+  }
 }

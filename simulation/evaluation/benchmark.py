@@ -28,7 +28,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from simulation.evaluation.device_metadata import ollama_model_device_metadata
+from simulation.evaluation.graph_retrieval import (
+    full_graph_metadata,
+    ground_truth_coverage,
+    retrieve_path_relevant_graph,
+)
 from simulation.llm_providers.ollama_provider import OllamaPathProvider
+from simulation.evaluation.iterative_chain import (
+    ITERATIVE_STEP_SCHEMA,
+    run_iterative_chain,
+)
 from simulation.services.route_service import (
     build_compact_route_graph,
     build_route_inputs,
@@ -154,15 +163,31 @@ def load_and_validate_config(config_path: Path) -> dict:
             f"expected {graph_config['sha256']}, got {graph_hash}"
         )
     graph = json.loads(graph_bytes)
-    points, edges = build_route_inputs(graph)
+    if graph_config.get("weight_property") != "weight":
+        raise ValueError("benchmark graph must declare properties.weight")
+    points, edges = build_route_inputs(graph, require_stored_weight=True)
     if len(points) != graph_config["node_count"]:
         raise ValueError("graph node count does not match the benchmark config")
     if len(edges) != graph_config["directed_edge_count"]:
         raise ValueError("graph edge count does not match the benchmark config")
 
+    compact_graph = build_compact_route_graph(
+        graph, graph_path.name, require_stored_weight=True
+    )
+    retrieval_config = config.get(
+        "retrieval", {"enabled": False, "policy": "full_graph"}
+    )
+    if retrieval_config.get("enabled") and retrieval_config.get("policy") != (
+        "path_relevant_adjacency_once"
+    ):
+        raise ValueError(f"unknown retrieval policy: {retrieval_config.get('policy')}")
+
     validated_cases = []
     for case in config["cases"]:
-        baseline = plan_route(str(case["start"]), str(case["goal"]), graph)
+        baseline = plan_route(
+            str(case["start"]), str(case["goal"]), graph,
+            require_stored_weight=True,
+        )
         path = [int(node) for node in baseline["node_ids"]]
         if path != case["expected_path"]:
             raise ValueError(
@@ -174,7 +199,22 @@ def load_and_validate_config(config_path: Path) -> dict:
             raise ValueError(
                 f"baseline distance changed for {case['start']}->{case['goal']}"
             )
-        validated_cases.append({**case, "baseline": baseline})
+        if retrieval_config.get("enabled"):
+            model_graph, retrieval = retrieve_path_relevant_graph(
+                compact_graph, int(case["start"]), int(case["goal"])
+            )
+        else:
+            model_graph = compact_graph
+            retrieval = full_graph_metadata(compact_graph)
+        retrieval.update(ground_truth_coverage(model_graph, path))
+        validated_cases.append(
+            {
+                **case,
+                "baseline": baseline,
+                "model_graph": model_graph,
+                "retrieval": retrieval,
+            }
+        )
 
     settings = config["settings"]
     for field in ("repeats", "warmups_per_model", "max_attempts"):
@@ -185,6 +225,29 @@ def load_and_validate_config(config_path: Path) -> dict:
     if not config.get("prompt", "").strip():
         raise ValueError("the benchmark prompt must not be empty")
     prompt_hash = _sha256_bytes(config["prompt"].encode("utf-8"))
+    comparable_settings = {
+        key: settings[key]
+        for key in (
+            "temperature", "seed", "num_ctx", "num_predict",
+            "timeout_seconds", "realtime_deadline_seconds", "max_attempts",
+            "repeats", "warmups_per_model", "keep_alive",
+        )
+    }
+    comparison_conditions = {
+        "graph_sha256": graph_hash,
+        "models": config["models"],
+        "cases": config["cases"],
+        "settings": comparable_settings,
+    }
+    comparison_condition_hash = _sha256_bytes(
+        json.dumps(
+            comparison_conditions, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    )
+    if comparison_condition_hash != config.get("comparison_condition_sha256"):
+        raise ValueError(
+            "comparison conditions differ from comparison_condition_sha256"
+        )
     if prompt_hash != config["prompt_sha256"]:
         raise ValueError(
             "prompt SHA-256 mismatch: "
@@ -198,9 +261,10 @@ def load_and_validate_config(config_path: Path) -> dict:
         "graph": graph,
         "graph_path": graph_path,
         "graph_sha256": graph_hash,
+        "comparison_condition_sha256": comparison_condition_hash,
         "points": points,
         "edges": edges,
-        "compact_graph": build_compact_route_graph(graph, graph_path.name),
+        "compact_graph": compact_graph,
         "cases": validated_cases,
     }
 
@@ -212,20 +276,54 @@ def _default_provider_factory(model: dict, settings: dict, prompt: str):
         "num_ctx": settings["num_ctx"],
         "num_predict": settings["num_predict"],
     }
+    # 내부 사고가 긴 모델은 공통 조건을 유지하면서 출력 예산만 늘린다.
+    options.update(model.get("options", {}))
+    response_format = settings.get("response_format", "direct")
+    if response_format == "direct":
+        output_schema = OllamaPathProvider.OUTPUT_SCHEMA
+    elif response_format == "cot":
+        output_schema = OllamaPathProvider.COT_OUTPUT_SCHEMA
+    elif response_format == "iterative_chain":
+        output_schema = ITERATIVE_STEP_SCHEMA
+    else:
+        raise ValueError(f"unknown response_format: {response_format}")
     return OllamaPathProvider(
         model=model["name"],
         host=os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        timeout_seconds=float(settings["timeout_seconds"]),
+        timeout_seconds=float(
+            model.get("timeout_seconds", settings["timeout_seconds"])
+        ),
         options=options,
         keep_alive=settings["keep_alive"],
         think=model.get("think"),
         instructions=prompt,
+        output_schema=output_schema,
     )
 
 
 def _is_timeout(error: Exception) -> bool:
     text = f"{type(error).__name__} {error}".lower()
     return isinstance(error, TimeoutError) or "timeout" in text or "timed out" in text
+
+
+def _compute_model_answer(provider: Any, case: dict, prepared: dict) -> dict:
+    """Execute one strategy without allowing Python to choose a search node."""
+    settings = prepared["config"]["settings"]
+    model_graph = case.get("model_graph", prepared["compact_graph"])
+    provider.last_chain_inferences = None
+    if settings.get("execution_strategy", "single_call") == "iterative_chain":
+        return run_iterative_chain(
+            provider,
+            model_graph,
+            int(case["start"]),
+            int(case["goal"]),
+            instructions=prepared["config"]["prompt"],
+            max_steps=int(settings.get("max_chain_steps", len(prepared["points"]))),
+        )
+    return provider.compute_shortest_path(
+        model_graph, int(case["start"]), int(case["goal"])
+    )
+
 
 
 def _run_trial(
@@ -251,9 +349,7 @@ def _run_trial(
             "timed_out": False,
         }
         try:
-            answer = provider.compute_shortest_path(
-                prepared["compact_graph"], start, goal
-            )
+            answer = _compute_model_answer(provider, case, prepared)
             attempt["json_response_success"] = isinstance(answer, dict)
             validated_path, recalculated_distance = validate_and_calculate_path_distance(
                 prepared["points"], prepared["edges"], answer["path"], start, goal
@@ -269,9 +365,13 @@ def _run_trial(
             attempt["response_time_seconds"] = round(
                 time.perf_counter() - started, 6
             )
-            inference = getattr(provider, "last_inference", None)
-            if inference is not None:
-                attempt["inference"] = inference
+            chain_inferences = getattr(provider, "last_chain_inferences", None)
+            if chain_inferences:
+                attempt["chain_inferences"] = chain_inferences
+            else:
+                inference = getattr(provider, "last_inference", None)
+                if inference is not None:
+                    attempt["inference"] = inference
             attempts.append(attempt)
         if attempt["valid_path"]:
             break
@@ -293,7 +393,7 @@ def _run_trial(
     )
     compact_input = json.dumps(
         {
-            "route_graph": prepared["compact_graph"],
+            "route_graph": case.get("model_graph", prepared["compact_graph"]),
             "start_node": start,
             "target_node": goal,
             "required_path_endpoints": {"first": start, "last": goal},
@@ -301,11 +401,46 @@ def _run_trial(
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    input_characters = len(prepared["config"]["prompt"] + compact_input)
+    input_characters = (
+        int(answer.get("request_character_count", 0))
+        if isinstance(answer, dict) and answer.get("request_character_count")
+        else len(prepared["config"]["prompt"] + compact_input)
+    )
+    # 원시 응답의 종료 사유를 집계해 모델 실패와 경로 검증 실패를 구분한다.
+    diagnostics = []
+    for item in attempts:
+        if item.get("inference"):
+            diagnostics.append(item["inference"].get("diagnostics", {}))
+        diagnostics.extend(
+            inference.get("diagnostics", {})
+            for inference in item.get("chain_inferences", [])
+        )
+    eval_counts = [
+        item.get("eval_count") for item in diagnostics
+        if isinstance(item.get("eval_count"), int)
+    ]
+    prompt_eval_counts = [
+        item.get("prompt_eval_count") for item in diagnostics
+        if isinstance(item.get("prompt_eval_count"), int)
+    ]
+    # V1에는 없고 V2 CoT 응답에만 존재하는 계산 단계다.
+    reasoning_steps = (
+        answer.get("reasoning_steps") if isinstance(answer, dict) else None
+    )
+    reasoning_character_count = (
+        sum(len(str(step)) for step in reasoning_steps)
+        if isinstance(reasoning_steps, list) else 0
+    )
+    chain_steps = answer.get("chain_steps") if isinstance(answer, dict) else None
+    api_call_count = sum(
+        len(item["chain_inferences"]) if item.get("chain_inferences") else 1
+        for item in attempts
+    )
     return {
         "trial_id": f"{model_name}|{start}|{goal}|{repeat}",
         "timestamp": _utc_now(),
         "task": "path_generation",
+        "experiment_mode": prepared["config"].get("experiment_mode", "V1_DIRECT"),
         "provider": "ollama",
         "model": model_name,
         "repeat": repeat,
@@ -314,13 +449,16 @@ def _run_trial(
             "target_node": goal,
             "route_graph_file": prepared["graph_path"].name,
             "route_graph_sha256": prepared["graph_sha256"],
-            "compact_graph": prepared["compact_graph"],
+            "compact_graph": case.get("model_graph", prepared["compact_graph"]),
+            "retrieval": case.get("retrieval"),
         },
         "baseline": {
             "path": baseline_path,
             "recalculated_total_distance": baseline_distance,
         },
         "llm": {
+            "reasoning_steps": reasoning_steps,
+            "chain_steps": chain_steps,
             "path": answer.get("path") if isinstance(answer, dict) else None,
             "reported_total_distance": reported_distance,
             "recalculated_total_distance": recalculated_distance,
@@ -347,6 +485,45 @@ def _run_trial(
             "attempt_count": len(attempts),
             "input_character_count": input_characters,
             "estimated_input_tokens": math.ceil(input_characters / 4),
+            "input_prompt_eval_count": (
+                sum(prompt_eval_counts) if prompt_eval_counts else None
+            ),
+            "output_eval_count": sum(eval_counts) if eval_counts else None,
+            "total_eval_count": (
+                sum(prompt_eval_counts) + sum(eval_counts)
+                if prompt_eval_counts or eval_counts else None
+            ),
+            "output_budget_exhausted": any(
+                item.get("output_budget_exhausted") for item in diagnostics
+            ),
+            "think_control_ignored": any(
+                item.get("think_control_ignored") for item in diagnostics
+            ),
+            "thinking_character_count": sum(
+                int(item.get("thinking_character_count", 0))
+                for item in diagnostics
+            ),
+            "reasoning_step_count": (
+                len(reasoning_steps) if isinstance(reasoning_steps, list) else 0
+            ),
+            "reasoning_character_count": reasoning_character_count,
+            "api_call_count": api_call_count,
+            "chain_step_count": len(chain_steps) if isinstance(chain_steps, list) else 0,
+            "retrieved_node_count": case.get("retrieval", {}).get(
+                "retrieved_node_count"
+            ),
+            "retrieved_edge_count": case.get("retrieval", {}).get(
+                "retrieved_edge_count"
+            ),
+            "ground_truth_node_recall": case.get("retrieval", {}).get(
+                "ground_truth_node_recall"
+            ),
+            "ground_truth_edge_recall": case.get("retrieval", {}).get(
+                "ground_truth_edge_recall"
+            ),
+            "ground_truth_path_available": case.get("retrieval", {}).get(
+                "ground_truth_path_available"
+            ),
         },
         "attempts": attempts,
     }
@@ -403,6 +580,46 @@ def write_exports(output: Path) -> dict:
                 ),
                 "mean_estimated_input_tokens": mean(
                     item["metrics"]["estimated_input_tokens"] for item in group
+                ),
+                "mean_input_prompt_eval_count": _mean_optional(
+                    [item["metrics"].get("input_prompt_eval_count") for item in group]
+                ),
+                "mean_output_eval_count": _mean_optional(
+                    [item["metrics"].get("output_eval_count") for item in group]
+                ),
+                "mean_total_eval_count": _mean_optional(
+                    [item["metrics"].get("total_eval_count") for item in group]
+                ),
+                # 1.0이면 모든 요청이 최종 JSON 전에 출력 한도를 소진했다.
+                "output_budget_exhaustion_rate": _rate(
+                    group, "output_budget_exhausted"
+                ),
+                # think=false 요청 후에도 thinking이 나온 비율이다.
+                "think_control_ignored_rate": _rate(
+                    group, "think_control_ignored"
+                ),
+                "mean_thinking_character_count": mean(
+                    item["metrics"].get("thinking_character_count", 0)
+                    for item in group
+                ),
+                "mean_reasoning_step_count": mean(
+                    item["metrics"].get("reasoning_step_count", 0)
+                    for item in group
+                ),
+                "mean_api_call_count": mean(
+                    item["metrics"].get("api_call_count", 1) for item in group
+                ),
+                "mean_chain_step_count": mean(
+                    item["metrics"].get("chain_step_count", 0) for item in group
+                ),
+                "mean_retrieved_node_count": _mean_optional(
+                    [item["metrics"].get("retrieved_node_count") for item in group]
+                ),
+                "mean_retrieved_edge_count": _mean_optional(
+                    [item["metrics"].get("retrieved_edge_count") for item in group]
+                ),
+                "ground_truth_path_available_rate": _rate(
+                    group, "ground_truth_path_available"
                 ),
             }
         )
@@ -496,10 +713,20 @@ def run_benchmark(
     provider_factory: ProviderFactory | None = None,
     runtime_metadata: dict | None = None,
     progress: bool = True,
+    model_names: set[str] | None = None,
 ) -> dict:
     """Run or resume every configured model/case/repeat combination."""
     prepared = load_and_validate_config(config_path)
     config = prepared["config"]
+    models_to_run = config["models"]
+    if model_names:
+        known = {model["name"] for model in models_to_run}
+        unknown = model_names.difference(known)
+        if unknown:
+            raise ValueError(f"unknown model filter: {sorted(unknown)}")
+        models_to_run = [
+            model for model in models_to_run if model["name"] in model_names
+        ]
     output = output.resolve()
     manifest_path = output / "manifest.json"
     host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
@@ -519,9 +746,14 @@ def run_benchmark(
         output.mkdir(parents=True, exist_ok=True)
         manifest = {
             "benchmark_id": config["benchmark_id"],
+            "experiment_mode": config.get("experiment_mode", "V1_DIRECT"),
+            "response_format": config["settings"].get("response_format", "direct"),
+            "execution_strategy": config["settings"].get(
+                "execution_strategy", "single_call"
+            ),
             "status": "running",
             "started_at": _utc_now(),
-            "reference_commit": config["reference_commit"],
+            "reference_commit": config.get("reference_commit"),
             "executed_branch": _git("branch", "--show-current"),
             "executed_commit": _git("rev-parse", "HEAD"),
             "working_tree_dirty": bool(_git("status", "--porcelain")),
@@ -529,10 +761,18 @@ def run_benchmark(
             "config_sha256": prepared["config_sha256"],
             "graph_file": str(prepared["graph_path"].relative_to(ROOT)),
             "graph_sha256": prepared["graph_sha256"],
+            "comparison_condition_sha256": prepared[
+                "comparison_condition_sha256"
+            ],
             "prompt_sha256": _sha256_bytes(config["prompt"].encode("utf-8")),
             "settings": config["settings"],
-            "models": config["models"],
+            "models": models_to_run,
+            "configured_models": config["models"],
+            "model_filter": sorted(model_names) if model_names else None,
             "cases": config["cases"],
+            "retrieval": config.get(
+                "retrieval", {"enabled": False, "policy": "full_graph"}
+            ),
             "runtime": runtime_metadata
             if runtime_metadata is not None
             else _runtime_metadata(host),
@@ -553,7 +793,7 @@ def run_benchmark(
     repeats = int(config["settings"]["repeats"])
     warmup_count = int(config["settings"]["warmups_per_model"])
 
-    for model in config["models"]:
+    for model in models_to_run:
         provider = factory(model, config["settings"], config["prompt"])
         first_case = prepared["cases"][0]
         for warmup_number in range(1, warmup_count + 1):
@@ -568,10 +808,8 @@ def run_benchmark(
                 "target_node": first_case["goal"],
             }
             try:
-                row["answer"] = provider.compute_shortest_path(
-                    prepared["compact_graph"],
-                    first_case["start"],
-                    first_case["goal"],
+                row["answer"] = _compute_model_answer(
+                    provider, first_case, prepared
                 )
                 row["success"] = True
             except Exception as error:
@@ -630,7 +868,7 @@ def run_benchmark(
                     )
 
     summary = write_exports(output)
-    expected_trials = len(config["models"]) * len(config["cases"]) * repeats
+    expected_trials = len(models_to_run) * len(config["cases"]) * repeats
     manifest.update(
         status="complete" if summary["trial_count"] == expected_trials else "incomplete",
         finished_at=_utc_now(),
@@ -667,6 +905,12 @@ def main() -> int:
         help="resume an interrupted result directory",
     )
     parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        help="run only this configured model; may be repeated",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="validate graph, baselines, and config without contacting Ollama",
@@ -699,7 +943,15 @@ def main() -> int:
                 json.dumps(
                     {
                         "benchmark_id": prepared["config"]["benchmark_id"],
+                        "experiment_mode": prepared["config"].get("experiment_mode", "V1_DIRECT"),
+                        "response_format": prepared["config"]["settings"].get("response_format", "direct"),
+                        "execution_strategy": prepared["config"]["settings"].get(
+                            "execution_strategy", "single_call"
+                        ),
                         "graph_sha256": prepared["graph_sha256"],
+                        "comparison_condition_sha256": prepared[
+                            "comparison_condition_sha256"
+                        ],
                         "node_count": len(prepared["points"]),
                         "directed_edge_count": len(prepared["edges"]),
                         "models": [
@@ -727,7 +979,10 @@ def main() -> int:
         if output is None:
             output = DEFAULT_RESULTS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
         manifest = run_benchmark(
-            args.config, output, resume=args.resume is not None
+            args.config,
+            output,
+            resume=args.resume is not None,
+            model_names=set(args.model) or None,
         )
         print(f"결과 폴더: {output.resolve()}")
         print(

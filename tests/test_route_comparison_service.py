@@ -6,10 +6,11 @@ import unittest
 from simulation.services.route_service import (
     build_compact_route_graph,
     build_edge_weight_lookup,
+    build_route_inputs,
     compare_path_metrics,
     validate_and_calculate_path_distance,
 )
-from tests.fixtures import load_responses, route_inputs
+from tests.fixtures import load_graph, load_responses, route_inputs
 
 
 class RouteComparisonServiceTest(unittest.TestCase):
@@ -89,6 +90,36 @@ class RouteComparisonServiceTest(unittest.TestCase):
         self.assertEqual(compact["source_graph"], "test.geojson")
         self.assertEqual(compact["nodes"], [1, 2])
         self.assertEqual(compact["edges"], [{"from": 1, "to": 2, "weight": 5.0}])
+
+
+    # 명시적 weight가 있으면 cost나 좌표 거리보다 우선하는지 확인한다.
+    def test_stored_weight_is_authoritative(self):
+        graph = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    "properties": {"id": 1},
+                },
+                {
+                    "geometry": {"type": "Point", "coordinates": [3, 4]},
+                    "properties": {"id": 2},
+                },
+                {
+                    "geometry": {"type": "MultiLineString"},
+                    "properties": {
+                        "startid": 1, "endid": 2, "cost": 99, "weight": 2.5
+                    },
+                },
+            ],
+        }
+        _, edges = build_route_inputs(graph, require_stored_weight=True)
+        self.assertEqual(edges, [(1, 2, 2.5)])
+
+    # 동일 조건 벤치마크에서 weight가 빠진 Edge를 즉시 거부하는지 확인한다.
+    def test_strict_input_rejects_missing_weight(self):
+        with self.assertRaisesRegex(ValueError, "weight가 없습니다"):
+            build_route_inputs(load_graph(), require_stored_weight=True)
 
 
 if __name__ == "__main__":

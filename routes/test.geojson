@@ -182,6 +182,7 @@
                 "cost": 0.0,
                 "endid": 1,
                 "id": 7,
+                "weight": 0.3777115936682494,
                 "overridable": true,
                 "startid": 0
             },
@@ -195,6 +196,7 @@
                 "cost": 0.0,
                 "endid": 18,
                 "id": 20,
+                "weight": 0.428476667276754,
                 "overridable": true,
                 "startid": 0
             },
@@ -208,6 +210,7 @@
                 "cost": 0.0,
                 "endid": 0,
                 "id": 8,
+                "weight": 0.3777115936682494,
                 "overridable": true,
                 "startid": 1
             },
@@ -221,6 +224,7 @@
                 "cost": 0.0,
                 "endid": 2,
                 "id": 9,
+                "weight": 0.41118600261748245,
                 "overridable": true,
                 "startid": 1
             },
@@ -234,6 +238,7 @@
                 "cost": 0.0,
                 "endid": 17,
                 "id": 22,
+                "weight": 0.45398025981412815,
                 "overridable": true,
                 "startid": 1
             },
@@ -247,6 +252,7 @@
                 "cost": 0.0,
                 "endid": 1,
                 "id": 10,
+                "weight": 0.41118600261748245,
                 "overridable": true,
                 "startid": 2
             },
@@ -260,6 +266,7 @@
                 "cost": 0.0,
                 "endid": 17,
                 "id": 24,
+                "weight": 0.6259064245791787,
                 "overridable": true,
                 "startid": 2
             },
@@ -273,6 +280,7 @@
                 "cost": 0.0,
                 "endid": 4,
                 "id": 11,
+                "weight": 0.30907855385650507,
                 "overridable": true,
                 "startid": 3
             },
@@ -286,6 +294,7 @@
                 "cost": 0.0,
                 "endid": 19,
                 "id": 41,
+                "weight": 0.4635048325363116,
                 "overridable": true,
                 "startid": 3
             },
@@ -299,6 +308,7 @@
                 "cost": 0.0,
                 "endid": 3,
                 "id": 12,
+                "weight": 0.30907855385650507,
                 "overridable": true,
                 "startid": 4
             },
@@ -312,6 +322,7 @@
                 "cost": 0.0,
                 "endid": 19,
                 "id": 39,
+                "weight": 0.5685809646881798,
                 "overridable": true,
                 "startid": 4
             },
@@ -325,6 +336,7 @@
                 "cost": 0.0,
                 "endid": 16,
                 "id": 48,
+                "weight": 0.9241759143497291,
                 "overridable": true,
                 "startid": 4
             },
@@ -338,6 +350,7 @@
                 "cost": 0.0,
                 "endid": 6,
                 "id": 13,
+                "weight": 0.7858059174647531,
                 "overridable": true,
                 "startid": 5
             },
@@ -351,6 +364,7 @@
                 "cost": 0.0,
                 "endid": 15,
                 "id": 44,
+                "weight": 0.37015469907769977,
                 "overridable": true,
                 "startid": 5
             },
@@ -364,6 +378,7 @@
                 "cost": 0.0,
                 "endid": 19,
                 "id": 52,
+                "weight": 0.582611839436608,
                 "overridable": true,
                 "startid": 5
             },
@@ -377,6 +392,7 @@
                 "cost": 0.0,
                 "endid": 5,
                 "id": 14,
+                "weight": 0.7858059174647531,
                 "overridable": true,
                 "startid": 6
             },
@@ -390,6 +406,7 @@
                 "cost": 0.0,
                 "endid": 19,
                 "id": 46,
+                "weight": 0.5014386135119074,
                 "overridable": true,
                 "startid": 6
             },
@@ -403,6 +420,7 @@
                 "cost": 0.0,
                 "endid": 17,
                 "id": 31,
+                "weight": 0.5112540475211537,
                 "overridable": true,
                 "startid": 15
             },
@@ -416,6 +434,7 @@
                 "cost": 0.0,
                 "endid": 16,
                 "id": 32,
+                "weight": 0.32822254449135757,
                 "overridable": true,
                 "startid": 15
             },
@@ -429,6 +448,7 @@
                 "cost": 0.0,
                 "endid": 19,
                 "id": 37,
+                "weight": 0.44445908256741795,
                 "overridable": true,
                 "startid": 15
             },
@@ -442,6 +462,7 @@
                 "cost": 0.0,
                 "endid": 5,
                 "id": 43,
+                "weight": 0.37015469907769977,
                 "overridable": true,
                 "startid": 15
             },
@@ -455,6 +476,7 @@
                 "cost": 0.0,
                 "endid": 18,
                 "id": 27,
+                "weight": 0.4974202411172987,
                 "overridable": true,
                 "startid": 16
             },
@@ -468,6 +490,7 @@
                 "cost": 0.0,
                 "endid": 15,
                 "id": 33,
+                "weight": 0.32822254449135757,
                 "overridable": true,
                 "startid": 16
             },
@@ -481,6 +504,7 @@
                 "cost": 0.0,
                 "endid": 4,
                 "id": 47,
+                "weight": 0.9241759143497291,
                 "overridable": true,
                 "startid": 16
             },
@@ -494,6 +518,7 @@
                 "cost": 0.0,
                 "endid": 19,
                 "id": 49,
+                "weight": 0.5513688445040973,
                 "overridable": true,
                 "startid": 16
             },
@@ -507,6 +532,7 @@
                 "cost": 0.0,
                 "endid": 1,
                 "id": 23,
+                "weight": 0.45398025981412815,
                 "overridable": true,
                 "startid": 17
             },
@@ -520,6 +546,7 @@
                 "cost": 0.0,
                 "endid": 2,
                 "id": 25,
+                "weight": 0.6259064245791787,
                 "overridable": true,
                 "startid": 17
             },
@@ -533,6 +560,7 @@
                 "cost": 0.0,
                 "endid": 18,
                 "id": 29,
+                "weight": 0.38192762848048056,
                 "overridable": true,
                 "startid": 17
             },
@@ -546,6 +574,7 @@
                 "cost": 0.0,
                 "endid": 15,
                 "id": 30,
+                "weight": 0.5112540475211537,
                 "overridable": true,
                 "startid": 17
             },
@@ -559,6 +588,7 @@
                 "cost": 0.0,
                 "endid": 0,
                 "id": 21,
+                "weight": 0.428476667276754,
                 "overridable": true,
                 "startid": 18
             },
@@ -572,6 +602,7 @@
                 "cost": 0.0,
                 "endid": 16,
                 "id": 26,
+                "weight": 0.4974202411172987,
                 "overridable": true,
                 "startid": 18
             },
@@ -585,6 +616,7 @@
                 "cost": 0.0,
                 "endid": 17,
                 "id": 28,
+                "weight": 0.38192762848048056,
                 "overridable": true,
                 "startid": 18
             },
@@ -598,6 +630,7 @@
                 "cost": 0.0,
                 "endid": 15,
                 "id": 38,
+                "weight": 0.44445908256741795,
                 "overridable": true,
                 "startid": 19
             },
@@ -611,6 +644,7 @@
                 "cost": 0.0,
                 "endid": 4,
                 "id": 40,
+                "weight": 0.5685809646881798,
                 "overridable": true,
                 "startid": 19
             },
@@ -624,6 +658,7 @@
                 "cost": 0.0,
                 "endid": 3,
                 "id": 42,
+                "weight": 0.4635048325363116,
                 "overridable": true,
                 "startid": 19
             },
@@ -637,6 +672,7 @@
                 "cost": 0.0,
                 "endid": 6,
                 "id": 45,
+                "weight": 0.5014386135119074,
                 "overridable": true,
                 "startid": 19
             },
@@ -650,6 +686,7 @@
                 "cost": 0.0,
                 "endid": 16,
                 "id": 50,
+                "weight": 0.5513688445040973,
                 "overridable": true,
                 "startid": 19
             },
@@ -663,6 +700,7 @@
                 "cost": 0.0,
                 "endid": 5,
                 "id": 51,
+                "weight": 0.582611839436608,
                 "overridable": true,
                 "startid": 19
             },

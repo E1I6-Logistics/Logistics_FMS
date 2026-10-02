@@ -1,7 +1,8 @@
 """Route graph loading, shortest-path planning, and path validation.
 
-The simulator and the LLM evaluation harness use this module so that graph
-parsing and edge-weight rules remain identical in both execution paths.
+The simulator and evaluation harness share this module.  A stored edge
+``weight`` is authoritative.  Legacy graphs without that field retain the old
+positive-cost/coordinate fallback unless a caller requests strict weights.
 """
 
 from __future__ import annotations
@@ -53,10 +54,35 @@ def node_lookup(
     return result
 
 
+def _resolve_edge_weight(
+    properties: dict[str, Any],
+    points: dict[int, tuple[float, float]],
+    start: int,
+    end: int,
+    *,
+    require_stored_weight: bool,
+) -> float:
+    """Resolve one edge weight while keeping legacy graphs compatible."""
+    if "weight" in properties:
+        weight = float(properties["weight"])
+    elif require_stored_weight:
+        raise ValueError(
+            f"Edge {properties.get('id', f'{start}-{end}')}에 weight가 없습니다."
+        )
+    else:
+        cost = float(properties.get("cost", 0.0))
+        weight = cost if cost > 0 else math.dist(points[start], points[end])
+    if not math.isfinite(weight) or weight < 0:
+        raise ValueError("간선 weight는 0 이상의 유한한 숫자여야 합니다.")
+    return weight
+
+
 def build_route_inputs(
     graph: dict[str, Any],
+    *,
+    require_stored_weight: bool = False,
 ) -> tuple[dict[int, tuple[float, float]], list[tuple[int, int, float]]]:
-    """Convert GeoJSON into the point and edge format used for validation."""
+    """Convert GeoJSON into node coordinates and resolved directed weights."""
     points = {
         int(node_id): (
             float(feature["geometry"]["coordinates"][0]),
@@ -64,20 +90,30 @@ def build_route_inputs(
         )
         for node_id, feature in node_lookup(graph).items()
     }
+    if not points:
+        raise ValueError("Route graph에 Point 노드가 없습니다.")
+
     edges: list[tuple[int, int, float]] = []
     for feature in graph.get("features", []):
         properties = feature.get("properties") or {}
         if properties.get("startid") is None or properties.get("endid") is None:
             continue
+        start, end = int(properties["startid"]), int(properties["endid"])
+        if start not in points or end not in points:
+            continue
         edges.append(
             (
-                int(properties["startid"]),
-                int(properties["endid"]),
-                float(properties.get("cost", 0.0)),
+                start,
+                end,
+                _resolve_edge_weight(
+                    properties,
+                    points,
+                    start,
+                    end,
+                    require_stored_weight=require_stored_weight,
+                ),
             )
         )
-    if not points:
-        raise ValueError("Route graph에 Point 노드가 없습니다.")
     return points, edges
 
 
@@ -85,8 +121,10 @@ def plan_route(
     start_id: str,
     goal_id: str,
     graph: dict[str, Any] | None = None,
+    *,
+    require_stored_weight: bool = False,
 ) -> dict[str, Any]:
-    """Calculate a directed shortest path using positive cost or node distance."""
+    """Calculate a directed shortest path from the resolved edge weights."""
     graph = graph if graph is not None else load_route_graph()
     nodes = node_lookup(graph)
     start_id, goal_id = str(start_id), str(goal_id)
@@ -97,6 +135,7 @@ def plan_route(
         key: tuple(map(float, node["geometry"]["coordinates"][:2]))
         for key, node in nodes.items()
     }
+    integer_points = {int(key): value for key, value in points.items()}
     adjacency: dict[str, list[tuple[str, float, str]]] = {
         key: [] for key in nodes
     }
@@ -107,10 +146,13 @@ def plan_route(
         start, end = str(properties["startid"]), str(properties["endid"])
         if start not in points or end not in points:
             continue
-        cost = float(properties.get("cost", 0))
-        if not math.isfinite(cost):
-            raise ValueError("간선 비용은 유한한 숫자여야 합니다.")
-        weight = cost if cost > 0 else math.dist(points[start], points[end])
+        weight = _resolve_edge_weight(
+            properties,
+            integer_points,
+            int(start),
+            int(end),
+            require_stored_weight=require_stored_weight,
+        )
         edge_id = str(properties.get("id", f"{start}-{end}"))
         adjacency[start].append((end, weight, edge_id))
 
@@ -147,16 +189,31 @@ def plan_route(
     }
 
 
-def build_compact_route_graph(graph: dict, source_graph: str) -> dict:
+def build_compact_route_graph(
+    graph: dict,
+    source_graph: str,
+    *,
+    require_stored_weight: bool = False,
+) -> dict:
     """Convert route GeoJSON into the smaller graph format sent to an LLM."""
-    points, edges = build_route_inputs(graph)
+    points, edges = build_route_inputs(
+        graph, require_stored_weight=require_stored_weight
+    )
     edge_weights = build_edge_weight_lookup(points, edges)
     return {
         "type": "CompactRouteGraph",
         "source_graph": source_graph,
         "directed": True,
-        "weight_rule": "positive cost, otherwise Euclidean node distance",
+        "weight_rule": (
+            "GeoJSON properties.weight exactly"
+            if require_stored_weight
+            else "properties.weight; legacy positive cost or node distance fallback"
+        ),
         "nodes": sorted(points),
+        "node_coordinates": [
+            {"id": node, "x": points[node][0], "y": points[node][1]}
+            for node in sorted(points)
+        ],
         "edges": [
             {"from": start, "to": end, "weight": weight}
             for (start, end), weight in sorted(edge_weights.items())
@@ -168,12 +225,14 @@ def build_edge_weight_lookup(
     points: dict[int, tuple[float, float]],
     edges: list[tuple[int, int, float]],
 ) -> dict[tuple[int, int], float]:
-    """Use a positive edge cost, or the Euclidean distance for zero cost."""
+    """Index already-resolved edge weights and keep the lightest parallel edge."""
     edge_weights: dict[tuple[int, int], float] = {}
-    for start, end, cost in edges:
+    for start, end, weight in edges:
         if start not in points or end not in points:
             continue
-        weight = cost if cost > 0 else math.dist(points[start], points[end])
+        weight = float(weight)
+        if not math.isfinite(weight) or weight < 0:
+            raise ValueError("간선 weight는 0 이상의 유한한 숫자여야 합니다.")
         edge_key = (start, end)
         edge_weights[edge_key] = min(edge_weights.get(edge_key, math.inf), weight)
     return edge_weights
@@ -186,7 +245,7 @@ def validate_and_calculate_path_distance(
     start_id: int,
     target_id: int,
 ) -> tuple[list[int], float]:
-    """Check nodes and directed edges, then calculate distance locally."""
+    """Check nodes and directed edges, then sum the resolved stored weights."""
     if not isinstance(path, list) or not path:
         raise ValueError("경로가 비어 있거나 list 형식이 아닙니다.")
 

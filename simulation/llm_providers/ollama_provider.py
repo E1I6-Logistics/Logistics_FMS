@@ -1,19 +1,4 @@
-"""
-[플러그인] Ollama 로컬 모델 기반 최단경로 계산기.
-
-"모델 후보 5종" 중 "오픈소스 로컬" / "오픈소스 경량" 두 자리를
-이 클래스 하나로 커버한다. OLLAMA_MODEL 값만 바꿔 같은 코드로 비교한다.
-
-사전 준비:
-    cp simulation/.env.example simulation/.env
-    # simulation/.env에서 LLM_PROVIDER=ollama, OLLAMA_MODEL을 설정한다.
-    ollama pull gemma3:1b
-    ollama serve              # 이미 서비스로 실행 중이면 생략한다.
-    python simulation/run_llm_comparison.py
-
-로컬 서버는 API 키가 필요 없다. 다른 주소의 서버를 사용하면
-simulation/.env에 OLLAMA_HOST를 설정한다.
-"""
+"""Ollama local-model shortest-path provider."""
 
 from __future__ import annotations
 
@@ -39,6 +24,7 @@ class OllamaPathProvider(LLMPathProvider):
         keep_alive: str = "5m",
         think: bool | None = None,
         instructions: str | None = None,
+        output_schema: dict[str, Any] | None = None,
     ):
         self.model = model or self._require_env("OLLAMA_MODEL")
         self.options = options or {
@@ -50,7 +36,7 @@ class OllamaPathProvider(LLMPathProvider):
         self.keep_alive = keep_alive
         self.think = think
         self.instructions = instructions
-        # host를 안 주면 ollama 기본값(http://localhost:11434)을 그대로 사용
+        self.output_schema = output_schema or self.OUTPUT_SCHEMA
         self.client = ollama.Client(
             host=host or os.getenv("OLLAMA_HOST"),
             timeout=(
@@ -61,32 +47,49 @@ class OllamaPathProvider(LLMPathProvider):
         )
         self.last_inference = None
 
-    def compute_shortest_path(
-        self,
-        raw_graph: dict,
-        start_id: int,
-        target_id: int,
-    ) -> dict:
-        llm_input = self.build_llm_input(raw_graph, start_id, target_id)
+    def _response_diagnostics(
+        self, raw: dict[str, Any], requested_think: bool | None
+    ) -> dict[str, Any]:
+        """Record ignored think control and exhausted output budgets."""
+        message = raw.get("message") or {}
+        content = message.get("content") or ""
+        thinking = message.get("thinking") or ""
+        done_reason = raw.get("done_reason")
+        return {
+            "requested_think": requested_think,
+            "thinking_observed": bool(thinking.strip()),
+            "thinking_character_count": len(thinking),
+            "content_character_count": len(content),
+            "done_reason": done_reason,
+            "prompt_eval_count": raw.get("prompt_eval_count"),
+            "eval_count": raw.get("eval_count"),
+            "output_budget": self.options.get("num_predict"),
+            "output_budget_exhausted": done_reason == "length",
+            "think_control_ignored": requested_think is False
+            and bool(thinking.strip()),
+        }
 
+    def request_structured(
+        self,
+        *,
+        instructions: str,
+        payload: dict[str, Any],
+        output_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Make one schema-constrained request for either benchmark strategy."""
         self.last_inference = None
         request = dict(
             model=self.model,
             messages=[
-                {
-                    "role": "system",
-                    "content": self.instructions
-                    or self.instructions_for_graph(raw_graph),
-                },
+                {"role": "system", "content": instructions},
                 {
                     "role": "user",
                     "content": json.dumps(
-                        llm_input, ensure_ascii=False, separators=(",", ":")
+                        payload, ensure_ascii=False, separators=(",", ":")
                     ),
                 },
             ],
-            # Ollama는 JSON Schema를 format 파라미터에 직접 전달한다.
-            format=self.OUTPUT_SCHEMA,
+            format=output_schema,
             options=self.options,
             stream=False,
             keep_alive=self.keep_alive,
@@ -94,14 +97,42 @@ class OllamaPathProvider(LLMPathProvider):
         if self.think is not None:
             request["think"] = self.think
         elif self.model.startswith("qwen3:"):
-            # 기존 단일 실행기의 qwen3 기본 동작을 유지한다.
             request["think"] = False
-        response = self.client.chat(**request)
-        raw = response.model_dump(mode='json') if hasattr(response, 'model_dump') else dict(response)
-        self.last_inference = {'request': request, 'response': raw}
 
+        response = self.client.chat(**request)
+        raw = (
+            response.model_dump(mode="json")
+            if hasattr(response, "model_dump")
+            else dict(response)
+        )
+        diagnostics = self._response_diagnostics(raw, request.get("think"))
+        self.last_inference = {
+            "request": request,
+            "response": raw,
+            "diagnostics": diagnostics,
+        }
         content = response["message"]["content"]
         if not content:
-            raise RuntimeError("LLM 응답이 비어 있습니다.")
-
+            raise RuntimeError(
+                "LLM 최종 응답이 비어 있습니다: "
+                f"model={self.model}, done_reason={diagnostics['done_reason']}, "
+                f"eval_count={diagnostics['eval_count']}, "
+                f"num_predict={diagnostics['output_budget']}, "
+                f"thinking_observed={diagnostics['thinking_observed']}. "
+                "done_reason=length이면 모델이 최종 JSON 전에 출력 예산을 "
+                "소진한 것입니다."
+            )
         return json.loads(content)
+
+    def compute_shortest_path(
+        self,
+        raw_graph: dict,
+        start_id: int,
+        target_id: int,
+    ) -> dict:
+        """Request a complete path in one API call."""
+        return self.request_structured(
+            instructions=self.instructions or self.instructions_for_graph(raw_graph),
+            payload=self.build_llm_input(raw_graph, start_id, target_id),
+            output_schema=self.output_schema,
+        )

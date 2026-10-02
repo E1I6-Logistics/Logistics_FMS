@@ -47,11 +47,9 @@ class LLMPathProvider(ABC):
     6. Every pair of consecutive nodes in the returned path must have a valid directed edge.
 
     Distance rules:
-    1. All current edge cost values are 0.
-    2. Calculate each edge weight using the coordinates of its start and end nodes.
-    3. Use this Euclidean distance formula:
-    sqrt((start_x - end_x)^2 + (start_y - end_y)^2)
-    4. The total path distance is the sum of all edge weights.
+    1. Use each edge properties.weight exactly as stored.
+    2. Do not recalculate a weight from Point coordinates.
+    3. The total path distance is the sum of traversed edge weights.
 
     Find the valid directed path from start_node to target_node with the minimum
     total distance.
@@ -74,7 +72,8 @@ class LLMPathProvider(ABC):
     Input:
     - start_node, target_node: node IDs
     - route_graph: CompactRouteGraph
-    - nodes: [{id, x, y}]  (coordinates are for reference only)
+    - nodes: [node_id, ...]
+    - node_coordinates: [{id, x, y}] (reference only; never recalculate weight)
     - edges: [{from, to, weight}]  (directed)
 
     Rules:
@@ -102,6 +101,31 @@ class LLMPathProvider(ABC):
             "reported_total_distance": {"type": "number"},
         },
         "required": ["path", "reported_total_distance"],
+    }
+
+    #: V2 CoT 시험에서 계산 절차와 최종 경로를 함께 받는 JSON 스키마.
+    COT_OUTPUT_SCHEMA = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "reasoning_steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 8,
+            },
+            "path": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "minItems": 1,
+            },
+            "reported_total_distance": {"type": "number"},
+        },
+        "required": [
+            "reasoning_steps",
+            "path",
+            "reported_total_distance",
+        ],
     }
 
     @staticmethod

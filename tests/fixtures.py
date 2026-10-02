@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+from simulation.services.route_service import build_route_inputs
+
 
 MOCK_DIR = Path(__file__).resolve().parent / "mock"
 
@@ -16,15 +18,5 @@ def load_responses():
 
 
 def route_inputs():
-    graph = load_graph()
-    points = {
-        int(feature["properties"]["id"]): tuple(feature["geometry"]["coordinates"][:2])
-        for feature in graph["features"]
-        if feature.get("geometry", {}).get("type") == "Point"
-    }
-    edges = [
-        (feature["properties"]["startid"], feature["properties"]["endid"], feature["properties"]["cost"])
-        for feature in graph["features"]
-        if "startid" in feature.get("properties", {})
-    ]
-    return points, edges
+    # 비교 테스트도 서비스가 해석한 최종 edge weight를 그대로 사용한다.
+    return build_route_inputs(load_graph())
