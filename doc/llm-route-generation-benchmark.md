@@ -377,7 +377,7 @@ Kev는 코드가 만든 경로 후보 중 하나를 선택하고 각 선택지�
 | 시험 모델 | checkpoint | 포트 | 대상 |
 | --- | --- | ---: | --- |
 | Kev-0.8B | `jaredpalmer/kev-0.8b@v1.0` | 8009 | PC·Jetson 공통 |
-| Kev-4B | `jaredpalmer/kev-4b@v1.0` | 8010 | PC 추가 비교 |
+| Kev-4B | `jaredpalmer/kev-4b@v1.0` | 8011 | PC 추가 비교 |
 
 > 결과 폴더 이름만으로 모델이 바뀌지는 않는다. 실제 모델은 Kev 서버 실행 명령의
 > `--run`으로 결정되며, 벤치마크 전에 `/v1/models`의 `run` 값을 확인한다.
@@ -499,7 +499,7 @@ KEV_CUDA_GRAPHS=0 \
 KEV_FUSED=0 \
 python -m kev.serve \
   --run jaredpalmer/kev-4b@v1.0 \
-  --port 8010 \
+  --port 8011 \
   2>&1 | tee ~/kev-4b-server.log
 ```
 
@@ -507,7 +507,7 @@ python -m kev.serve \
 `Application startup complete`가 출력되면 터미널 2에서 확인한다.
 
 ```bash
-curl -sS http://127.0.0.1:8010/v1/models \
+curl -sS http://127.0.0.1:8011/v1/models \
   | python -m json.tool
 
 nvidia-smi
@@ -534,7 +534,7 @@ cd ~/Logistics_FMS
 source ~/venv/robot/bin/activate
 
 export ROUTE_SELECTOR=kev
-export KEV_HOST=http://127.0.0.1:8010
+export KEV_HOST=http://127.0.0.1:8011
 export KEV_MODEL=kev-latest
 export KEV_TIMEOUT_SECONDS=60
 export KEV_REQUIRE_CUDA=true
