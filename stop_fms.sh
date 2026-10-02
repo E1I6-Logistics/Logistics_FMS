@@ -3,7 +3,7 @@
 set -u
 
 # Stops the FMS development stack.
-# - Docker: Zenoh Router
+# - Docker: Zenoh Router, MQTT Broker
 # - Host: FastAPI, Vite, ROS 2 daemon, zenoh-bridge-ros2dds
 # It also stops containers/processes left by earlier launcher versions.
 
@@ -121,11 +121,14 @@ if command -v ros2 >/dev/null 2>&1; then
     log "ROS 2 daemon: stop requested"
 fi
 
-# Stop the Compose-managed Zenoh Router.
+# Stop the Compose-managed Zenoh Router and MQTT Broker.
 if select_docker_command; then
     if [ -f "$COMPOSE_FILE" ]; then
-        "${DOCKER[@]}" compose -f "$COMPOSE_FILE" stop zenoh-router >/dev/null 2>&1 || true
-        log "Zenoh Router: stop requested"
+        "${DOCKER[@]}" compose -f "$COMPOSE_FILE" stop \
+            zenoh-router \
+            mqtt-broker >/dev/null 2>&1 || true
+
+        log "Zenoh Router and MQTT Broker: stop requested"
     fi
 
     # Migration cleanup: stop containers created by the discarded
