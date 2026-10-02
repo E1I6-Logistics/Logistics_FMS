@@ -3,19 +3,22 @@ import time
 
 
 class OMX:
-    def __init__(self, robot_id, mqtt_client):
-        self.robot_id = robot_id
+    def __init__(self, omx_id, mqtt_client):
+        self.omx_id = omx_id
         self.mqtt_client = mqtt_client
 
+        # 연결 상태
         self.connected = True
         self.last_seen = time.time()
 
+        # 현재 작업 정보
         self.job_id = None
         self.items = {}
 
         self.current_count = 0
         self.total_count = 0
 
+        # 작업 진행 상태
         self.state = "IDLE"
         self.message = ""
 
@@ -37,7 +40,7 @@ class OMX:
             "items": items,
         }
 
-        topic = f"{self.robot_id}/command"
+        topic = f"{self.omx_id}/command"
 
         self._publish(topic, payload)
 
@@ -107,10 +110,6 @@ class OMX:
 
     def _publish(self, topic, payload):
         message = json.dumps(payload)
+        self.mqtt_client.publish(topic, message)
 
-        self.mqtt_client.publish(
-            topic,
-            message,
-        )
-
-        print(f"[OMX:{self.robot_id}] " f"Published {topic}: {payload}")
+        print(f"[OMX:{self.omx_id}] " f"Published {topic}: {payload}")

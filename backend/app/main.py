@@ -30,6 +30,7 @@ from time import monotonic
 
 from .services.mock_data import mock_fms
 from .services.websocket_manager import manager
+from .services.mqtt_manager import mqtt_manager
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
 
     load_map_metadata()
     load_route_graph()
+    mqtt_manager.start()
 
     # ROS2 초기화
     rclpy.init()
@@ -79,6 +81,9 @@ async def lifespan(app: FastAPI):
                 rclpy.shutdown()
 
             ros_thread.join(timeout=2.0)
+
+            # MQTT 종료
+            mqtt_manager.stop()
 
 
 app = FastAPI(

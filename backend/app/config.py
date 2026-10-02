@@ -27,28 +27,13 @@ ROUTE_DIR = BASE_DIR / "routes"
 
 # Map YAML 파일 경로 생성
 # FMS_MAP_YAML 환경변수 사용, 미설정 시 my_map.yaml 사용
-MAP_YAML_PATH = MAP_DIR / os.getenv(
-    "FMS_MAP_YAML",
-    "my_map.yaml",
-)
+MAP_YAML_PATH = MAP_DIR / os.getenv("FMS_MAP_YAML", "my_map.yaml")
 
 # Route Graph 파일 경로 생성
 # FMS_ROUTE_GRAPH 환경변수 사용, 미설정 시 test.geojson 사용
-ROUTE_GRAPH_PATH = ROUTE_DIR / os.getenv(
-    "FMS_ROUTE_GRAPH",
-    "test.geojson",
-)
+ROUTE_GRAPH_PATH = ROUTE_DIR / os.getenv("FMS_ROUTE_GRAPH", "test.geojson")
 
-
-ROBOT_MODE = (
-    os.getenv(
-        "FMS_ROBOT_MODE",
-        "simulation",
-    )
-    .strip()
-    .lower()
-)
-
+ROBOT_MODE = os.getenv("FMS_ROBOT_MODE", "simulation").strip().lower()
 if ROBOT_MODE not in {"real", "simulation"}:
     raise ValueError("FMS_ROBOT_MODE must be either 'real' or 'simulation'")
 
@@ -58,10 +43,16 @@ if ROBOT_MODE not in {"real", "simulation"}:
 
 # CORS 허용 Origin 목록 생성
 CORS_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "FMS_CORS_ORIGINS",
-        "*",
-    ).split(",")
-    if origin.strip()
+    origin.strip() for origin in os.getenv("FMS_CORS_ORIGINS", "*").split(",") if origin.strip()
 ]
+
+
+# ============================================================
+# MQTT
+# ============================================================
+
+# MQTT Broker 주소
+MQTT_BROKER_IP = os.getenv("FMS_MQTT_BROKER_IP", "127.0.0.1")
+
+# MQTT Broker 포트
+MQTT_BROKER_PORT = int(os.getenv("FMS_MQTT_BROKER_PORT", "1883"))
