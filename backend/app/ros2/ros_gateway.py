@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 from copy import deepcopy
 
+
+from ..services.mqtt_manager import mqtt_manager
 from ..models.robot import RobotState, NavigationType
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from ..services.fleet_manager import fleet_manager
@@ -38,6 +40,31 @@ CHARGING_STATION_NODES = {
     "robot3": "2",
 }
 
+ARUCO_MARKER_IDS = {
+    "6": 25,
+    # "6": 28,
+    "5": 24,
+    # "5": 29,
+    "4": 26,
+    "3": 27,
+}
+
+# 작업 Node별 OMX 장비
+NODE_OMX_MAP = {
+    "5": "omx1",
+    "6": "omx2",
+    "3": "omx3",
+    "4": "omx4",
+}
+
+# 작업 Node별 처리 품목
+NODE_ITEM_MAP = {
+    "5": ["A", "B"],
+    "6": ["C", "D"],
+    "3": ["A", "B", "C", "D"],
+    "4": ["A", "B", "C", "D"],
+}
+
 
 class RosGateway:
     def __init__(self) -> None:
@@ -47,6 +74,7 @@ class RosGateway:
         self._ros_node = ros_node
         ros_node.navigation_result_callback = self.on_navigation_result
         ros_node.precision_dock_result_callback = self.on_precision_dock_result
+        ros_node.aruco_align_result_callback = self.on_aruco_align_result
 
     def sync_connected_robots(self, connections: list[dict]) -> None:
 
@@ -453,10 +481,26 @@ class RosGateway:
             # 일반 목적지 이동 완료
             print(f"[{robot_id}] 목적지 도착: {robot.goal_node}")
 
-            # 일반 목적지
             robot.current_node = robot.goal_node
             robot.navigation_type = None
             robot.route = None
+
+            # 현재 목적지 Node의 ArUco Marker ID 확인
+            marker_id = ARUCO_MARKER_IDS.get(robot.current_node)
+
+            if marker_id is not None:
+                robot.set_state(RobotState.DOCKING)
+
+                print(
+                    f"[{robot_id}] Node {robot.current_node} 도착 "
+                    f"→ ArUco 정렬 시작 "
+                    f"(marker_id={marker_id})"
+                )
+
+                self._ros_node.send_aruco_align(robot_id=robot_id, marker_id=marker_id)
+                return
+
+            # ArUco 정렬 대상이 아닌 일반 Node
             robot.set_state(RobotState.IDLE)
 
         elif status == GoalStatus.STATUS_CANCELED:
@@ -540,6 +584,46 @@ class RosGateway:
         else:
             robot.set_state(RobotState.PAUSED)
             print(f"[{robot_id}] PrecisionDock 실패")
+
+    def on_aruco_align_result(self, robot_id: str, status: int) -> None:
+        robot = fleet_manager.get_robot(robot_id)
+
+        if robot is None:
+            return
+
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            print(f"[{robot_id}] ArUco 정렬 성공: " f"Node {robot.current_node}")
+
+            # 현재 Node에 연결된 OMX 조회
+            omx_id = NODE_OMX_MAP.get(robot.current_node)
+
+            if omx_id is None:
+                print(f"[{robot_id}] 연결된 OMX가 없습니다: " f"Node {robot.current_node}")
+                robot.set_state(RobotState.IDLE)
+                return
+
+            # 현재 Node에서 처리할 품목 조회
+            item_keys = NODE_ITEM_MAP.get(robot.current_node, [])
+            items = {}
+
+            for key in item_keys:
+                quantity = robot.order_items.get(key, 0)
+                if quantity > 0:
+                    items[key] = quantity
+
+            print(f"[{robot_id}] MQTT 작업 요청: " f"{omx_id}, items={items}")
+
+            try:
+                mqtt_manager.send_job(omx_id=omx_id, job_id=robot.order_id, items=items)
+            except (ValueError, RuntimeError) as e:
+                print(f"[{robot_id}] MQTT 작업 요청 실패: " f"{e}")
+                robot.set_state(RobotState.PAUSED)
+                return
+            robot.set_state(RobotState.WAITING)
+
+        else:
+            print(f"[{robot_id}] ArUco 정렬 실패: " f"status={status}")
+            robot.set_state(RobotState.PAUSED)
 
 
 ros_gateway = RosGateway()

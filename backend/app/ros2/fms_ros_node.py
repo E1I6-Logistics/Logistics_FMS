@@ -19,6 +19,7 @@ from ..services.fleet_manager import fleet_manager
 from action_msgs.msg import GoalStatus
 from sensor_msgs.msg import BatteryState
 from turtlebot3_my_msg.action import PrecisionDock
+from logitle_aruco_msgs.action import AlignAndCorrectWithAruco
 
 
 class FmsRosNode(Node):
@@ -36,12 +37,14 @@ class FmsRosNode(Node):
 
         self._follow_waypoints_clients: dict[str, ActionClient] = {}
         self._precision_dock_clients: dict[str, ActionClient] = {}
+        self._aruco_align_clients: dict[str, ActionClient] = {}
 
         # 현재 실행 중인 FollowWaypoints Goal 관리
         self._follow_waypoints_goal_handles = {}
 
         self.navigation_result_callback = None
         self.precision_dock_result_callback = None
+        self.aruco_align_result_callback = None
 
     def register_robot(self, robot_id: str) -> None:
 
@@ -51,15 +54,6 @@ class FmsRosNode(Node):
 
         # 발행
         publisher_cmd_vel = self.create_publisher(TwistStamped, f"/{robot_id}/cmd_vel", 10)
-
-        # # 구독
-        # subscription_pose = self.create_subscription(
-        #     PoseWithCovarianceStamped,
-        #     f"/{robot_id}/amcl_pose",
-        #     # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
-        #     lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
-        #     10,
-        # )
 
         # 구독
         subscription_pose = self.create_subscription(
@@ -73,7 +67,6 @@ class FmsRosNode(Node):
         subscription_battery = self.create_subscription(
             BatteryState,
             f"/{robot_id}/battery_state",
-            # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
             lambda msg, rid=robot_id: self._on_battery_state(rid, msg),
             10,
         )
@@ -87,12 +80,19 @@ class FmsRosNode(Node):
             self, PrecisionDock, f"/{robot_id}/precision_dock"
         )
 
+        action_aruco_align_client = ActionClient(
+            self,
+            AlignAndCorrectWithAruco,
+            f"/{robot_id}/aruco_align_and_correct",
+        )
+
         # 딕셔너리에서 관리
         self._cmd_vel_publishers[robot_id] = publisher_cmd_vel
         self._pose_subscribers[robot_id] = subscription_pose
         self._battery_subscribers[robot_id] = subscription_battery
         self._follow_waypoints_clients[robot_id] = action_follow_waypoints_client
         self._precision_dock_clients[robot_id] = action_precision_dock_client
+        self._aruco_align_clients[robot_id] = action_aruco_align_client
 
         # 모든 인터페이스 생성이 끝난 후 등록 처리
         self._registered_robots.add(robot_id)
@@ -173,6 +173,7 @@ class FmsRosNode(Node):
             if self.navigation_result_callback:
                 self.navigation_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
             return
+
         # 현재 실행 중인 Goal 저장
         self._follow_waypoints_goal_handles[robot_id] = goal_handle
 
@@ -302,6 +303,60 @@ class FmsRosNode(Node):
 
         if self.precision_dock_result_callback:
             self.precision_dock_result_callback(robot_id, result.status)
+
+    def send_aruco_align(self, robot_id: str, marker_id: int) -> None:
+        client = self._aruco_align_clients.get(robot_id)
+
+        if client is None:
+            raise ValueError(f"Aruco Align Action client를 찾을 수 없습니다: {robot_id}")
+
+        # Action Server 연결 확인
+        if not client.wait_for_server(timeout_sec=2.0):
+            print(f"[Error] [{robot_id}] " f"Aruco Align Action Server를 찾을 수 없습니다.")
+
+            if self.aruco_align_result_callback:
+                self.aruco_align_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
+            return
+
+        # Goal 생성
+        goal = AlignAndCorrectWithAruco.Goal()
+        goal.marker_id = int(marker_id)
+        goal.apply_correction = True
+
+        print(f"[ARUCO] Goal 전송: " f"robot={robot_id}, marker_id={marker_id}")
+
+        # Feedback callback은 사용하지 않음
+        future = client.send_goal_async(goal)
+        future.add_done_callback(
+            lambda future, rid=robot_id: self._on_aruco_align_goal_response(rid, future)
+        )
+
+    def _on_aruco_align_goal_response(self, robot_id: str, future) -> None:
+        goal_handle = future.result()
+
+        if not goal_handle.accepted:
+            print(f"[ARUCO] Goal 거부: {robot_id}")
+
+            if self.aruco_align_result_callback:
+                self.aruco_align_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
+            return
+
+        print(f"[ARUCO] Goal 수락: {robot_id}")
+
+        result_future = goal_handle.get_result_async()
+
+        result_future.add_done_callback(
+            lambda future, rid=robot_id: self._on_aruco_align_result(rid, future)
+        )
+
+    def _on_aruco_align_result(self, robot_id: str, future) -> None:
+        result = future.result()
+        print(f"[ARUCO] 완료: " f"robot={robot_id}, status={result.status}")
+
+        if self.aruco_align_result_callback:
+            self.aruco_align_result_callback(robot_id, result.status)
 
     def _on_amcl_pose(self, robot_id: str, msg: PoseStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)

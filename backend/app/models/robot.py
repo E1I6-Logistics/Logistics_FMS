@@ -80,6 +80,16 @@ class Robot:
         self.reserved_nodes: list[str] = []
         self.reserved_edges: list[str] = []
 
+        # 현재 배정된 주문
+        self.order_id: str | None = None
+        self.order_items: dict[str, int] = {}
+        self.order_total_quantity: int = 0
+        self.order_workstation_node: str | None = None
+        self.order_pickup_nodes: list[str] = []
+
+        # 현재 진행 중인 Pickup 순서
+        self.order_pickup_index: int = 0
+
     def set_connected(self, connected: bool) -> None:
         self.connected = connected
 
@@ -100,6 +110,32 @@ class Robot:
             self.pose_received_at = (
                 monotonic()
             )  # FMS가 위치를 저장한 시각. AMCL 메시지의 측정 시간이나 웹 전송 시각과는 별개
+
+    def assign_order(
+        self,
+        order_id: str,
+        items: dict[str, int],
+        total_quantity: int,
+        pickup_nodes: list[str],
+        workstation_node: str,
+    ) -> None:
+
+        self.order_id = order_id
+        self.order_items = items
+        self.order_total_quantity = total_quantity
+        self.order_pickup_nodes = pickup_nodes
+        self.order_workstation_node = workstation_node
+        self.order_pickup_index = 0  # 첫 번째 Pickup부터 시작
+
+        self.state = RobotState.TASK_ASSIGNED
+
+    def clear_order(self) -> None:
+        self.order_id = None
+        self.order_items = {}
+        self.order_total_quantity = 0
+        self.order_pickup_nodes = []
+        self.order_workstation_node = None
+        self.order_pickup_index = 0
 
     def update_battery(self, percentage: float) -> None:
         self.battery = float(percentage)

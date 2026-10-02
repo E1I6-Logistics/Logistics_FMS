@@ -118,7 +118,14 @@ class MQTTManager:
         # =============================================
 
         if message_type == "status":
+            # status 수신 전 연결 상태 저장
+            was_connected = omx.connected
+            # status 수신 → 연결 상태 및 last_seen 갱신
             omx.update_status(data)
+
+            # OFFLINE 상태였던 OMX가 다시 status를 보내면 재연결
+            if not was_connected:
+                print(f"[MQTT] OMX RECONNECTED: {omx_id}")
 
         elif message_type == "ack":
             omx.update_ack(data)

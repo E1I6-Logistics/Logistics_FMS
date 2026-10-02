@@ -12,10 +12,11 @@ from .routers.map import router as map_router
 from .routers.mode import router as mode_router
 from .routers.robots import router as robots_router
 from .routers.websocket import router as websocket_router
+from .routers.orders import router as orders_router
+
 from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
 from .services.route_graph import load_route_graph
-
 import threading
 
 import rclpy
@@ -106,6 +107,7 @@ app.include_router(robots_router)
 app.include_router(commands_router)
 app.include_router(connections_router)
 app.include_router(websocket_router)
+app.include_router(orders_router)
 
 
 @app.get("/")

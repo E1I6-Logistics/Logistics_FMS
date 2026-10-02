@@ -35,10 +35,7 @@ class OMX:
 
         self.state = "COMMAND_SENT"
 
-        payload = {
-            "job_id": job_id,
-            "items": items,
-        }
+        payload = {"job_id": job_id, "items": items}
 
         topic = f"{self.omx_id}/command"
 
