@@ -370,138 +370,224 @@ python -m simulation.evaluation.selector_question_types_benchmark \
 
 ## 6. Kev 경로 선택 시험
 
-`jaredpalmer/kev-0.8b@v1.0`와 `jaredpalmer/kev-4b@v1.0`는 `choice`, `score`,
-`noul` 질문에 확률을 반환한다. Jetson과 PC 공통 비교에는 0.8B, RTX 4070 SUPER
-PC의 추가 성능 비교에는 4B를 사용한다.
-`KevSelector`는 Kev 서버의 `GET /v1/models`, `POST /v1/systemone` API를 호출한다.
+Kev는 코드가 만든 경로 후보 중 하나를 선택하고 각 선택지의 확률을 반환한다.
+`KevSelector`는 Kev 서버의 `GET /v1/models`, `POST /v1/systemone` API를
+호출한다.
 
-### 6.1 설치
+| 시험 모델 | checkpoint | 포트 | 대상 |
+| --- | --- | ---: | --- |
+| Kev-0.8B | `jaredpalmer/kev-0.8b@v1.0` | 8009 | PC·Jetson 공통 |
+| Kev-4B | `jaredpalmer/kev-4b@v1.0` | 8010 | PC 추가 비교 |
 
-Kev 저장소는 프로젝트 밖 `~/kev`에 둔다. 이미 존재한다면 `git clone`을 반복하지
-말고 해당 디렉터리에서 상태와 커밋을 확인한다.
+> 결과 폴더 이름만으로 모델이 바뀌지는 않는다. 실제 모델은 Kev 서버 실행 명령의
+> `--run`으로 결정되며, 벤치마크 전에 `/v1/models`의 `run` 값을 확인한다.
+
+### 6.1 공통 설치
+
+Kev 저장소가 없다면 한 번만 내려받는다.
 
 ```bash
-git clone https://github.com/jaredpalmer/kev.git ~/kev
-cd ~/kev
-git rev-parse HEAD
+test -d ~/kev || git clone https://github.com/jaredpalmer/kev.git ~/kev
+```
+
+프로젝트에서 사용하는 Python 가상환경에 Kev 서버 의존성을 설치한다.
+
+```bash
 source ~/venv/robot/bin/activate
+cd ~/kev
 
 python -m pip install --no-cache-dir -e ".[serve]"
-python -m pip install --no-cache-dir cffi
-python -m pip install --no-cache-dir --upgrade pandas
 python -m pip check
 ```
 
-재현 결과에는 `~/kev`의 커밋도 함께 기록한다. Kev 설치가 NumPy, pandas,
-scikit-learn, Transformers를 변경할 수 있으므로 import 위치를 확인한다.
+이미 같은 가상환경에서 Kev 서버를 정상 실행했다면 설치를 반복하지 않는다.
+CUDA가 준비됐는지 확인한다.
 
 ```bash
 python - <<'PY'
-import numpy
-import pandas
-import sklearn
-import transformers
 import torch
-import laya
-import kev
 
 print("torch:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
+print("cuda:", torch.cuda.is_available())
 print("device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")
-print("laya:", getattr(laya, "__version__", "unknown"))
-print("kev:", getattr(kev, "__version__", "unknown"))
-print("numpy:", numpy.__version__)
-print("pandas:", pandas.__version__, pandas.__file__)
-print("sklearn:", sklearn.__version__)
-print("transformers:", transformers.__version__)
 PY
 ```
 
-`pandas.__file__`은 `~/venv/robot` 아래여야 한다.
+### 6.2 Kev-0.8B 서버 실행
 
-### 6.2 서버 실행과 확인
+터미널 1에서 실행하고 서버 터미널을 계속 열어 둔다.
 
 ```bash
-cd ~/kev
 source ~/venv/robot/bin/activate
+cd ~/kev
 
-KEV_BACKEND=torch KEV_DTYPE=bf16 KEV_PREFIX_CACHE=0 \
-KEV_CUDA_GRAPHS=0 KEV_FUSED=0 \
-python -m kev.serve --run jaredpalmer/kev-0.8b@v1.0 --port 8009 \
+KEV_BACKEND=torch \
+KEV_DTYPE=bf16 \
+KEV_PREFIX_CACHE=0 \
+KEV_CUDA_GRAPHS=0 \
+KEV_FUSED=0 \
+python -m kev.serve \
+  --run jaredpalmer/kev-0.8b@v1.0 \
+  --port 8009 \
   2>&1 | tee ~/kev-0.8b-server.log
 ```
 
-서버 터미널은 계속 실행해 둔다. 다른 터미널에서 확인한다.
+첫 실행에서는 Kev checkpoint와 `Qwen/Qwen3.5-0.8B-Base`가 다운로드된다.
+`Application startup complete`가 출력되면 터미널 2에서 확인한다.
 
 ```bash
-curl -s http://127.0.0.1:8009/v1/models | python -m json.tool
-```
+curl -sS http://127.0.0.1:8009/v1/models \
+  | python -m json.tool
 
-응답의 `device`는 `cuda` 또는 `cuda:0`, `run`은 `jaredpalmer/kev-0.8b`여야 한다.
-
-RTX 4070 SUPER PC에서 Kev-4B를 시험할 때는 0.8B 서버를 종료한 뒤 다음처럼
-별도 포트로 실행한다. 첫 실행에서 checkpoint가 다운로드된다.
-
-```bash
-cd ~/kev
-source ~/venv/robot/bin/activate
-
-KEV_BACKEND=torch KEV_DTYPE=bf16 KEV_PREFIX_CACHE=0 \
-KEV_CUDA_GRAPHS=0 KEV_FUSED=0 \
-python -m kev.serve --run jaredpalmer/kev-4b@v1.0 --port 8010 \
-  2>&1 | tee ~/kev-4b-server.log
-```
-
-다른 터미널에서 실제 checkpoint와 GPU 사용을 확인한다.
-
-```bash
-curl -s http://127.0.0.1:8010/v1/models | python -m json.tool
 nvidia-smi
 ```
 
-### 6.3 FMS 설정과 반복 벤치마크
+다음 값이 나와야 한다.
 
-`simulation/.env`:
-
-```dotenv
-ROUTE_SELECTOR=kev
-KEV_HOST=http://127.0.0.1:8009
-KEV_MODEL=kev-latest
-KEV_TIMEOUT_SECONDS=60
-KEV_REQUIRE_CUDA=true
-# KEV_API_KEY=
+```text
+run: jaredpalmer/kev-0.8b
+base: Qwen/Qwen3.5-0.8B-Base
+device: cuda
+backend: torch
+dtype: bfloat16
 ```
 
-`KEV_MODEL=kev-latest`는 API 별칭이고 실제 checkpoint는 Kev 서버의 `--run`이
-선택한다.
+### 6.3 Kev-0.8B 벤치마크 실행
+
+터미널 2에서 실행한다.
 
 ```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+export ROUTE_SELECTOR=kev
+export KEV_HOST=http://127.0.0.1:8009
+export KEV_MODEL=kev-latest
+export KEV_TIMEOUT_SECONDS=60
+export KEV_REQUIRE_CUDA=true
+
+RESULT_DIR="simulation/benchmark_results/pc-rtx4070-kev-0.8b-latency-$(date +%Y%m%d-%H%M%S)"
+
 python -m simulation.evaluation.selector_latency_benchmark \
-  --output simulation/benchmark_results/<환경>-kev-0.8b-latency-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
-
-python -m simulation.evaluation.selector_question_types_benchmark \
-  --output simulation/benchmark_results/<환경>-kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1
+  --output "$RESULT_DIR" \
+  --repeats 5 \
+  --warmups 1 \
+  --deadline 0.15
 ```
 
-PC Kev-4B는 `simulation/.env`의 `KEV_HOST`를 8010으로 바꾼 뒤 실행한다.
-
-```dotenv
-ROUTE_SELECTOR=kev
-KEV_HOST=http://127.0.0.1:8010
-KEV_MODEL=kev-latest
-KEV_REQUIRE_CUDA=true
-```
+Jetson에서는 출력 폴더 이름만 다음처럼 변경한다.
 
 ```bash
-python -m simulation.evaluation.selector_latency_benchmark \
-  --output simulation/benchmark_results/pc-rtx4070-kev-4b-latency-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
+RESULT_DIR="simulation/benchmark_results/jetson-orin-kev-0.8b-latency-$(date +%Y%m%d-%H%M%S)"
 ```
 
-출력 폴더 이름만으로 선택기가 바뀌지 않는다. 결과의 `manifest.json`에서
-`selector_name`이 `kev`인지 확인한다.
+0.8B 시험이 끝나면 터미널 1에서 `Ctrl+C`로 서버를 종료한 뒤 4B 시험을
+시작한다. 두 모델 서버를 동시에 실행하면 GPU 메모리가 중복 사용된다.
+
+### 6.4 Kev-4B 서버 실행
+
+Kev-4B는 터미널 1에서 실행한다.
+
+```bash
+source ~/venv/robot/bin/activate
+cd ~/kev
+
+KEV_BACKEND=torch \
+KEV_DTYPE=bf16 \
+KEV_PREFIX_CACHE=0 \
+KEV_CUDA_GRAPHS=0 \
+KEV_FUSED=0 \
+python -m kev.serve \
+  --run jaredpalmer/kev-4b@v1.0 \
+  --port 8010 \
+  2>&1 | tee ~/kev-4b-server.log
+```
+
+첫 실행에서는 Kev checkpoint와 `Qwen/Qwen3.5-4B-Base`가 다운로드된다.
+`Application startup complete`가 출력되면 터미널 2에서 확인한다.
+
+```bash
+curl -sS http://127.0.0.1:8010/v1/models \
+  | python -m json.tool
+
+nvidia-smi
+```
+
+다음 값이 나와야 한다.
+
+```text
+run: jaredpalmer/kev-4b
+base: Qwen/Qwen3.5-4B-Base
+device: cuda
+backend: torch
+dtype: bfloat16
+```
+
+`run`이 0.8B이거나 `device`가 CPU이면 4B 벤치마크를 시작하지 않는다.
+
+### 6.5 Kev-4B 벤치마크 실행
+
+터미널 2에서 실행한다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+export ROUTE_SELECTOR=kev
+export KEV_HOST=http://127.0.0.1:8010
+export KEV_MODEL=kev-latest
+export KEV_TIMEOUT_SECONDS=60
+export KEV_REQUIRE_CUDA=true
+
+RESULT_DIR="simulation/benchmark_results/pc-rtx4070-kev-4b-latency-$(date +%Y%m%d-%H%M%S)"
+
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output "$RESULT_DIR" \
+  --repeats 5 \
+  --warmups 1 \
+  --deadline 0.15
+```
+
+`KEV_MODEL=kev-latest`는 두 모델이 공통으로 사용하는 API 별칭이다. 실제
+checkpoint는 각 서버의 `--run` 값으로 구분한다.
+
+실행 중 GPU 상태는 별도 터미널에서 확인한다.
+
+```bash
+watch -n 1 nvidia-smi
+```
+
+### 6.6 결과 확인
+
+각 벤치마크를 실행한 터미널에서 해당 `RESULT_DIR`을 사용한다.
+
+```bash
+python -m json.tool "$RESULT_DIR/manifest.json"
+python -m json.tool "$RESULT_DIR/selector_latency_summary.json"
+```
+
+`manifest.json`에서 다음 값을 확인한다.
+
+```text
+status: complete
+selector_name: kev
+requested_model: kev-latest
+device.kind: cuda
+```
+
+결과 파일은 다음과 같다.
+
+| 파일 | 용도 |
+| --- | --- |
+| `manifest.json` | 실행 설정, 선택기, 모델과 실제 장치 |
+| `selector_latency_trials.jsonl` | 요청별 선택 결과, 확률, 정확도와 시간 |
+| `selector_latency_summary.json` | 전체·언어·질문 유형·경로별 집계 |
+| `selector_latency_samples.csv` | 그래프 작성과 PC·Jetson 비교용 표 |
+
+결과 폴더 이름과 `/v1/models` 확인 결과를 함께 보관해야 0.8B와 4B 결과를
+구분할 수 있다. Kev 모델은 영어 중심이므로 한국어와 영어 정확도를 분리해서
+확인한다. CUDA 메모리 부족으로 서버 또는 벤치마크가 종료되면 해당 실행은 성능
+결과로 사용하지 않는다.
 
 ## 7. 결과 파일과 해석
 
