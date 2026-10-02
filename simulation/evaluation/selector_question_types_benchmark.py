@@ -20,6 +20,7 @@ from simulation.evaluation.device_metadata import (
     git_metadata, selector_device_metadata,
 )
 from simulation.route_selector import get_selector
+from simulation.services.route_service import build_compact_route_graph, plan_route
 
 TRIALS_FILENAME = "selector_question_type_trials.jsonl"
 SUMMARY_FILENAME = "selector_question_type_summary.json"
@@ -27,6 +28,28 @@ CSV_FILENAME = "selector_question_type_samples.csv"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 Clock = Callable[[], float]
+
+
+def _blocked_route_state(language: str) -> dict[str, Any]:
+    """Build the route-blocked question from the actual frontend map."""
+    graph_path = ROOT / "routes" / "test.geojson"
+    graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    planned = plan_route("0", "2", graph, require_stored_weight=True)
+    rule = (
+        "차단된 노드가 계획 경로에 포함되면 해당 경로는 사용할 수 없습니다."
+        if language == "ko"
+        else "A route cannot be used when it contains a blocked node."
+    )
+    return {
+        "start_node": 0,
+        "target_node": 2,
+        "planned_route": [int(node) for node in planned["node_ids"]],
+        "blocked_nodes": [1],
+        "route_graph": build_compact_route_graph(
+            graph, graph_path.name, require_stored_weight=True
+        ),
+        "rule": rule,
+    }
 
 CASES = (
     {
@@ -75,11 +98,7 @@ CASES = (
         "id": "ko_route_blocked_noul",
         "language": "ko",
         "question_type": "noul",
-        "state": {
-            "planned_route": [2, 5, 4, 6, 10],
-            "blocked_nodes": [6],
-            "rule": "차단된 노드가 계획 경로에 포함되면 해당 경로는 사용할 수 없습니다.",
-        },
+        "state": _blocked_route_state("ko"),
         "instructions": "현재 경로를 사용할 수 없는 상태입니까?",
         "criteria": {
             "true": "경로에 차단 노드가 포함되어 사용할 수 없음",
@@ -91,13 +110,7 @@ CASES = (
         "id": "en_route_blocked_noul",
         "language": "en",
         "question_type": "noul",
-        "state": {
-            "planned_route": [2, 5, 4, 6, 10],
-            "blocked_nodes": [6],
-            "rule": (
-                "A route cannot be used when it contains a blocked node."
-            ),
-        },
+        "state": _blocked_route_state("en"),
         "instructions": "Is the current route unavailable?",
         "criteria": {
             "true": "The route contains a blocked node and cannot be used",

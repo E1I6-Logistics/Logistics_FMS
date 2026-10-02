@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import sys
@@ -32,35 +33,81 @@ SUMMARY_FILENAME = "selector_latency_summary.json"
 CSV_FILENAME = "selector_latency_samples.csv"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
-ROUTE_GRAPH_PATH = ROOT / "routes" / "test_benchmark_v1.geojson"
+ROUTE_GRAPH_PATH = ROOT / "routes" / "test.geojson"
+ROUTE_CONFIG_PATH = ROOT / "simulation" / "evaluation" / "route_generation_benchmark.json"
 OPTION_IDS = ("option_a", "option_b", "option_c", "option_d", "option_e")
 Clock = Callable[[], float]
 
 
-def _route_question_data(language: str) -> dict[str, Any]:
-    """Build the route case from the same graph and validator as the simulator."""
+def _configured_route_cases() -> tuple[tuple[int, int], ...]:
+    """Read the same five Start/Target pairs used by the V1 benchmark."""
+    config = json.loads(ROUTE_CONFIG_PATH.read_text(encoding="utf-8"))
+    return tuple((int(case["start"]), int(case["goal"])) for case in config["cases"])
+
+
+ROUTE_CASES = _configured_route_cases()
+
+
+def _five_shortest_simple_paths(
+    graph: dict[str, Any], start: int, target: int
+) -> list[tuple[list[int], float]]:
+    """Enumerate valid simple paths and return the five lightest candidates."""
+    points, edges = build_route_inputs(graph, require_stored_weight=True)
+    adjacency: dict[int, list[tuple[int, float]]] = {node: [] for node in points}
+    for edge_start, edge_end, weight in edges:
+        adjacency[edge_start].append((edge_end, weight))
+    for neighbors in adjacency.values():
+        neighbors.sort()
+
+    paths: list[tuple[list[int], float]] = []
+
+    def visit(node: int, path: list[int], distance: float) -> None:
+        if node == target:
+            paths.append((path.copy(), distance))
+            return
+        for neighbor, weight in adjacency[node]:
+            if neighbor not in path:
+                visit(neighbor, [*path, neighbor], distance + weight)
+
+    visit(start, [start], 0.0)
+    paths.sort(key=lambda item: (item[1], item[0]))
+    if len(paths) < len(OPTION_IDS):
+        raise ValueError(
+            f"{start}→{target} 경로 후보가 {len(paths)}개뿐입니다. "
+            f"최소 {len(OPTION_IDS)}개가 필요합니다."
+        )
+    return paths[: len(OPTION_IDS)]
+
+
+def _route_question_data(
+    language: str, start: int, target: int
+) -> dict[str, Any]:
+    """Build one selector case from the actual frontend GeoJSON graph."""
     graph = json.loads(ROUTE_GRAPH_PATH.read_text(encoding="utf-8"))
-    points, edges = build_route_inputs(graph)
-    baseline = plan_route("2", "10", graph)
+    points, edges = build_route_inputs(graph, require_stored_weight=True)
+    baseline = plan_route(
+        str(start), str(target), graph, require_stored_weight=True
+    )
     correct_path = [int(node) for node in baseline["node_ids"]]
     _, correct_distance = validate_and_calculate_path_distance(
-        points, edges, correct_path, 2, 10
+        points, edges, correct_path, start, target
     )
-    long_path = [2, 5, 4, 6, 13, 8, 9, 10]
-    _, long_distance = validate_and_calculate_path_distance(
-        points, edges, long_path, 2, 10
-    )
+    path_candidates = _five_shortest_simple_paths(graph, start, target)
     candidates = [
-        f"path={correct_path}, distance={correct_distance:.6f}",
-        f"path={long_path}, distance={long_distance:.6f}",
-        "path=[2,10]",
-        "path=[2,5,6,10]",
-        "path=[2,5,4,13,6,10]",
+        f"path={path}, distance={distance:.12f}"
+        for path, distance in path_candidates
     ]
+    correct_answer = f"path={correct_path}, distance={correct_distance:.12f}"
+    if candidates[0] != correct_answer:
+        raise ValueError(f"{start}→{target} 후보와 V1 Ground Truth가 일치하지 않습니다.")
     state = {
-        "start_node": 2,
-        "target_node": 10,
-        "route_graph": build_compact_route_graph(graph, ROUTE_GRAPH_PATH.name),
+        "start_node": start,
+        "target_node": target,
+        "route_graph": build_compact_route_graph(
+            graph,
+            ROUTE_GRAPH_PATH.name,
+            require_stored_weight=True,
+        ),
     }
     if language == "ko":
         instructions = (
@@ -73,18 +120,22 @@ def _route_question_data(language: str) -> dict[str, Any]:
             "whose sum of edge weights is the smallest."
         )
     return {
+        "case_key": f"{start}_to_{target}",
+        "start_node": start,
+        "target_node": target,
         "state": state,
         "instructions": instructions,
         "answers": candidates,
-        "correct_answer": candidates[0],
+        "correct_answer": correct_answer,
     }
 
 
 def _base_questions() -> list[dict[str, Any]]:
-    return [
+    questions = [
         {
             "type": "intuitive",
             "language": "ko",
+            "case_key": "intuitive",
             "label": "한국어 직관 질문",
             "state": "상자에 붙은 라벨의 색상은 파란색입니다.",
             "instructions": "상자 라벨의 색상을 선택하세요.",
@@ -94,6 +145,7 @@ def _base_questions() -> list[dict[str, Any]]:
         {
             "type": "intuitive",
             "language": "en",
+            "case_key": "intuitive",
             "label": "English intuitive question",
             "state": "The label attached to the box is blue.",
             "instructions": "Choose the color of the label on the box.",
@@ -103,6 +155,7 @@ def _base_questions() -> list[dict[str, Any]]:
         {
             "type": "reasoning",
             "language": "ko",
+            "case_key": "reasoning",
             "label": "한국어 사고 질문",
             "state": (
                 "민수는 영희보다 키가 큽니다. 영희는 철수보다 키가 큽니다. "
@@ -115,6 +168,7 @@ def _base_questions() -> list[dict[str, Any]]:
         {
             "type": "reasoning",
             "language": "en",
+            "case_key": "reasoning",
             "label": "English reasoning question",
             "state": (
                 "Alice is taller than Bob. Bob is taller than Carol. "
@@ -124,19 +178,25 @@ def _base_questions() -> list[dict[str, Any]]:
             "answers": ["Alice", "Bob", "Carol", "David", "Erin"],
             "correct_answer": "Alice",
         },
-        {
-            "type": "shortest_path",
-            "language": "ko",
-            "label": "한국어 최단거리 질문",
-            **_route_question_data("ko"),
-        },
-        {
-            "type": "shortest_path",
-            "language": "en",
-            "label": "English shortest-path question",
-            **_route_question_data("en"),
-        },
     ]
+    for start, target in ROUTE_CASES:
+        questions.extend(
+            [
+                {
+                    "type": "shortest_path",
+                    "language": "ko",
+                    "label": f"한국어 최단거리 질문 {start}→{target}",
+                    **_route_question_data("ko", start, target),
+                },
+                {
+                    "type": "shortest_path",
+                    "language": "en",
+                    "label": f"English shortest-path question {start}→{target}",
+                    **_route_question_data("en", start, target),
+                },
+            ]
+        )
+    return questions
 
 
 def _positioned_candidates(
@@ -162,12 +222,15 @@ def build_test_cases() -> tuple[dict[str, Any], ...]:
                 {
                     "id": (
                         f"{question['language']}_{question['type']}_"
+                        f"{question['case_key']}_"
                         f"position_{position + 1}"
                     ),
                     "question_type": question["type"],
                     "language": question["language"],
                     "label": question["label"],
                     "answer_position": position + 1,
+                    "start_node": question.get("start_node"),
+                    "target_node": question.get("target_node"),
                     "state": question["state"],
                     "instructions": question["instructions"],
                     "candidates": candidates,
@@ -259,6 +322,7 @@ def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
 def _write_csv(path: Path, trials: list[dict[str, Any]]) -> None:
     fieldnames = [
         "case_id", "question_type", "language", "answer_position", "repeat",
+        "start_node", "target_node",
         "timestamp", "selector_name", "requested_model", "response_model", "choice",
         "expected_choice", "correct_answer", "correct", "confidence",
         "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds",
@@ -309,6 +373,11 @@ def run_latency_benchmark(
         "languages": 2,
         "answer_positions": 5,
         "option_count": 5,
+        "route_graph": str(ROUTE_GRAPH_PATH.relative_to(ROOT)),
+        "route_graph_sha256": hashlib.sha256(ROUTE_GRAPH_PATH.read_bytes()).hexdigest(),
+        "route_pairs": [
+            {"start": start, "target": target} for start, target in ROUTE_CASES
+        ],
         "case_count": len(TEST_CASES),
         "warmups_per_language_and_type": warmups,
         "repeats_per_case": repeats,
@@ -360,6 +429,8 @@ def run_latency_benchmark(
                     "question_type": case["question_type"],
                     "language": case["language"],
                     "answer_position": case["answer_position"],
+                    "start_node": case["start_node"],
+                    "target_node": case["target_node"],
                     "repeat": repeat,
                     "timestamp": _utc_now(),
                     "selector_name": selector_name,
@@ -388,6 +459,8 @@ def run_latency_benchmark(
                     "question_type": case["question_type"],
                     "language": case["language"],
                     "answer_position": case["answer_position"],
+                    "start_node": case["start_node"],
+                    "target_node": case["target_node"],
                     "repeat": repeat,
                     "timestamp": _utc_now(),
                     "selector_name": selector_name,
@@ -439,6 +512,15 @@ def run_latency_benchmark(
         positions.append(
             {"answer_position": position, **_summarize_trials(positioned)}
         )
+    routes = []
+    for start, target in ROUTE_CASES:
+        grouped = [
+            trial for trial in trials
+            if trial["start_node"] == start and trial["target_node"] == target
+        ]
+        routes.append(
+            {"start_node": start, "target_node": target, **_summarize_trials(grouped)}
+        )
 
     summary = {
         "benchmark": "route-selector-language-position-latency-v3",
@@ -451,6 +533,7 @@ def run_latency_benchmark(
         "overall": _summarize_trials(trials),
         "groups": groups,
         "answer_positions": positions,
+        "routes": routes,
     }
     _json_dump(output / SUMMARY_FILENAME, summary)
     _write_csv(output / CSV_FILENAME, trials)

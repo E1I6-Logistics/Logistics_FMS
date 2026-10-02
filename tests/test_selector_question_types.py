@@ -73,8 +73,20 @@ class SelectorQuestionTypesTest(unittest.TestCase):
             blocked_case = next(
                 case for case in CASES if case["id"] == "ko_route_blocked_noul"
             )
-            self.assertIn(6, blocked_case["state"]["planned_route"])
-            self.assertIn(6, blocked_case["state"]["blocked_nodes"])
+            self.assertEqual(blocked_case["state"]["planned_route"], [0, 1, 2])
+            self.assertIn(1, blocked_case["state"]["blocked_nodes"])
+            self.assertEqual(
+                blocked_case["state"]["route_graph"]["source_graph"],
+                "test.geojson",
+            )
+            self.assertEqual(
+                len(blocked_case["state"]["route_graph"]["node_coordinates"]),
+                12,
+            )
+            self.assertEqual(
+                len(blocked_case["state"]["route_graph"]["edges"]),
+                38,
+            )
             self.assertTrue(blocked_case["expected_boolean"])
             english_blocked_case = next(
                 case for case in CASES if case["id"] == "en_route_blocked_noul"
