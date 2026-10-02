@@ -164,3 +164,7 @@ simulation/llm_route_summary.json
 
 # Logistics_AMR file
 robots_ws/
+
+# Mosquitto runtime data
+infra/mosquitto/data/
+infra/mosquitto/log/
