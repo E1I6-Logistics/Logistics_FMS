@@ -1,0 +1,319 @@
+[1mdiff --git a/backend/app/services/mock_data.py b/backend/app/services/mock_data.py[m
+[1mindex b77f9a5..2a7c0d0 100644[m
+[1m--- a/backend/app/services/mock_data.py[m
+[1m+++ b/backend/app/services/mock_data.py[m
+[36m@@ -6,7 +6,7 @@[m [min this module. Replace each command TODO with project-specific control logic.[m
+ [m
+ from __future__ import annotations[m
+ [m
+[31m-from copy import deepcopy[m
+[32m+[m[32mfrom copy import copy, deepcopy[m
+ from datetime import datetime, timezone[m
+ from time import monotonic[m
+ from uuid import uuid4[m
+[36m@@ -44,6 +44,8 @@[m [mclass MockFmsStore:[m
+     def __init__(self, reservations=None) -> None:[m
+         self._reservations = reservations if reservations is not None else ReservationTable()[m
+         self._pending: dict[str, None] = {}[m
+[32m+[m[32m        self._concession: dict[str, dict] = {}[m
+[32m+[m[32m        self._request_sequence = 0[m
+         self._last_tick = monotonic()[m
+         self._lock = RLock()[m
+         self._robots: dict[str, dict[str, Any]] = {}[m
+[36m@@ -56,6 +58,8 @@[m [mclass MockFmsStore:[m
+             for robot_id, navigation_id in requests:[m
+                 self._reservations.release_request(robot_id, navigation_id)[m
+             self._pending.clear()[m
+[32m+[m[32m            self._concession.clear()[m
+[32m+[m[32m            self._request_sequence = 0[m
+             self._last_tick = monotonic()[m
+             self._robots = {}[m
+             self._blocked_ips.clear()[m
+[36m@@ -75,6 +79,8 @@[m [mclass MockFmsStore:[m
+                     "route": None,[m
+                     "goal_node": None,[m
+                     "navigation_id": None,[m
+[32m+[m[32m                    "request_order": None,[m
+[32m+[m[32m                    "stop_requested": False,[m
+                     "map_pose_received": True,[m
+                     "connection_state": "ONLINE",[m
+                 }[m
+[36m@@ -163,7 +169,8 @@[m [mclass MockFmsStore:[m
+ [m
+         resource = self._occupied_resource(robot, graph)[m
+         plan = planner.plan_timed([m
+[31m-            robot["goal_node"], (robot["x"], robot["y"]), robot["occupied_node"],[m
+[32m+[m[32m            self._concession.get(robot["robot_id"], {}).get("node", robot["goal_node"]),[m
+[32m+[m[32m            (robot["x"], robot["y"]), robot["occupied_node"],[m
+             resource[1:] if resource[0] == "edge" else None,[m
+             blocked=blocked, now=now, speed_mps=SIMULATION_SPEED_MPS,[m
+             safety_margin=RESERVATION_MARGIN_S,[m
+[36m@@ -189,10 +196,7 @@[m [mclass MockFmsStore:[m
+             return False[m
+         # 경로와 시간표를 예약 성공 후 함께 교체한다.[m
+         if not departures:[m
+[31m-            robot["route"] = None[m
+[31m-            robot["goal_node"] = None[m
+[31m-            robot["status"] = "IDLE"[m
+[31m-            self._release_schedule(robot)[m
+[32m+[m[32m            self._finish_route(robot)[m
+         else:[m
+             robot["route"] = {[m
+                 "node_ids": node_ids, "edge_ids": edge_ids, "waypoint_yaws": waypoint_yaws,[m
+[36m@@ -202,13 +206,176 @@[m [mclass MockFmsStore:[m
+             robot["status"] = "WAITING" if departure > now else "NAVIGATING"[m
+         return True[m
+ [m
+[32m+[m[32m    # 대피 도착은 원래 명령의 완료가 아니므로, 실제 점유를 유지[m
+[32m+[m[32m    def _finish_route(self, robot):[m
+[32m+[m[32m        robot["route"] = None[m
+[32m+[m[32m        self._release_schedule(robot)[m
+[32m+[m[32m        if robot["robot_id"] in self._concession:[m
+[32m+[m[32m            robot["status"] = "WAITING"[m
+[32m+[m[32m            self._pending.setdefault(robot["robot_id"], None)[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            robot["goal_node"] = None[m
+[32m+[m[32m            robot["request_order"] = None[m
+[32m+[m[32m            robot["status"] = "IDLE"[m
+[32m+[m
+[32m+[m[32m    #양보 후보 검증은 실제 로봇/공용 예약표를 변경하지 않음[m
+[32m+[m[32m    def _planning_copy(self):[m
+[32m+[m[32m        trial = copy(self)[m
+[32m+[m[32m        trial._robots = deepcopy(self._robots)[m
+[32m+[m[32m        trial._pending = dict(self._pending)[m
+[32m+[m[32m        trial._concession = deepcopy(self._concession)[m
+[32m+[m[32m        trial._reservations = ReservationTable()[m
+[32m+[m[32m        rows = self._reservations.snapshot()[m
+[32m+[m[32m        for robot_id, navigation_id in {(r.robot_id, r.navigation_id) for r in rows}:[m
+[32m+[m[32m            trial._reservations.try_commit(robot_id, navigation_id, tuple([m
+[32m+[m[32m                r for r in rows if (r.robot_id, r.navigation_id) == (robot_id, navigation_id)))[m
+[32m+[m[32m        return trial[m
+[32m+[m
+[32m+[m[32m    # 진행 중인 양보는 완료/취소까지 유지하여 왕복 양보를 방지[m
+[32m+[m[32m    def _resolve_deadlock(self, now, graph, planner):[m
+[32m+[m[32m        if self._concession or not self._pending:[m
+[32m+[m[32m            return[m
+[32m+[m[32m        waiting = sorted(self._pending, key=lambda rid: self._robots[rid]["request_order"])[m
+[32m+[m[32m        parked = [rid for rid, robot in self._robots.items()[m
+[32m+[m[32m                  if robot["status"] == "IDLE" and robot["goal_node"] is None[m
+[32m+[m[32m                  and robot["route"] is None and not robot["stop_requested"]][m
+[32m+[m[32m        occupied = {rid: self._occupied_resource(self._robots[rid], graph) for rid in waiting}[m
+[32m+[m[32m        dependencies = {}[m
+[32m+[m[32m        for rid in waiting:[m
+[32m+[m[32m            trial = self._planning_copy()[m
+[32m+[m[32m            for other in waiting:[m
+[32m+[m[32m                if other != rid:[m
+[32m+[m[32m                    trial._robots.pop(other)[m
+[32m+[m[32m                    trial._release_schedule(self._robots[other])[m
+[32m+[m[32m            robot = trial._robots[rid][m
+[32m+[m
+[32m+[m[32m            # 현재 검사 방식에서 교착 관계를 확인하지 못한 경우 (더 있을 수도..)[m
+[32m+[m[32m            if not trial._try_schedule(robot, now, graph, planner) or robot["route"] is None:[m
+[32m+[m[32m                dependencies[rid] = set()[m
+[32m+[m[32m                continue[m
+[32m+[m[32m            path = robot["route"]["node_ids"][m
+[32m+[m[32m            resources = {node_key(n) for n in path}[m
+[32m+[m[32m            resources.update(edge_key(a, b) for a, b in zip(path, path[1:]))[m
+[32m+[m[32m            dependencies[rid] = {other for other in waiting if other != rid and occupied[other] in resources}[m
+[32m+[m
+[32m+[m[32m        def reachable(start):[m
+[32m+[m[32m            seen, todo = set(), list(dependencies[start])[m
+[32m+[m[32m            while todo:[m
+[32m+[m[32m                rid = todo.pop()[m
+[32m+[m[32m                if rid not in seen:[m
+[32m+[m[32m                    seen.add(rid)[m
+[32m+[m[32m                    todo.extend(dependencies[rid] - seen)[m
+[32m+[m[32m            return seen[m
+[32m+[m
+[32m+[m[32m        reach = {rid: reachable(rid) for rid in waiting}[m
+[32m+[m[32m        for priority in waiting:[m
+[32m+[m[32m            cycle = [rid for rid in waiting if rid != priority[m
+[32m+[m[32m                     and rid in reach[priority] and priority in reach[rid]][m
+[32m+[m[32m            # 이동 요청이 없어도 이 로봇의 점유를 제외하면 길이 열리는지 검사[m
+[32m+[m[32m            blockers = [][m
+[32m+[m[32m            for rid in parked:[m
+[32m+[m[32m                trial = self._planning_copy()[m
+[32m+[m[32m                trial._robots.pop(rid)[m
+[32m+[m[32m                trial._release_schedule(self._robots[rid])[m
+[32m+[m[32m                if trial._try_schedule(trial._robots[priority], now, graph, planner):[m
+[32m+[m[32m                    blockers.append(rid)[m
+[32m+[m[32m            if not cycle and not blockers:[m
+[32m+[m[32m                continue[m
+[32m+[m[32m            # 같은 교착 집합에서는 최초 명령이 우선이며 후순위만 양보[m
+[32m+[m[32m            if any(self._robots[rid]["request_order"] < self._robots[priority]["request_order"] for rid in cycle):[m
+[32m+[m[32m                continue[m
+[32m+[m[32m            candidates = [][m
+[32m+[m[32m            for concession in [*reversed(cycle), *blockers]:[m
+[32m+[m[32m                robot = self._robots[concession][m
+[32m+[m[32m                for node in planner.nodes:[m
+[32m+[m[32m                    if node == robot["occupied_node"]:[m
+[32m+[m[32m                        continue[m
+[32m+[m[32m                    trial = self._planning_copy()[m
+[32m+[m[32m                    trial._concession[concession] = {[m
+[32m+[m[32m                        "node": node, "priority": priority,[m
+[32m+[m[32m                        "navigation_id": self._robots[priority]["navigation_id"],[m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    mover = trial._robots[concession][m
+[32m+[m[32m                    if mover["goal_node"] is None:[m
+[32m+[m[32m                        mover["navigation_id"] = uuid4().hex[m
+[32m+[m[32m                    if not trial._try_schedule(mover, now, graph, planner):[m
+[32m+[m[32m                        continue[m
+[32m+[m[32m                    route = mover["route"][m
+[32m+[m[32m                    if route is None or not trial._try_schedule(trial._robots[priority], now, graph, planner):[m
+[32m+[m[32m                        continue[m
+[32m+[m[32m                    # 유휴 로봇은 대피 지점에서 정차하므로 원래 목적지 재개 검사가 없다.[m
+[32m+[m[32m                    if robot["goal_node"] is not None:[m
+[32m+[m[32m                        # 우선 로봇의 목적지 정차 이후에도 원래 목적지로 복귀 가능해야 한다.[m
+[32m+[m[32m                        resume = trial._planning_copy()[m
+[32m+[m[32m                        leader = resume._robots[priority][m
+[32m+[m[32m                        leader["x"], leader["y"] = planner.nodes[leader["goal_node"]][m
+[32m+[m[32m                        leader["occupied_node"] = leader["goal_node"][m
+[32m+[m[32m                        leader["occupied_edge"] = None[m
+[32m+[m[32m                        leader["route"] = None[m
+[32m+[m[32m                        resume._release_schedule(leader)[m
+[32m+[m[32m                        follower = resume._robots[concession][m
+[32m+[m[32m                        follower["x"], follower["y"] = planner.nodes[node][m
+[32m+[m[32m                        follower["occupied_node"], follower["occupied_edge"] = node, None[m
+[32m+[m[32m                        follower["route"] = None[m
+[32m+[m[32m                        resume._concession.pop(concession)[m
+[32m+[m[32m                        resume._release_schedule(follower)[m
+[32m+[m[32m                        can_resume = resume._try_schedule(follower, now, graph, planner)[m
+[32m+[m[32m                        remaining = [rid for rid in cycle if rid != concession][m
+[32m+[m
+[32m+[m[32m                        while not can_resume and remaining:[m
+[32m+[m[32m                            progressed = False[m
+[32m+[m[32m                            for rid in list(remaining):[m
+[32m+[m[32m                                other = resume._robots[rid][m
+[32m+[m[32m                                goal = other["goal_node"][m
+[32m+[m[32m                                if not resume._try_schedule(other, now, graph, planner):[m
+[32m+[m[32m                                    continue[m
+[32m+[m[32m                                other["x"], other["y"] = planner.nodes[goal][m
+[32m+[m[32m                                other["occupied_node"], other["occupied_edge"] = goal, None[m
+[32m+[m[32m                                other["route"] = None[m
+[32m+[m[32m                                resume._release_schedule(other)[m
+[32m+[m[32m                                remaining.remove(rid)[m
+[32m+[m[32m                                progressed = True[m
+[32m+[m[32m                            can_resume = resume._try_schedule(follower, now, graph, planner)[m
+[32m+[m[32m                            if not progressed:[m
+[32m+[m[32m                                break[m
+[32m+[m[32m                        if not can_resume:[m
+[32m+[m[32m                            continue[m
+[32m+[m[32m                    points = [(robot["x"], robot["y"])] + [planner.nodes[n] for n in route["node_ids"][1:]][m
+[32m+[m[32m                    distance = sum(math.dist(a, b) for a, b in zip(points, points[1:]))[m
+[32m+[m[32m                    candidates.append((distance, -(robot["request_order"] or 0), node, concession, trial._concession[concession]))[m
+[32m+[m[32m            for _, _, _, concession, maneuver in sorted(candidates):[m
+[32m+[m[32m                robot = self._robots[concession][m
+[32m+[m[32m                previous_navigation = robot["navigation_id"][m
+[32m+[m[32m                if robot["goal_node"] is None:[m
+[32m+[m[32m                    robot["navigation_id"] = uuid4().hex[m
+[32m+[m[32m                self._concession[concession] = maneuver[m
+[32m+[m[32m                if self._try_schedule(robot, now, graph, planner):[m
+[32m+[m[32m                    self._pending.pop(concession, None)[m
+[32m+[m[32m                    return[m
+[32m+[m[32m                self._concession.pop(concession)[m
+[32m+[m[32m                robot["navigation_id"] = previous_navigation[m
+[32m+[m
+     def _retry_waiting(self, now, graph, planner):[m
+[31m-        for robot_id in list(self._pending):[m
+[32m+[m[32m        for rid, maneuver in list(self._concession.items()):[m
+[32m+[m[32m            leader = self._robots[maneuver["priority"]][m
+[32m+[m[32m            if leader["goal_node"] is None or leader["navigation_id"] != maneuver["navigation_id"]:[m
+[32m+[m[32m                # 우선 명령 완료/취소/교체 시 현재 위치에서 원래 목적지를 재개[m
+[32m+[m[32m                self._concession.pop(rid)[m
+[32m+[m[32m                robot = self._robots[rid][m
+[32m+[m[32m                if robot["goal_node"] is None:[m
+[32m+[m[32m                    self._finish_route(robot)[m
+[32m+[m[32m                    self._pending.pop(rid, None)[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    self._wait_for_reservation(robot)[m
+[32m+[m[32m        for robot_id in sorted(self._pending, key=lambda rid: self._robots[rid]["request_order"] or math.inf):[m
+             robot = self._robots[robot_id][m
+[31m-            if robot["goal_node"] is None:[m
+[32m+[m[32m            if robot["goal_node"] is None and robot_id not in self._concession:[m
+                 self._pending.pop(robot_id, None)[m
+[32m+[m[32m            elif robot_id in self._concession and robot["occupied_node"] == self._concession[robot_id]["node"]:[m
+[32m+[m[32m                continue[m
+             elif self._try_schedule(robot, now, graph, planner):[m
+                 self._pending.pop(robot_id, None)[m
+[32m+[m[32m        self._resolve_deadlock(now, graph, planner)[m
+ [m
+     def advance_simulation(self, dt: float, now: float | None = None):[m
+         """한 tick의 재예약·진입·이동을 같은 잠금과 시각으로 처리한다."""[m
+[36m@@ -222,7 +389,7 @@[m [mclass MockFmsStore:[m
+                 return[m
+             elapsed = min(dt, now - self._last_tick)[m
+             self._last_tick = now[m
+[31m-            if not any(robot["goal_node"] is not None for robot in self._robots.values()):[m
+[32m+[m[32m            if not self._concession and not any(robot["goal_node"] is not None for robot in self._robots.values()):[m
+                 return[m
+             graph = load_route_graph()[m
+             planner = DistanceAStar(graph)[m
+[36m@@ -290,7 +457,7 @@[m [mclass MockFmsStore:[m
+             "mock": True,[m
+         }[m
+ [m
+[31m-    # 노드 경로 - 기본으로 시작지점과 목적지점만 존재[m
+[32m+[m[41m    [m
+     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict[str, Any]:[m
+         """TODO: Replace with user-defined path planning and node movement."""[m
+         with self._lock:[m
+[36m@@ -302,6 +469,11 @@[m [mclass MockFmsStore:[m
+             self._occupied_resource(robot, graph)[m
+             # 시뮬레이션은 현재 위치에서 즉시 정지한 뒤 새 요청을 탐색한다.[m
+             self.stop_robot(robot_id)[m
+[32m+[m[32m            # 명시적 정지 명령 구분[m
+[32m+[m[32m            robot["stop_requested"] = False[m
+[32m+[m[32m            # 명령 접수 순서 부여[m
+[32m+[m[32m            self._request_sequence += 1[m
+[32m+[m[32m            robot["request_order"] = self._request_sequence[m
+             robot["navigation_id"] = uuid4().hex[m
+             robot["goal_node"] = str(target["id"])[m
+             self._wait_for_reservation(robot)[m
+[36m@@ -358,6 +530,7 @@[m [mclass MockFmsStore:[m
+                     "occupied_edge": occupied_edge,[m
+                     "status": "IDLE",[m
+                     "route": None,[m
+[32m+[m[32m                    "stop_requested": False,[m
+                 }[m
+             )[m
+ [m
+[36m@@ -374,6 +547,9 @@[m [mclass MockFmsStore:[m
+             robot["status"] = "IDLE"[m
+             robot["goal_node"] = None[m
+             robot["navigation_id"] = None[m
+[32m+[m[32m            robot["request_order"] = None[m
+[32m+[m[32m            robot["stop_requested"] = True[m
+[32m+[m[32m            self._concession.pop(robot["robot_id"], None)[m
+             self._pending.pop(robot["robot_id"], None)[m
+             self._release_schedule(robot)[m
+             # 위치와 점유는 유지한다. route가 없어도 구간 중간에서 재출발 가능.[m
+[36m@@ -384,7 +560,7 @@[m [mclass MockFmsStore:[m
+         """TODO: Replace with user-defined velocity command transport."""[m
+         with self._lock:[m
+             robot = self._get_robot(robot_id)[m
+[31m-            if robot["goal_node"] is not None:[m
+[32m+[m[32m            if robot["goal_node"] is not None or robot["robot_id"] in self._concession:[m
+                 if linear_x != 0 or angular_z != 0:[m
+                     raise ValueError("예약 주행 또는 대기 중에는 먼저 정지 명령을 실행해야 합니다.")[m
+                 # 선택 변경 등의 정리용 영속도 명령은 예약·대기 상태를 바꾸지 않는다.[m
+[36m@@ -475,6 +651,8 @@[m [mclass MockFmsStore:[m
+                 route["phase"] = "moving"[m
+ [m
+                 if distance > 0.0:[m
+[32m+[m[32m                    # 되돌아가는 경로도 이동 방향으로 회전한 전진이고[m
+[32m+[m[32m                    # 차체 방향을 유지하는 실제 후진 명령으로 취급하지 않음[m
+                     robot["yaw"] = route["waypoint_yaws"][next_index][m
+ [m
+                 # 다음 노드까지 도착하고 남은 거리로 계속 진행[m
+[36m@@ -488,10 +666,7 @@[m [mclass MockFmsStore:[m
+                     remaining -= distance[m
+ [m
+                     if next_index == len(node_ids) - 1:[m
+[31m-                        robot["status"] = "IDLE"[m
+[31m-                        robot["route"] = None[m
+[31m-                        robot["goal_node"] = None[m
+[31m-                        self._release_schedule(robot)[m
+[32m+[m[32m                        self._finish_route(robot)[m
+                         return[m
+ [m
+                 else:[m
