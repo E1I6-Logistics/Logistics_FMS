@@ -15,6 +15,16 @@ from .registry import RouteSelector
 PostTransport = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any]]
 GetTransport = Callable[[str, dict[str, str], float], dict[str, Any]]
 
+# KEV_MODEL은 실험 결과에 남길 모델 이름이다. Kev 서버의 실제 API 별칭은
+# 두 checkpoint 모두 kev-latest이므로 요청 시 아래 설정으로 변환한다.
+_KEV_MODELS: dict[str, dict[str, str]] = {
+    "kev-08b": {"api_model": "kev-latest", "run": "jaredpalmer/kev-0.8b"},
+    "kev-4b": {"api_model": "kev-latest", "run": "jaredpalmer/kev-4b"},
+}
+_KEV_MODEL_ALIASES = {
+    "kev-0.8b": "kev-08b",
+}
+
 
 def _environment_flag(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -47,8 +57,19 @@ class KevSelector(RouteSelector):
         transport: PostTransport | None = None,
         metadata_transport: GetTransport | None = None,
     ) -> None:
-        self.model = model or os.getenv("KEV_MODEL", "kev-latest")
-        self.host = (host or os.getenv("KEV_HOST", "http://127.0.0.1:8009")).rstrip("/")
+        requested_model = model or os.getenv("KEV_MODEL", "kev-08b")
+        self.model = _KEV_MODEL_ALIASES.get(requested_model, requested_model)
+        if self.model not in _KEV_MODELS:
+            available = ", ".join(sorted(_KEV_MODELS))
+            raise ValueError(
+                f"알 수 없는 KEV_MODEL: {self.model!r} (사용 가능: {available})"
+            )
+        model_config = _KEV_MODELS[self.model]
+        self.api_model = model_config["api_model"]
+        self.expected_run = model_config["run"]
+        self.host = (
+            host or os.getenv("KEV_HOST", "http://127.0.0.1:8011")
+        ).rstrip("/")
         self.timeout_seconds = float(
             timeout_seconds
             if timeout_seconds is not None
@@ -81,8 +102,20 @@ class KevSelector(RouteSelector):
         if not isinstance(models, list) or not models:
             raise RuntimeError("Kev /v1/models 응답에 모델 정보가 없습니다.")
         runtime = next(
-            (item for item in models if item.get("name") == self.model), models[0]
+            (item for item in models if item.get("name") == self.api_model),
+            None,
         )
+        if runtime is None:
+            raise RuntimeError(
+                "Kev /v1/models에 필요한 API 모델이 없습니다: "
+                f"{self.api_model!r}"
+            )
+        actual_run = str(runtime.get("run", "")).split("@", 1)[0]
+        if actual_run != self.expected_run:
+            raise RuntimeError(
+                f"KEV_MODEL={self.model}과 실행 중인 checkpoint가 다릅니다: "
+                f"expected_run={self.expected_run}, actual_run={actual_run or 'unknown'}"
+            )
         device = str(runtime.get("device", "unknown"))
         if self.require_cuda and not device.startswith("cuda"):
             raise RuntimeError(
@@ -101,7 +134,7 @@ class KevSelector(RouteSelector):
             raise ValueError("질문은 한 개 이상이어야 합니다.")
         runtime = self._ensure_runtime()
         payload = {
-            "model": self.model,
+            "model": self.api_model,
             "state": state,
             "questions": dict(questions),
         }
@@ -119,6 +152,7 @@ class KevSelector(RouteSelector):
         latency_ms = response.get("latency_ms")
         eval_seconds = float(latency_ms) / 1000 if latency_ms is not None else None
         self.last_inference = {
+            "requested_model": self.model,
             "request": payload,
             "response": response,
             "runtime": runtime,
@@ -127,7 +161,8 @@ class KevSelector(RouteSelector):
         }
         return {
             "answers": answers,
-            "model": response.get("model", self.model),
+            "model": self.model,
+            "api_model": response.get("model", self.api_model),
             "routing": None,
             "usage": response.get("usage"),
             "state_truncated": None,

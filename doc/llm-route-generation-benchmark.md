@@ -376,11 +376,13 @@ Kev는 코드가 만든 경로 후보 중 하나를 선택하고 각 선택지�
 
 | 시험 모델 | checkpoint | 포트 | 대상 |
 | --- | --- | ---: | --- |
-| Kev-0.8B | `jaredpalmer/kev-0.8b@v1.0` | 8009 | PC·Jetson 공통 |
+| Kev-0.8B | `jaredpalmer/kev-0.8b@v1.0` | 8011 | PC·Jetson 공통 |
 | Kev-4B | `jaredpalmer/kev-4b@v1.0` | 8011 | PC 추가 비교 |
 
 > 결과 폴더 이름만으로 모델이 바뀌지는 않는다. 실제 모델은 Kev 서버 실행 명령의
 > `--run`으로 결정되며, 벤치마크 전에 `/v1/models`의 `run` 값을 확인한다.
+> 두 모델은 같은 8011 포트를 사용하므로 하나의 서버를 종료한 뒤 다른 서버를
+> 실행한다. `KEV_MODEL`도 실행한 checkpoint에 맞게 변경해야 한다.
 
 ### 6.1 공통 설치
 
@@ -428,7 +430,7 @@ KEV_CUDA_GRAPHS=0 \
 KEV_FUSED=0 \
 python -m kev.serve \
   --run jaredpalmer/kev-0.8b@v1.0 \
-  --port 8009 \
+  --port 8011 \
   2>&1 | tee ~/kev-0.8b-server.log
 ```
 
@@ -436,7 +438,7 @@ python -m kev.serve \
 `Application startup complete`가 출력되면 터미널 2에서 확인한다.
 
 ```bash
-curl -sS http://127.0.0.1:8009/v1/models \
+curl -sS http://127.0.0.1:8011/v1/models \
   | python -m json.tool
 
 nvidia-smi
@@ -461,8 +463,8 @@ cd ~/Logistics_FMS
 source ~/venv/robot/bin/activate
 
 export ROUTE_SELECTOR=kev
-export KEV_HOST=http://127.0.0.1:8009
-export KEV_MODEL=kev-latest
+export KEV_HOST=http://127.0.0.1:8011
+export KEV_MODEL=kev-08b
 export KEV_TIMEOUT_SECONDS=60
 export KEV_REQUIRE_CUDA=true
 
@@ -547,7 +549,7 @@ source ~/venv/robot/bin/activate
 
 export ROUTE_SELECTOR=kev
 export KEV_HOST=http://127.0.0.1:8011
-export KEV_MODEL=kev-latest
+export KEV_MODEL=kev-4b
 export KEV_TIMEOUT_SECONDS=60
 export KEV_REQUIRE_CUDA=true
 
@@ -571,8 +573,10 @@ python -m simulation.evaluation.selector_question_types_benchmark \
   --warmups 1
 ```
 
-`KEV_MODEL=kev-latest`는 두 모델이 공통으로 사용하는 API 별칭이다. 실제
-checkpoint는 각 서버의 `--run` 값으로 구분한다.
+`KEV_MODEL`은 결과 파일에 기록할 모델과 기대 checkpoint를 명시한다. 선택기는
+`kev-08b`를 `jaredpalmer/kev-0.8b`, `kev-4b`를 `jaredpalmer/kev-4b`와
+대조한다. Kev 서버 요청에는 서버가 제공하는 `kev-latest` API 별칭을 내부적으로
+사용한다. 환경변수와 실제 서버의 `run`이 다르면 시험을 시작하지 않는다.
 
 실행 중 GPU 상태는 별도 터미널에서 확인한다.
 
@@ -598,7 +602,7 @@ python -m json.tool "$QUESTION_RESULT_DIR/selector_question_type_summary.json"
 ```text
 status: complete
 selector_name: kev
-requested_model: kev-latest
+requested_model: kev-08b 또는 kev-4b
 device.kind: cuda
 ```
 
