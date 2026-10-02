@@ -126,14 +126,18 @@ Jetson에서는 실행 중 다른 터미널에서 `sudo tegrastats`의 `GR3D_FRE
 
 | 고정 기준 | 값 |
 | --- | --- |
-| 설정에 기록된 기준 커밋 | `1e7535c9e276a1a5e0ab3ba9770c56e4bb0f68fc` |
-| 그래프 | `routes/test_benchmark_v1.geojson` |
-| 그래프 크기 | 노드 14개, 유향 간선 28개 |
-| 그래프 SHA-256 | `00e1f02cce0f5007342dfef4c7c1a0d95f36eb639c530dcf0c8e7c7ce0f304c3` |
-| 프롬프트 SHA-256 | `53276490f7224be85126a1576d519d132566193b9bd7fec7d32b4e38f4cbfe44` |
+| 실행 커밋 | 실행 시 `manifest.json`의 `executed_commit`에 자동 기록 |
+| 그래프 | `routes/test.geojson` |
+| 그래프 크기 | 노드 12개, 유향 간선 38개 |
+| 그래프 SHA-256 | `9b0ca28cca7c3c55fc795a7a0f8145c3b7f781511567dc92bdb54c0e97d48d68` |
+| V1 Direct 프롬프트 SHA-256 | `f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72` |
+| V2 Direct 프롬프트 SHA-256 | `47e58ad5ebe0f5dede1985128bb3055c800ab785a87372ce80ddf2fb25c4660c` |
+| V2 CoT 프롬프트 SHA-256 | `b2592acb671b10b493325b9f432fc16ea293a596bd7ae8cd00a72e58cd9c9278` |
+| V2 Iterative 프롬프트 SHA-256 | `161bc29b88a67f7d2f5f1a36358fdfaab6721aca1bb102a36e6f191ddfac0eb5` |
 
-설정 파일의 `reference_commit`은 manifest에 기록되지만 현재 HEAD와 자동 비교되지는
-않는다. 장비 비교 전 `git rev-parse HEAD`와 `git status --short`를 직접 확인한다.
+장비 비교 전 `git rev-parse HEAD`와 `git status --short`를 확인한다. 두 V2 설정의
+`comparison_condition_sha256`이 같으면 Graph, 모델, Start/Target, Ground Truth와
+공통 모델 설정이 동일하다는 뜻이다.
 
 구조 검증은 모델을 호출하지 않는다.
 
@@ -186,7 +190,7 @@ Jetson 시험은 Ollama 기본 태그 5종을 사용한다.
 
 ```bash
 ollama pull qwen3:0.6b
-ollama pull deepseek-r1:1.5b
+ollama pull deepseek-coder:1.3b
 ollama pull llama3.2:3b
 ollama pull qwen3:4b
 ollama pull gemma3:4b
@@ -210,13 +214,15 @@ curl "$OLLAMA_HOST/api/tags"
 | --- | --- | --- |
 | 설정 파일 | `route_generation_benchmark.json` | `route_generation_benchmark_jetson.json` |
 | 모델 수 | 10종 | 5종 |
-| `num_ctx` | 4096 | 2048 |
+| `num_ctx` | 4096 | 4096 |
 | 반복 | 경로별 5회 | 경로별 5회 |
 | 예열 | 모델별 1회 | 모델별 1회 |
 
-공통값은 `temperature=0`, `seed=20260928`, `num_predict=512`, 요청 제한 120초,
-최대 시도 1회, `keep_alive=5m`이다. 0.15초는 응답 완료 후 실시간성 충족 여부를
-분류하는 기준이며 요청 제한 시간이 아니다.
+공통값은 `temperature=0`, `seed=20260928`, `num_ctx=4096`, `num_predict=512`,
+요청 제한 120초, 최대 시도 1회, `keep_alive=5m`이다. DeepSeek 비교군은
+non-thinking인 `deepseek-coder:1.3b`와 `deepseek-coder:6.7b`를 사용하므로
+R1 전용 장문 thinking 예산을 적용하지 않는다. 0.15초는 응답 완료 후 실시간성
+충족 여부를 분류하는 기준이며 요청 제한 시간이 아니다.
 
 ### 4.4 실행
 
@@ -233,7 +239,7 @@ PC 10종 선별:
 ```bash
 python -m simulation.evaluation.benchmark \
   --config simulation/evaluation/route_generation_benchmark.json \
-  --output simulation/benchmark_results/pc-v3-$(date +%Y%m%d-%H%M%S)
+  --output simulation/benchmark_results/pc-$(date +%Y%m%d-%H%M%S)
 ```
 
 PC와 Jetson의 순수 장비 차이를 비교할 때는 PC에서도 Jetson 설정 파일을 사용한다.
@@ -244,7 +250,7 @@ python -m simulation.evaluation.benchmark \
   --output simulation/benchmark_results/pc-matched-$(date +%Y%m%d-%H%M%S)
 ```
 
-`num_ctx`가 다른 PC v3 결과와 Jetson 결과는 순수한 장비 성능 비교로 사용하지 않는다.
+두 설정은 `num_ctx=4096`으로 같지만 모델 수가 다르므로, PC 10종 전체와 Jetson 5종 전체를 직접 비교하지 않고 공통 5종만 장비 비교에 사용한다.
 
 ### 4.5 재개와 결과 재추출
 
@@ -267,6 +273,9 @@ python -m simulation.evaluation.benchmark \
 
 `convaiinnovations/laya-multilingual`이 코드가 만든 후보 중 하나를 선택한다. Ollaya
 서버는 사용하지 않고 Hugging Face checkpoint를 PyTorch CUDA로 직접 실행한다.
+최단 경로 질문은 `routes/test.geojson`의 실제 좌표와 저장된 Edge `weight`를 사용하며,
+V1과 같은 5개 Start/Target 각각에 대해 코드가 만든 유효 경로 후보 5개를 전달한다.
+정답 최단 경로는 선택지 1~5번에 한 번씩 배치한다.
 
 ### 5.1 설정
 
@@ -291,16 +300,43 @@ CUDA를 사용할 수 없거나 CPU fallback이 발생했을 때 시험을 실�
 
 ```bash
 python - <<'PY'
+import json
+from pathlib import Path
+
 from simulation.route_selector import get_selector
+from simulation.services.route_service import (
+    build_compact_route_graph,
+    build_route_inputs,
+    plan_route,
+    validate_and_calculate_path_distance,
+)
+
+graph_path = Path("routes/test.geojson")
+graph = json.loads(graph_path.read_text(encoding="utf-8"))
+points, edges = build_route_inputs(graph, require_stored_weight=True)
+shortest = plan_route("0", "2", graph, require_stored_weight=True)
+shortest_path = [int(node) for node in shortest["node_ids"]]
+_, shortest_distance = validate_and_calculate_path_distance(
+    points, edges, shortest_path, 0, 2
+)
+
+state = {
+    "start_node": 0,
+    "target_node": 2,
+    "route_graph": build_compact_route_graph(
+        graph, graph_path.name, require_stored_weight=True
+    ),
+}
+candidates = {
+    "route_a": "path=[0,18,17,2], distance=1.436310720336",
+    "route_b": f"path={shortest_path}, distance={shortest_distance:.12f}",
+}
 
 selector = get_selector()
 try:
     result = selector.select_route(
-        {"start_node": 2, "target_node": 10},
-        {
-            "route_a": "path=[2,5,4,6,13,8,9,10], distance=3.033652",
-            "route_b": "path=[2,5,4,6,10], distance=1.592143",
-        },
+        state,
+        candidates,
     )
     print("choice:", result["choice"])
     print("confidence:", result["confidence"])
@@ -327,13 +363,16 @@ python -m simulation.evaluation.selector_question_types_benchmark \
   --repeats 5 --warmups 1
 ```
 
-`<환경>`에는 `pc-rtx4070` 또는 `jetson-orin`을 사용한다. 첫 명령은 직관·사고·
-최단거리 질문을 한국어와 영어로 시험하고 정답을 다섯 선택지 위치에 옮긴다. 두 번째
+`<환경>`에는 `pc-rtx4070` 또는 `jetson-orin`을 사용한다. 첫 명령은 직관·사고 질문과
+실제 맵 5개 최단거리 질문을 한국어와 영어로 시험하고 정답을 다섯 선택지 위치에
+옮긴다. 기본 반복 5회 기준 총 350회이며, 이 중 실제 경로 선택은 250회다. 두 번째
 명령은 choice·score·noul 질문을 시험한다.
 
 ## 6. Kev 경로 선택 시험
 
-`jaredpalmer/kev-0.8b`는 `choice`, `score`, `noul` 질문에 확률을 반환한다.
+`jaredpalmer/kev-0.8b@v1.0`와 `jaredpalmer/kev-4b@v1.0`는 `choice`, `score`,
+`noul` 질문에 확률을 반환한다. Jetson과 PC 공통 비교에는 0.8B, RTX 4070 SUPER
+PC의 추가 성능 비교에는 4B를 사용한다.
 `KevSelector`는 Kev 서버의 `GET /v1/models`, `POST /v1/systemone` API를 호출한다.
 
 ### 6.1 설치
@@ -388,7 +427,7 @@ source ~/venv/robot/bin/activate
 
 KEV_BACKEND=torch KEV_DTYPE=bf16 KEV_PREFIX_CACHE=0 \
 KEV_CUDA_GRAPHS=0 KEV_FUSED=0 \
-python -m kev.serve --run jaredpalmer/kev-0.8b --port 8009 \
+python -m kev.serve --run jaredpalmer/kev-0.8b@v1.0 --port 8009 \
   2>&1 | tee ~/kev-0.8b-server.log
 ```
 
@@ -399,6 +438,26 @@ curl -s http://127.0.0.1:8009/v1/models | python -m json.tool
 ```
 
 응답의 `device`는 `cuda` 또는 `cuda:0`, `run`은 `jaredpalmer/kev-0.8b`여야 한다.
+
+RTX 4070 SUPER PC에서 Kev-4B를 시험할 때는 0.8B 서버를 종료한 뒤 다음처럼
+별도 포트로 실행한다. 첫 실행에서 checkpoint가 다운로드된다.
+
+```bash
+cd ~/kev
+source ~/venv/robot/bin/activate
+
+KEV_BACKEND=torch KEV_DTYPE=bf16 KEV_PREFIX_CACHE=0 \
+KEV_CUDA_GRAPHS=0 KEV_FUSED=0 \
+python -m kev.serve --run jaredpalmer/kev-4b@v1.0 --port 8010 \
+  2>&1 | tee ~/kev-4b-server.log
+```
+
+다른 터미널에서 실제 checkpoint와 GPU 사용을 확인한다.
+
+```bash
+curl -s http://127.0.0.1:8010/v1/models | python -m json.tool
+nvidia-smi
+```
 
 ### 6.3 FMS 설정과 반복 벤치마크
 
@@ -424,6 +483,21 @@ python -m simulation.evaluation.selector_latency_benchmark \
 python -m simulation.evaluation.selector_question_types_benchmark \
   --output simulation/benchmark_results/<환경>-kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1
+```
+
+PC Kev-4B는 `simulation/.env`의 `KEV_HOST`를 8010으로 바꾼 뒤 실행한다.
+
+```dotenv
+ROUTE_SELECTOR=kev
+KEV_HOST=http://127.0.0.1:8010
+KEV_MODEL=kev-latest
+KEV_REQUIRE_CUDA=true
+```
+
+```bash
+python -m simulation.evaluation.selector_latency_benchmark \
+  --output simulation/benchmark_results/pc-rtx4070-kev-4b-latency-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
 ```
 
 출력 폴더 이름만으로 선택기가 바뀌지 않는다. 결과의 `manifest.json`에서
@@ -482,3 +556,191 @@ cat /etc/nv_tegra_release 2>/dev/null || true
 
 속도는 중앙값과 p95를 함께 보고 첫 모델 로드 시간은 예열과 분리한다. checkpoint,
 입력 길이 또는 `num_ctx`가 다르면 장비 성능 비교와 별도 실험으로 분류한다.
+
+## 9. V1과 V2 경로 생성 실험
+
+### 9.1 구분
+
+V1은 기존 Direct LLM 경로 생성 시험이다. V2는 같은 Graph, 모델, Start/Target,
+Ground Truth와 공통 모델 설정으로 다음 6조건을 실행한다.
+
+| V2 조건 | 모델 동작 | Graph Retrieval |
+| --- | --- | --- |
+| `direct_no_rag` | 한 번에 최종 경로 생성 | 미적용 |
+| `direct_rag` | 한 번에 최종 경로 생성 | 적용 |
+| `cot_no_rag` | 한 요청 안에서 단계별 계산 후 경로 생성 | 미적용 |
+| `cot_rag` | 한 요청 안에서 단계별 계산 후 경로 생성 | 적용 |
+| `iterative_no_rag` | 모델 API를 여러 번 호출해 탐색 상태 연결 | 미적용 |
+| `iterative_rag` | Retrieval Graph로 모델 API를 여러 번 호출 | 적용 |
+
+여섯 조건은 하나의 `route_generation_v2_matrix.json`에서 파생된다. 따라서 설정
+파일을 여섯 개 복사하지 않고도 조건을 고정할 수 있다. PC와 Jetson의 모델 목록이
+다르기 때문에 장비별 matrix 파일만 분리한다.
+
+### 9.2 CoT와 Dijkstra의 차이
+
+CoT와 Dijkstra는 같은 개념이 아니다.
+
+- **Dijkstra**는 음수가 아닌 Edge weight에서 최단 경로를 구하는 결정적 알고리즘이다.
+- **CoT**는 모델이 중간 계산 단계를 따라가도록 유도하는 추론·프롬프트 방식이다.
+
+이 시험의 CoT 프롬프트가 Dijkstra 순서를 지시하지만, 모델이 그 순서를 정확히
+수행한다는 보장은 없다. 그래서 최종 경로와 각 Edge를 코드로 다시 검증한다.
+Iterative 조건에서는 모델이 매 호출마다 최소 tentative distance Node와 relaxation을
+선택한다. Python은 상태 저장과 검증만 하며 잘못된 선택을 대신 수정하지 않는다.
+
+### 9.3 Graph Retrieval 정의
+
+입력의 원본은 항상 실제 프론트 Graph 전체 좌표·Edge와 Start/Target이다. 모델 입력에는
+`node_coordinates`도 포함하지만 경로 비용은 저장된 Edge `weight`만 사용한다. Retrieval 적용
+조건에서는 LLM 호출 전에 다음 조회를 한 번 수행한다.
+
+1. Start에서 방향성 Edge를 따라 도달 가능한 Node를 구한다.
+2. 역방향으로 Target에 도달할 수 있는 Node를 구한다.
+3. 두 집합의 교집합과 그 사이 Edge를 조회한다.
+4. 각 기준 Node에 대해 인접 Node와 저장된 `weight`를 adjacency로 만든다.
+
+Retrieval은 최단 경로나 최단 후보를 계산하지 않는다. 따라서 모델 입력에는
+`shortest_path`가 없고 다음과 같은 연결 정보만 들어간다.
+
+```json
+{
+  "node": 1,
+  "neighbors": [
+    {"node": 0, "distance": 0.3777115936682494},
+    {"node": 2, "distance": 0.41118600261748245}
+  ]
+}
+```
+
+현재 Graph는 작고 연결성이 높아 Retrieval 결과가 전체 Graph와 같을 수도 있다.
+이 경우 정확도 향상 여부와 함께 입력 표현을 adjacency로 명확히 한 효과를 측정한다.
+Retrieval이 Ground Truth Edge를 누락하면 모델 실패와 구분해 기록한다.
+
+### 9.4 V1 DeepSeek non-thinking 비교군 실행
+
+DeepSeek-R1은 현재 시험 환경에서 `think=false`가 기대대로 적용되지 않고 출력
+예산을 모두 사용한 뒤 최종 JSON 없이 종료됐다. 실시간 경로 생성 비교에서는
+R1 대신 `<think>` 출력을 전제로 하지 않는 DeepSeek Coder를 사용한다.
+
+| 장비 | 모델 | Ollama 용량 | 비교 목적 |
+| --- | --- | ---: | --- |
+| Jetson·PC | `deepseek-coder:1.3b` | 약 776MB | 임베디드 환경의 경량·저지연 비교 |
+| PC | `deepseek-coder:6.7b` | 약 3.8GB | 8~12GB VRAM PC의 정확도·속도 비교 |
+
+두 모델은 코드와 자연어를 함께 학습한 코드 특화 모델이다. 따라서 일반 범용
+DeepSeek 모델과 동일한 계열 성능으로 해석하지 않고, 그래프 JSON 이해와 경로
+출력 형식 준수 능력을 검증하는 별도 비교군으로 기록한다. 두 모델 모두 공통
+`num_ctx=4096`, `num_predict=512`, timeout 120초를 사용한다.
+
+모델을 설치한다.
+
+```bash
+# Jetson과 PC 공통
+ollama pull deepseek-coder:1.3b
+
+# PC 추가
+ollama pull deepseek-coder:6.7b
+```
+
+설정만 확인한다. Ollama에는 요청하지 않는다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark.json \
+  --check
+```
+
+Jetson 또는 PC에서 1.3B만 실행한다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark_jetson.json \
+  --model deepseek-coder:1.3b \
+  --output simulation/benchmark_results/v1-deepseek-coder-1.3b-$(date +%Y%m%d-%H%M%S)
+```
+
+PC에서 6.7B를 실행한다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/route_generation_benchmark.json \
+  --model deepseek-coder:6.7b \
+  --output simulation/benchmark_results/v1-deepseek-coder-6.7b-$(date +%Y%m%d-%H%M%S)
+```
+
+### 9.5 V2 6조건 실행
+
+Ollama를 호출하지 않고 행렬 구조와 Ground Truth를 먼저 확인한다.
+
+```bash
+python -m simulation.evaluation.v2_benchmark \
+  --matrix simulation/evaluation/route_generation_v2_matrix.json \
+  --check
+```
+
+PC 10종 전체를 6조건으로 실행한다.
+
+```bash
+python -m simulation.evaluation.v2_benchmark \
+  --matrix simulation/evaluation/route_generation_v2_matrix.json \
+  --output simulation/benchmark_results/pc-v2-$(date +%Y%m%d-%H%M%S)
+```
+
+Jetson 5종을 실행한다.
+
+```bash
+python -m simulation.evaluation.v2_benchmark \
+  --matrix simulation/evaluation/route_generation_v2_matrix_jetson.json \
+  --output simulation/benchmark_results/jetson-v2-$(date +%Y%m%d-%H%M%S)
+```
+
+한 조건 또는 한 모델만 먼저 실행할 수 있다.
+
+```bash
+python -m simulation.evaluation.v2_benchmark \
+  --matrix simulation/evaluation/route_generation_v2_matrix.json \
+  --only cot_rag \
+  --model qwen3:0.6b \
+  --output simulation/benchmark_results/v2-cot-rag-smoke-$(date +%Y%m%d-%H%M%S)
+```
+
+### 9.6 결과 확인
+
+V2 최상위 폴더에는 `matrix_manifest.json`, 파생 설정 6개와 조건별 결과 폴더가
+생긴다. 각 조건 폴더의 주요 파일은 다음과 같다.
+
+| 파일 | 확인 내용 |
+| --- | --- |
+| `manifest.json` | Graph·Prompt·공통 조건 해시, 모델별 실제 설정과 장치 |
+| `model_summary.csv` | 정확도, 응답시간, API 호출 수, 입출력 토큰 수 |
+| `route_summary.csv` | Start/Target별 정확도와 시간 |
+| `trials.jsonl` | 최종 경로, raw 진단, retrieval 정보, iterative 단계 |
+
+추가 Retrieval 지표:
+
+| 지표 | 의미 |
+| --- | --- |
+| `retrieved_node_count` | 모델에 전달된 Node 수 |
+| `retrieved_edge_count` | 모델에 전달된 Edge 수 |
+| `ground_truth_node_recall` | 정답 경로 Node 포함률 |
+| `ground_truth_edge_recall` | 정답 경로 Edge 포함률 |
+| `ground_truth_path_available` | Retrieval Graph에 정답 경로 전체가 존재하는지 |
+
+두 조건을 통합 비교한다.
+
+```bash
+V2_DIR=simulation/benchmark_results/<pc-v2-결과폴더>
+
+python -m simulation.evaluation.compare_strategy_results \
+  --generation DirectNoRAG="$V2_DIR/direct_no_rag" \
+  --generation DirectRAG="$V2_DIR/direct_rag" \
+  --generation CoTNoRAG="$V2_DIR/cot_no_rag" \
+  --generation CoTRAG="$V2_DIR/cot_rag" \
+  --generation IterativeNoRAG="$V2_DIR/iterative_no_rag" \
+  --generation IterativeRAG="$V2_DIR/iterative_rag" \
+  --output "$V2_DIR/comparison"
+```
+
+비교할 핵심 값은 최단 경로·거리 일치율, 총 응답시간, 실제 입력·출력 토큰,
+API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
