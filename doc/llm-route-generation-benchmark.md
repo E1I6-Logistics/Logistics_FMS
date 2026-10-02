@@ -475,10 +475,22 @@ python -m simulation.evaluation.selector_latency_benchmark \
   --deadline 0.15
 ```
 
+0.8B의 choice·score·noul question type 벤치마크도 같은 서버 설정으로 실행한다.
+
+```bash
+QUESTION_RESULT_DIR="simulation/benchmark_results/pc-rtx4070-kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S)"
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output "$QUESTION_RESULT_DIR" \
+  --repeats 5 \
+  --warmups 1
+```
+
 Jetson에서는 출력 폴더 이름만 다음처럼 변경한다.
 
 ```bash
 RESULT_DIR="simulation/benchmark_results/jetson-orin-kev-0.8b-latency-$(date +%Y%m%d-%H%M%S)"
+QUESTION_RESULT_DIR="simulation/benchmark_results/jetson-orin-kev-0.8b-question-types-$(date +%Y%m%d-%H%M%S)"
 ```
 
 0.8B 시험이 끝나면 터미널 1에서 `Ctrl+C`로 서버를 종료한 뒤 4B 시험을
@@ -548,6 +560,17 @@ python -m simulation.evaluation.selector_latency_benchmark \
   --deadline 0.15
 ```
 
+4B의 choice·score·noul question type 벤치마크도 같은 서버 설정으로 실행한다.
+
+```bash
+QUESTION_RESULT_DIR="simulation/benchmark_results/pc-rtx4070-kev-4b-question-types-$(date +%Y%m%d-%H%M%S)"
+
+python -m simulation.evaluation.selector_question_types_benchmark \
+  --output "$QUESTION_RESULT_DIR" \
+  --repeats 5 \
+  --warmups 1
+```
+
 `KEV_MODEL=kev-latest`는 두 모델이 공통으로 사용하는 API 별칭이다. 실제
 checkpoint는 각 서버의 `--run` 값으로 구분한다.
 
@@ -559,11 +582,15 @@ watch -n 1 nvidia-smi
 
 ### 6.6 결과 확인
 
-각 벤치마크를 실행한 터미널에서 해당 `RESULT_DIR`을 사용한다.
+각 벤치마크를 실행한 터미널에서 latency 결과는 `RESULT_DIR`, question type
+결과는 `QUESTION_RESULT_DIR`로 확인한다.
 
 ```bash
 python -m json.tool "$RESULT_DIR/manifest.json"
 python -m json.tool "$RESULT_DIR/selector_latency_summary.json"
+
+python -m json.tool "$QUESTION_RESULT_DIR/manifest.json"
+python -m json.tool "$QUESTION_RESULT_DIR/selector_question_type_summary.json"
 ```
 
 `manifest.json`에서 다음 값을 확인한다.
