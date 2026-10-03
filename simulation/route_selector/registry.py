@@ -25,12 +25,13 @@ class RouteSelector(ABC):
         candidates: Mapping[str, str],
     ) -> dict[str, Any]:
         """후보 ID와 설명을 받아 선택 결과와 신뢰도를 반환한다."""
-        raise NotImplementedError
+        raise NotImplementedErro
 
 
 _SELECTORS: dict[str, tuple[str, str]] = {
     "laya": (".laya_selector", "LayaSelector"),
     "kev": (".kev_selector", "KevSelector"),
+    "ollama": (".ollama_selector", "OllamaSelector"),
 }
 
 

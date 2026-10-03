@@ -148,6 +148,11 @@ class LayaSelector(RouteSelector):
         answers = response.get("answers")
         if not isinstance(answers, dict):
             raise RuntimeError("Hugging Face Laya 응답에 answers 객체가 없습니다.")
+        usage = response.get("usage")
+        state_truncated = response.get("state_truncated")
+        if state_truncated is None and isinstance(usage, Mapping):
+            # 최신 Laya는 입력 잘림 여부를 최상위가 아니라 usage.truncated로 반환한다.
+            state_truncated = usage.get("truncated")
         runtime = {
             "device": actual_device,
             "precision": precision,
@@ -166,8 +171,8 @@ class LayaSelector(RouteSelector):
             "answers": answers,
             "model": response.get("model", self.model),
             "routing": response.get("routing"),
-            "usage": response.get("usage"),
-            "state_truncated": response.get("state_truncated"),
+            "usage": usage,
+            "state_truncated": state_truncated,
             "total_duration_seconds": total_seconds,
             "load_duration_seconds": load_seconds,
             "eval_duration_seconds": eval_seconds,
