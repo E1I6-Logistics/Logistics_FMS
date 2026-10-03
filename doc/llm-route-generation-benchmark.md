@@ -286,13 +286,17 @@ ROUTE_SELECTOR=laya
 LAYA_HF_MODEL=convaiinnovations/laya-multilingual
 LAYA_DEVICE=cuda:0
 LAYA_REQUIRE_CUDA=true
-LAYA_MAX_LENGTH=1024
+# 전체 CompactRouteGraph가 잘리지 않도록 PC와 Jetson에서 같은 값 사용
+LAYA_MAX_LENGTH=4096
 HF_HOME=/home/<사용자명>/.cache/huggingface
 # HF_TOKEN=
 ```
 
 공개 checkpoint에는 일반적으로 `HF_TOKEN`이 필요하지 않다. `LAYA_REQUIRE_CUDA=true`이면
 CUDA를 사용할 수 없거나 CPU fallback이 발생했을 때 시험을 실패 처리한다.
+`LAYA_MAX_LENGTH`는 글자 수가 아니라 질문 head까지 포함한 토큰 예산이다. Laya가
+허용하는 범위는 1~8192이며, 전체 그래프 비교에서는 PC와 Jetson 모두 4096으로
+고정한다.
 
 ### 5.2 smoke test
 
@@ -361,12 +365,25 @@ python -m simulation.evaluation.selector_latency_benchmark \
 python -m simulation.evaluation.selector_question_types_benchmark \
   --output simulation/benchmark_results/<환경>-laya-question-types-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1
+
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --output simulation/benchmark_results/<환경>-laya-iterative-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1
 ```
 
 `<환경>`에는 `pc-rtx4070` 또는 `jetson-orin`을 사용한다. 첫 명령은 직관·사고 질문과
 실제 맵 5개 최단거리 질문을 한국어와 영어로 시험하고 정답을 다섯 선택지 위치에
 옮긴다. 기본 반복 5회 기준 총 350회이며, 이 중 실제 경로 선택은 250회다. 두 번째
 명령은 choice·score·noul 질문을 시험한다.
+
+세 번째 명령은 동일한 전체 CompactRouteGraph에서 Laya가 다음 노드를 하나씩
+선택하도록 반복 호출한다. 각 단계의 `usage`와 `state_truncated`가
+`selector_iterative_route_trials.jsonl`의 `steps`에 저장된다. 전체 그래프 조건의
+정상 결과라면 요약 파일에서 `state_truncated_trial_count`가 0이고,
+`state_truncation_unreported_trial_count`도 0이며,
+`full_graph_input_preserved_count`가 전체 trial 수와 같아야 한다.
+`usage.state_tokens_dropped`가 0보다 크거나 `state_truncated=true`이면 그 실행은
+전체 그래프 비교 결과에서 제외한다.
 
 ## 6. Kev 경로 선택 시험
 
