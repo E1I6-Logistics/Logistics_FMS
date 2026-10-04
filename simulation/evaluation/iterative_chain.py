@@ -1,7 +1,9 @@
-"""Model-driven iterative Dijkstra experiment.
+"""Iterative next-node selection experiment for route generation.
 
-Python stores and validates state only.  It never substitutes a node choice or
-relaxation when the model returns an invalid action.
+The model receives the complete graph and the current navigation state on every
+step.  In the RAG condition, the request additionally contains the current
+node's direct connections and stored edge distances.  Python never preselects a
+candidate for the model; it only validates the returned node after inference.
 """
 
 from __future__ import annotations
@@ -16,33 +18,9 @@ ITERATIVE_STEP_SCHEMA = {
     "additionalProperties": False,
     "properties": {
         "selected_node": {"type": "integer"},
-        "selected_distance": {"type": "number"},
-        "relaxations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "node": {"type": "integer"},
-                    "distance": {"type": "number"},
-                    "predecessor": {"type": "integer"},
-                },
-                "required": ["node", "distance", "predecessor"],
-            },
-        },
-        "finished": {"type": "boolean"},
     },
-    "required": [
-        "selected_node",
-        "selected_distance",
-        "relaxations",
-        "finished",
-    ],
+    "required": ["selected_node"],
 }
-
-
-def _close(left: float, right: float) -> bool:
-    return math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9)
 
 
 def _request_characters(inference: dict[str, Any]) -> int:
@@ -53,6 +31,44 @@ def _request_characters(inference: dict[str, Any]) -> int:
     )
 
 
+def _build_outgoing(
+    graph: dict[str, Any], nodes: set[int]
+) -> dict[int, list[tuple[int, float]]]:
+    outgoing: dict[int, list[tuple[int, float]]] = {node: [] for node in nodes}
+    seen_pairs: set[tuple[int, int]] = set()
+
+    for edge in graph.get("edges", []):
+        start = int(edge["from"])
+        end = int(edge["to"])
+        weight = float(edge.get("weight", edge.get("distance")))
+        if start not in nodes or end not in nodes:
+            raise ValueError("Compact Graph edge가 존재하지 않는 node를 참조합니다.")
+        if weight < 0 or not math.isfinite(weight):
+            raise ValueError("Compact Graph에 잘못된 edge distance가 있습니다.")
+        if (start, end) in seen_pairs:
+            raise ValueError(f"중복 directed edge입니다: {start} -> {end}")
+        seen_pairs.add((start, end))
+        outgoing[start].append((end, weight))
+
+    for edges in outgoing.values():
+        edges.sort(key=lambda item: (item[0], item[1]))
+    return outgoing
+
+
+def _rag_context(
+    current_node: int,
+    outgoing: dict[int, list[tuple[int, float]]],
+) -> dict[str, Any]:
+    """Return facts only: direct connections and stored distances for one node."""
+    return {
+        "node": current_node,
+        "connections": [
+            {"node": neighbor, "distance": distance}
+            for neighbor, distance in outgoing.get(current_node, [])
+        ],
+    }
+
+
 def run_iterative_chain(
     provider: Any,
     graph: dict[str, Any],
@@ -61,55 +77,69 @@ def run_iterative_chain(
     *,
     instructions: str,
     max_steps: int,
+    rag_enabled: bool = False,
 ) -> dict[str, Any]:
-    """Run validated model-selected Dijkstra steps until target settlement."""
+    """Ask the model for exactly one next node per API call until target arrival.
+
+    Input per step:
+      - route_graph: complete graph
+      - current_node
+      - target_node
+      - visited_nodes
+      - accumulated_distance
+      - rag_context (RAG condition only): current node direct connections
+
+    The model is not given a separately computed criteria/candidate list.  After
+    the model responds, Python validates that the selected node is connected by
+    a real outgoing edge from the current node, rejects loops, accumulates the
+    stored edge distance, and advances the state by one node.
+    """
     nodes = {int(node) for node in graph.get("nodes", [])}
     if start_id not in nodes or target_id not in nodes:
         raise ValueError("start_node 또는 target_node가 graph에 없습니다.")
+    if max_steps < 1:
+        raise ValueError("max_steps는 1 이상이어야 합니다.")
 
-    outgoing: dict[int, list[tuple[int, float]]] = {node: [] for node in nodes}
-    for edge in graph.get("edges", []):
-        start, end = int(edge["from"]), int(edge["to"])
-        weight = float(edge["weight"])
-        if start not in nodes or end not in nodes or weight < 0 or not math.isfinite(weight):
-            raise ValueError("Compact Graph에 잘못된 edge가 있습니다.")
-        outgoing[start].append((end, weight))
+    outgoing = _build_outgoing(graph, nodes)
 
-    tentative = {start_id: 0.0}
-    predecessor: dict[int, int] = {}
-    settled: list[int] = []
+    current_node = start_id
+    visited_nodes = [start_id]
+    accumulated_distance = 0.0
     chain_steps: list[dict[str, Any]] = []
     inferences: list[dict[str, Any]] = []
     provider.last_chain_inferences = inferences
     provider.last_chain_steps = chain_steps
 
-    for step_number in range(1, max_steps + 1):
-        reachable = {
-            node: distance
-            for node, distance in tentative.items()
-            if node not in settled
+    if start_id == target_id:
+        return {
+            "path": visited_nodes,
+            "reported_total_distance": 0.0,
+            "chain_steps": chain_steps,
+            "api_call_count": 0,
+            "request_character_count": 0,
         }
-        if not reachable:
-            raise ValueError("모델 탐색 상태에서 도착 노드에 도달할 수 없습니다.")
 
-        payload = {
+    for step_number in range(1, max_steps + 1):
+        direct_connections = outgoing.get(current_node, [])
+        if not direct_connections:
+            raise ValueError(
+                f"현재 노드 {current_node}에서 이동 가능한 outgoing edge가 없습니다."
+            )
+
+        payload: dict[str, Any] = {
             "route_graph": graph,
-            "start_node": start_id,
+            "current_node": current_node,
             "target_node": target_id,
-            "search_state": {
-                "step": step_number,
-                "settled_nodes": settled,
-                "tentative_distances": [
-                    {
-                        "node": node,
-                        "distance": distance,
-                        "predecessor": predecessor.get(node),
-                    }
-                    for node, distance in sorted(reachable.items())
-                ],
-                "unvisited_node_ids": sorted(nodes.difference(settled)),
-            },
+            "visited_nodes": list(visited_nodes),
+            "accumulated_distance": accumulated_distance,
         }
+        context = None
+        if rag_enabled:
+            context = _rag_context(current_node, outgoing)
+            payload["rag_context"] = context
+
+        # 후보가 하나뿐이어도 API를 호출한다.  그래프 이해와 인접성 판단 자체가
+        # Iterative 실험의 평가 대상이기 때문이다.
         action = provider.request_structured(
             instructions=instructions,
             payload=payload,
@@ -119,70 +149,45 @@ def run_iterative_chain(
         if inference is not None:
             inferences.append(inference)
 
-        selected = int(action["selected_node"])
-        selected_distance = float(action["selected_distance"])
-        if selected not in reachable:
-            raise ValueError(f"선택할 수 없는 노드입니다: {selected}")
-        minimum = min(reachable.values())
-        if not _close(reachable[selected], minimum):
+        selected_node = int(action["selected_node"])
+        edge_distance = next(
+            (
+                distance
+                for neighbor, distance in direct_connections
+                if neighbor == selected_node
+            ),
+            None,
+        )
+        if edge_distance is None:
             raise ValueError(
-                f"모델이 최소 tentative distance 노드를 선택하지 않았습니다: {selected}"
+                "모델이 현재 노드와 직접 연결되지 않은 노드를 선택했습니다: "
+                f"{current_node} -> {selected_node}"
             )
-        if not _close(selected_distance, reachable[selected]):
-            raise ValueError(f"selected_distance가 상태와 다릅니다: {selected}")
-
-        is_target = selected == target_id
-        if bool(action["finished"]) != is_target:
-            raise ValueError("finished 값과 target_node 확정 상태가 다릅니다.")
-
-        expected: dict[int, tuple[float, int]] = {}
-        if not is_target:
-            for neighbor, weight in outgoing[selected]:
-                if neighbor in settled:
-                    continue
-                candidate = selected_distance + weight
-                if candidate < tentative.get(neighbor, math.inf):
-                    previous = expected.get(neighbor)
-                    if previous is None or candidate < previous[0]:
-                        expected[neighbor] = (candidate, selected)
-
-        returned: dict[int, tuple[float, int]] = {}
-        for update in action["relaxations"]:
-            node = int(update["node"])
-            if node in returned:
-                raise ValueError(f"중복 relaxation입니다: {node}")
-            returned[node] = (
-                float(update["distance"]),
-                int(update["predecessor"]),
-            )
-        if set(returned) != set(expected):
+        if selected_node in visited_nodes:
             raise ValueError(
-                "모델 relaxation 대상이 실제 개선 가능한 outgoing edge와 다릅니다: "
-                f"expected={sorted(expected)}, returned={sorted(returned)}"
+                f"모델이 이미 방문한 노드를 다시 선택했습니다: {selected_node}"
             )
-        for node, (distance, parent) in returned.items():
-            expected_distance, expected_parent = expected[node]
-            if parent != expected_parent or not _close(distance, expected_distance):
-                raise ValueError(f"잘못된 relaxation 값입니다: {selected} -> {node}")
 
-        settled.append(selected)
-        for node, (distance, parent) in returned.items():
-            tentative[node] = distance
-            predecessor[node] = parent
-        chain_steps.append({"step": step_number, **action})
+        accumulated_distance += edge_distance
+        previous_node = current_node
+        current_node = selected_node
+        visited_nodes.append(current_node)
 
-        if is_target:
-            path = [target_id]
-            while path[-1] != start_id:
-                if path[-1] not in predecessor:
-                    raise ValueError("모델 상태에서 최종 경로를 복원할 수 없습니다.")
-                path.append(predecessor[path[-1]])
-                if len(path) > len(nodes):
-                    raise ValueError("모델 predecessor에 순환이 있습니다.")
-            path.reverse()
+        step_result: dict[str, Any] = {
+            "step": step_number,
+            "current_node": previous_node,
+            "selected_node": selected_node,
+            "edge_distance": edge_distance,
+            "accumulated_distance": accumulated_distance,
+        }
+        if context is not None:
+            step_result["rag_context"] = context
+        chain_steps.append(step_result)
+
+        if current_node == target_id:
             return {
-                "path": path,
-                "reported_total_distance": selected_distance,
+                "path": list(visited_nodes),
+                "reported_total_distance": accumulated_distance,
                 "chain_steps": chain_steps,
                 "api_call_count": len(chain_steps),
                 "request_character_count": sum(
@@ -190,4 +195,6 @@ def run_iterative_chain(
                 ),
             }
 
-    raise RuntimeError(f"Iterative Chain이 max_steps={max_steps} 안에 끝나지 않았습니다.")
+    raise RuntimeError(
+        f"Iterative Chain이 max_steps={max_steps} 안에 target_node에 도착하지 못했습니다."
+    )
