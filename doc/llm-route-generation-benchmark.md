@@ -931,6 +931,9 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 
 - 기본값은 `--candidate-scope neighbors --context-mode neighbor_context`다.
 - `neighbors`에서는 `available_edges`를 정확 조회하고, 그 안의 Node만 Laya·Kev·Ollama의 `criteria`로 제공한다.
+- 이미 지나온 Node도 실제 outgoing Edge로 연결되어 있으면 `available_edges`와 `criteria`에 다시 포함한다.
+- 재방문은 실패로 중단하지 않고 `revisited=true`와 `revisit_count`로 기록한 뒤 Target 도착까지 계속한다.
+- 무한 순환은 `--max-steps`에서 중단한다. 기본값은 전체 Node 수의 2배이며 현재 맵에서는 24회다.
 - 전체 `CompactAdjacencyGraph`는 후보 Node에서 Target까지의 남은 경로 비용을 판단할 수 있도록 계속 제공한다.
 - `--candidate-scope all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록하는 능력 시험이다.
 - `--context-mode full_graph_only`: 전체 Graph와 현재 상태만 전달한다.
@@ -976,10 +979,12 @@ KEV_HOST=http://127.0.0.1:8011 \
 KEV_MODEL=kev-4b \
 python -m simulation.evaluation.selector_iterative_route_benchmark \
   --output simulation/benchmark_results/<환경>-kev-4b-iterative-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
+  --repeats 5 --warmups 1 --deadline 0.15 \
+  --max-steps 24
 ```
 
 두 명령은 기본값인 `candidate_scope=neighbors`, `context_mode=neighbor_context`를 사용한다.
+`--max-steps`를 생략해도 현재 12개 Node 맵에서는 기본값 24가 적용된다.
 따라서 0.8B와 4B 모두 전체 Graph와 현재 상태를 받되, `available_edges` 안의 Node만
 choice 후보로 받는다. `requested_model`과 결과 폴더가 다르므로 결과를 서로 구분할 수 있다.
 

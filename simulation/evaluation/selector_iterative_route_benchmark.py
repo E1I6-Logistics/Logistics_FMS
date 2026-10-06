@@ -39,9 +39,9 @@ NEXT_NODE_INSTRUCTIONS = (
     "current_node to target_node. The selected node must be connected by one "
     "directed edge from current_node. Use the CompactAdjacencyGraph weight exactly "
     "as stored. Choose only from the supplied criteria. If available_edges "
-    "is present, it is an exact lookup of unvisited outgoing edges; choose "
-    "only a node listed there. Do not select a visited node. Return only "
-    "the selected criteria ID."
+    "is present, it is an exact lookup of outgoing edges; choose only a node "
+    "listed there. Previously visited nodes may be selected again when needed "
+    "to reach the target. Return only the selected criteria ID."
 )
 
 
@@ -94,6 +94,10 @@ def _prepare() -> dict[str, Any]:
         graph_path.name,
         require_stored_weight=True,
     )
+
+    print("=============\n")
+    print(compact_graph)
+
     cases = []
     for configured in config["cases"]:
         start, target = int(configured["start"]), int(configured["goal"])
@@ -151,6 +155,7 @@ def _run_route(
     candidate_scope: str,
     deadline: float,
     context_mode: str = "neighbor_context",
+    max_steps: int | None = None,
 ) -> dict[str, Any]:
     start, target = case["start"], case["target"]
     current = start
@@ -163,15 +168,18 @@ def _run_route(
     invalid_edge_count = 0
     revisit_count = 0
     started = time.perf_counter()
+    step_limit = max_steps if max_steps is not None else len(prepared["nodes"]) * 2
+    if step_limit < 1:
+        raise ValueError("max_steps must be positive")
 
-    for step_index in range(len(prepared["nodes"]) - 1):
+    for step_index in range(step_limit):
         if current == target:
             break
-        # 현재 Node의 미방문 outgoing Edge를 한 번만 정확 조회한다.
-        # neighbors 모드에서는 criteria와 Neighbor Context가 이 결과를 함께
-        # 사용하므로 Laya, Kev, Ollama 모두 실제 이동 가능한 Node만 선택한다.
+        # 현재 Node의 outgoing Edge를 한 번만 정확 조회한다. 이전에 방문한
+        # Node도 후보에 유지해 우회·복귀 후 Target에 도착할 수 있게 한다.
+        # 무한 순환은 step_limit에서 중단하고 결과에 오류로 기록한다.
         neighbor_edges = get_available_edges(
-            prepared["compact_graph"], current, visited_nodes=path
+            prepared["compact_graph"], current
         )
         if candidate_scope == "neighbors":
             candidate_nodes = [int(edge["node"]) for edge in neighbor_edges]
@@ -193,6 +201,9 @@ def _run_route(
         if len(candidate_nodes) == 1:
             next_node = candidate_nodes[0]
             weight = prepared["edge_weights"][(current, next_node)]
+            revisited = next_node in path
+            if revisited:
+                revisit_count += 1
             steps.append(
                 {
                     "step": step_index + 1,
@@ -208,6 +219,7 @@ def _run_route(
                     "forced_step": True,
                     "model_called": False,
                     "accepted": True,
+                    "revisited": revisited,
                     "error": None,
                     "confidence": None,
                     "answer_confidence": None,
@@ -274,9 +286,10 @@ def _run_route(
                 raise ValueError(f"잘못된 next-node 응답: {choice!r}")
             next_node = int(choice.removeprefix("node_"))
             step_record["next_node"] = next_node
-            if next_node in path:
+            revisited = next_node in path
+            if revisited:
                 revisit_count += 1
-                raise ValueError(f"이미 방문한 노드 재선택: {next_node}")
+            step_record["revisited"] = revisited
             edge_key = (current, next_node)
             if edge_key not in prepared["edge_weights"]:
                 invalid_edge_count += 1
@@ -301,7 +314,10 @@ def _run_route(
             break
 
     if error is None and current != target:
-        error = f"최대 단계 초과: target={target}, current={current}"
+        error = (
+            f"최대 단계 초과: max_steps={step_limit}, "
+            f"target={target}, current={current}"
+        )
 
     valid_path = False
     recalculated_distance = None
@@ -344,6 +360,7 @@ def _run_route(
         "path": path,
         "steps": steps,
         "api_call_count": api_call_count,
+        "max_steps": step_limit,
         "candidate_scope": candidate_scope,
         "context_mode": context_mode,
         "failed_step": failed_step,
@@ -466,7 +483,8 @@ def run_benchmark(
     repeats: int = 5,
     warmups: int = 1,
     candidate_scope: str = "neighbors",
-    context_mode: str = "full_graph_only",
+    context_mode: str = "neighbor_context",
+    max_steps: int | None = None,
     deadline: float = 0.15,
     selector: Any | None = None,
     progress: bool = True,
@@ -479,6 +497,8 @@ def run_benchmark(
         raise ValueError(
             "context_mode must be 'full_graph_only' or 'neighbor_context'"
         )
+    if max_steps is not None and max_steps < 1:
+        raise ValueError("max_steps must be positive")
     if deadline <= 0:
         raise ValueError("deadline must be positive")
     output = output.resolve()
@@ -488,6 +508,7 @@ def run_benchmark(
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
 
     prepared = _prepare()
+    effective_max_steps = max_steps or len(prepared["nodes"]) * 2
     selector = selector or get_selector()
     selector_name = getattr(selector, "name", selector.__class__.__name__)
     manifest = {
@@ -516,7 +537,8 @@ def run_benchmark(
                 if context_mode == "neighbor_context"
                 else "none"
             ),
-            "max_steps": len(prepared["nodes"]) - 1,
+            "max_steps": effective_max_steps,
+            "revisit_policy": "allowed_until_target_or_max_steps",
             "realtime_deadline_seconds": deadline,
             "python_role": "state storage, validation, and deterministic single-candidate transition",
             "single_candidate_policy": "forced_step_without_model_call",
@@ -530,7 +552,7 @@ def run_benchmark(
     for warmup in range(1, warmups + 1):
         _run_route(
             selector, prepared, prepared["cases"][0], candidate_scope, deadline,
-            context_mode
+            context_mode, effective_max_steps
         )
         if progress:
             print(f"warmup {warmup}/{warmups} complete")
@@ -540,7 +562,8 @@ def run_benchmark(
     for case in prepared["cases"]:
         for repeat in range(1, repeats + 1):
             result = _run_route(
-                selector, prepared, case, candidate_scope, deadline, context_mode
+                selector, prepared, case, candidate_scope, deadline, context_mode,
+                effective_max_steps
             )
             last_result = result
             row = {
@@ -642,6 +665,12 @@ def main() -> int:
         choices=("full_graph_only", "neighbor_context"),
         default="neighbor_context",
     )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="목적지 미도착 시 중단할 최대 이동 횟수 (기본: Node 수의 2배)",
+    )
     parser.add_argument("--deadline", type=float, default=0.15)
     args = parser.parse_args()
     summary = run_benchmark(
@@ -650,6 +679,7 @@ def main() -> int:
         warmups=args.warmups,
         candidate_scope=args.candidate_scope,
         context_mode=args.context_mode,
+        max_steps=args.max_steps,
         deadline=args.deadline,
         selector=get_selector(),
     )
