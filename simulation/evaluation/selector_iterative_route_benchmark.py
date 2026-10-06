@@ -150,7 +150,7 @@ def _run_route(
     case: dict[str, Any],
     candidate_scope: str,
     deadline: float,
-    context_mode: str = "full_graph_only",
+    context_mode: str = "neighbor_context",
 ) -> dict[str, Any]:
     start, target = case["start"], case["target"]
     current = start
@@ -167,12 +167,14 @@ def _run_route(
     for step_index in range(len(prepared["nodes"]) - 1):
         if current == target:
             break
+        # 현재 Node의 미방문 outgoing Edge를 한 번만 정확 조회한다.
+        # neighbors 모드에서는 criteria와 Neighbor Context가 이 결과를 함께
+        # 사용하므로 Laya, Kev, Ollama 모두 실제 이동 가능한 Node만 선택한다.
+        neighbor_edges = get_available_edges(
+            prepared["compact_graph"], current, visited_nodes=path
+        )
         if candidate_scope == "neighbors":
-            candidate_nodes = sorted(
-                end
-                for (edge_start, end) in prepared["edge_weights"]
-                if edge_start == current and end not in path
-            )
+            candidate_nodes = [int(edge["node"]) for edge in neighbor_edges]
         else:
             candidate_nodes = [node for node in prepared["nodes"] if node != current]
         if not candidate_nodes:
@@ -183,11 +185,7 @@ def _run_route(
             f"node_{node}": f"Node {node}" for node in candidate_nodes
         }
         available_edges = (
-            get_available_edges(
-                prepared["compact_graph"], current, visited_nodes=path
-            )
-            if context_mode == "neighbor_context"
-            else None
+            neighbor_edges if context_mode == "neighbor_context" else None
         )
 
         # 선택지가 하나면 모델이 판단할 내용이 없다. 세 selector 모두 choice 후보를
@@ -642,7 +640,7 @@ def main() -> int:
     parser.add_argument(
         "--context-mode",
         choices=("full_graph_only", "neighbor_context"),
-        default="full_graph_only",
+        default="neighbor_context",
     )
     parser.add_argument("--deadline", type=float, default=0.15)
     args = parser.parse_args()

@@ -14,10 +14,12 @@ class _OracleSelector:
     def __init__(self):
         self.calls = 0
         self.states = []
+        self.candidate_sets = []
 
     def select_choice(self, state, candidates, _instructions, *, question_id):
         self.calls += 1
         self.states.append(state)
+        self.candidate_sets.append(dict(candidates))
         choice = {0: "node_1"}[state["current_node"]]
         if choice not in candidates:
             raise AssertionError(f"missing candidate: {choice}")
@@ -99,6 +101,42 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertTrue(result["steps"][1]["forced_step"])
         self.assertFalse(result["steps"][1]["model_called"])
         self.assertTrue(result["full_graph_input_preserved"])
+
+    # 기본 모드는 available_edges의 Node만 Laya·Kev·Ollama choice 후보로 사용한다.
+    def test_default_mode_builds_criteria_from_available_edges(self):
+        selector = _OracleSelector()
+        prepared = _fixture()
+        prepared["nodes"].append(3)
+        prepared["points"][3] = (3.0, 0.0)
+        prepared["compact_graph"]["nodes"].append(3)
+        prepared["compact_graph"]["adjacency"]["3"] = []
+
+        result = _run_route(
+            selector,
+            prepared,
+            {
+                "start": 0,
+                "target": 2,
+                "expected_path": [0, 1, 2],
+                "expected_distance": 2.0,
+            },
+            "neighbors",
+            0.15,
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertEqual(
+            selector.states[0]["available_edges"],
+            [
+                {"node": 1, "distance": 1.0},
+                {"node": 2, "distance": 3.0},
+            ],
+        )
+        self.assertEqual(
+            selector.candidate_sets[0],
+            {"node_1": "Node 1", "node_2": "Node 2"},
+        )
+        self.assertNotIn("node_3", selector.candidate_sets[0])
 
     # Context 모드는 criteria를 바꾸지 않고 available_edges만 추가해야 한다.
     def test_neighbor_context_changes_only_state_context(self):

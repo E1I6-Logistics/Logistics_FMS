@@ -929,10 +929,12 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 모델 종류가 달라도 같은 선택 작업으로 비교할 때 사용한다. 모든 모델은 동일한
 `CompactAdjacencyGraph`, 현재 Node, 목표 Node, 방문 Node와 누적 거리를 받는다.
 
-- `--candidate-scope neighbors`: 현재 Node에서 실제로 이동 가능한 미방문 Node만 후보로 제공한다.
-- `--candidate-scope all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록한다.
+- 기본값은 `--candidate-scope neighbors --context-mode neighbor_context`다.
+- `neighbors`에서는 `available_edges`를 정확 조회하고, 그 안의 Node만 Laya·Kev·Ollama의 `criteria`로 제공한다.
+- 전체 `CompactAdjacencyGraph`는 후보 Node에서 Target까지의 남은 경로 비용을 판단할 수 있도록 계속 제공한다.
+- `--candidate-scope all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록하는 능력 시험이다.
 - `--context-mode full_graph_only`: 전체 Graph와 현재 상태만 전달한다.
-- `--context-mode neighbor_context`: 동일한 입력에 현재 Node의 미방문 outgoing Edge를 `available_edges`로 추가한다.
+- `--context-mode neighbor_context`: 동일한 입력에 현재 Node의 미방문 outgoing Edge와 weight를 `available_edges`로 추가한다.
 - Context 효과를 비교할 때는 두 실행의 `--candidate-scope`를 동일하게 유지한다.
 - 후보가 1개면 모델을 호출하지 않고 유일한 Edge로 이동하며 `forced_step=true`로 기록한다.
   이 단계는 API 호출 수, 모델 단계 지연시간과 0.15초 충족률의 분모에서 제외한다.
@@ -956,6 +958,30 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
 ```
 
 `ROUTE_SELECTOR`를 `kev` 또는 `ollama`로 바꾸면 같은 입력과 검증 규칙으로 실행한다.
-Kev는 해당 서버를 먼저 실행하고 `KEV_MODEL`을 지정하며, Ollama는 `OLLAMA_MODEL`을
-지정한다. 결과에는 실패 단계, 단계별 후보·선택·확률·입력 사용량·응답시간,
-없는 Edge 선택, 재방문, 목표 도착 여부, 최단 경로·거리 일치와 무작위 기준선을 기록한다.
+Kev는 0.8B와 4B를 각각 측정한다. 두 checkpoint는 같은 8011 포트를 사용하므로 서버를
+동시에 실행하지 않고, 한 모델의 시험이 끝난 뒤 서버를 종료하고 다음 모델을 실행한다.
+
+```bash
+# Kev-0.8B 서버가 실행 중일 때
+ROUTE_SELECTOR=kev \
+KEV_HOST=http://127.0.0.1:8011 \
+KEV_MODEL=kev-08b \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --output simulation/benchmark_results/<환경>-kev-08b-iterative-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+# 0.8B 서버를 종료하고 Kev-4B 서버를 실행한 뒤 측정
+ROUTE_SELECTOR=kev \
+KEV_HOST=http://127.0.0.1:8011 \
+KEV_MODEL=kev-4b \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --output simulation/benchmark_results/<환경>-kev-4b-iterative-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+두 명령은 기본값인 `candidate_scope=neighbors`, `context_mode=neighbor_context`를 사용한다.
+따라서 0.8B와 4B 모두 전체 Graph와 현재 상태를 받되, `available_edges` 안의 Node만
+choice 후보로 받는다. `requested_model`과 결과 폴더가 다르므로 결과를 서로 구분할 수 있다.
+
+Ollama는 `OLLAMA_MODEL`을 지정한다. 결과에는 실패 단계, 단계별 후보·선택·확률·입력
+사용량·응답시간, 재방문, 목표 도착 여부, 최단 경로·거리 일치와 무작위 기준선을 기록한다.
