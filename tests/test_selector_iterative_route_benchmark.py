@@ -171,14 +171,49 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertEqual(base["context_mode"], "full_graph_only")
         self.assertEqual(context["context_mode"], "neighbor_context")
 
-    # 이전 Node로 돌아가더라도 유효 Edge이면 계속 실행해 Target 도착을 허용한다.
-    def test_revisit_is_recorded_and_route_can_still_reach_target(self):
+    # 직전 Node는 available_edges와 criteria에서 제외해 즉시 왕복을 막는다.
+    def test_immediate_previous_node_is_not_a_candidate(self):
+        selector = _OracleSelector()
+        prepared = _fixture()
+        prepared["compact_graph"]["adjacency"]["1"] = [
+            {"to": 0, "weight": 1.0},
+            {"to": 2, "weight": 1.0},
+        ]
+        prepared["edges"].append((1, 0, 1.0))
+        prepared["edge_weights"][(1, 0)] = 1.0
+
+        result = _run_route(
+            selector,
+            prepared,
+            {
+                "start": 0,
+                "target": 2,
+                "expected_path": [0, 1, 2],
+                "expected_distance": 2.0,
+            },
+            "neighbors",
+            0.15,
+            "neighbor_context",
+            max_steps=6,
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["path"], [0, 1, 2])
+        self.assertEqual(result["steps"][1]["previous_node"], 0)
+        self.assertEqual(result["steps"][1]["candidates"], {"node_2": "Node 2"})
+        self.assertEqual(
+            result["steps"][1]["available_edges"],
+            [{"node": 2, "distance": 1.0}],
+        )
+
+    # 직전 Node가 아니면 과거 방문 Node로 돌아간 뒤 Target에 도착할 수 있다.
+    def test_older_revisit_is_recorded_and_route_can_reach_target(self):
         class _ScriptedSelector:
             name = "kev"
             model = "fake-revisit"
 
             def __init__(self):
-                self.choices = iter(["node_1", "node_0", "node_2"])
+                self.choices = iter(["node_1", "node_0", "node_3"])
 
             def select_choice(self, _state, candidates, _instructions, *, question_id):
                 choice = next(self.choices)
@@ -190,62 +225,84 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
                     "probabilities": {key: (0.8 if key == choice else 0.2) for key in candidates},
                 }
 
-        prepared = _fixture()
-        prepared["compact_graph"]["adjacency"]["1"] = [
-            {"to": 0, "weight": 1.0},
-            {"to": 2, "weight": 1.0},
-        ]
-        prepared["edges"].append((1, 0, 1.0))
-        prepared["edge_weights"][(1, 0)] = 1.0
+        prepared = {
+            "compact_graph": {
+                "type": "CompactAdjacencyGraph",
+                "directed": True,
+                "nodes": [0, 1, 2, 3],
+                "adjacency": {
+                    "0": [{"to": 1, "weight": 1.0}, {"to": 3, "weight": 4.0}],
+                    "1": [{"to": 0, "weight": 1.0}, {"to": 2, "weight": 1.0}],
+                    "2": [{"to": 0, "weight": 1.0}, {"to": 3, "weight": 1.0}],
+                    "3": [],
+                },
+            },
+            "points": {0: (0.0, 0.0), 1: (1.0, 0.0), 2: (2.0, 0.0), 3: (3.0, 0.0)},
+            "edges": [
+                (0, 1, 1.0), (0, 3, 4.0), (1, 0, 1.0),
+                (1, 2, 1.0), (2, 0, 1.0), (2, 3, 1.0),
+            ],
+            "edge_weights": {
+                (0, 1): 1.0, (0, 3): 4.0, (1, 0): 1.0,
+                (1, 2): 1.0, (2, 0): 1.0, (2, 3): 1.0,
+            },
+            "nodes": [0, 1, 2, 3],
+        }
 
         result = _run_route(
             _ScriptedSelector(),
             prepared,
             {
                 "start": 0,
-                "target": 2,
-                "expected_path": [0, 2],
+                "target": 3,
+                "expected_path": [0, 1, 2, 3],
                 "expected_distance": 3.0,
             },
             "neighbors",
             0.15,
             "neighbor_context",
-            max_steps=6,
+            max_steps=8,
         )
 
         self.assertIsNone(result["error"])
-        self.assertEqual(result["path"], [0, 1, 0, 2])
+        self.assertEqual(result["path"], [0, 1, 2, 0, 3])
         self.assertTrue(result["valid_path"])
         self.assertEqual(result["revisit_count"], 1)
-        self.assertTrue(result["steps"][1]["revisited"])
-        self.assertFalse(result["exact_path_match"])
+        self.assertTrue(result["steps"][2]["revisited"])
 
-    # 재방문을 허용해도 무한 순환은 max_steps에서 실패로 종료해야 한다.
-    def test_revisit_loop_stops_at_max_steps(self):
-        class _LoopSelector:
+    # 3개 이상 Node의 순환은 허용하지만 max_steps에서 실패로 종료한다.
+    def test_longer_cycle_stops_at_max_steps(self):
+        class _MustNotRunSelector:
             name = "laya"
 
-            def select_choice(self, state, candidates, _instructions, *, question_id):
-                choice = "node_1" if state["current_node"] == 0 else "node_0"
-                if choice not in candidates:
-                    raise AssertionError(f"missing candidate: {choice}")
-                return {"choice": choice, "probabilities": {choice: 1.0}}
+            def select_choice(self, *args, **kwargs):
+                raise AssertionError("단일 후보 순환에서는 selector를 호출하면 안 됩니다.")
 
-        prepared = _fixture()
-        prepared["compact_graph"]["adjacency"]["1"] = [
-            {"to": 0, "weight": 1.0},
-            {"to": 2, "weight": 1.0},
-        ]
-        prepared["edges"].append((1, 0, 1.0))
-        prepared["edge_weights"][(1, 0)] = 1.0
+        prepared = {
+            "compact_graph": {
+                "type": "CompactAdjacencyGraph",
+                "directed": True,
+                "nodes": [0, 1, 2, 3],
+                "adjacency": {
+                    "0": [{"to": 1, "weight": 1.0}],
+                    "1": [{"to": 2, "weight": 1.0}],
+                    "2": [{"to": 0, "weight": 1.0}],
+                    "3": [],
+                },
+            },
+            "points": {0: (0.0, 0.0), 1: (1.0, 0.0), 2: (2.0, 0.0), 3: (3.0, 0.0)},
+            "edges": [(0, 1, 1.0), (1, 2, 1.0), (2, 0, 1.0)],
+            "edge_weights": {(0, 1): 1.0, (1, 2): 1.0, (2, 0): 1.0},
+            "nodes": [0, 1, 2, 3],
+        }
 
         result = _run_route(
-            _LoopSelector(),
+            _MustNotRunSelector(),
             prepared,
             {
                 "start": 0,
-                "target": 2,
-                "expected_path": [0, 2],
+                "target": 3,
+                "expected_path": [0, 1, 2, 3],
                 "expected_distance": 3.0,
             },
             "neighbors",
@@ -254,8 +311,8 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
             max_steps=4,
         )
 
-        self.assertEqual(result["path"], [0, 1, 0, 1, 0])
-        self.assertEqual(result["revisit_count"], 3)
+        self.assertEqual(result["path"], [0, 1, 2, 0, 1])
+        self.assertEqual(result["revisit_count"], 2)
         self.assertIn("최대 단계 초과: max_steps=4", result["error"])
 
     # 전체 노드 모드에서 없는 간선을 고르면 첫 실패 단계와 원인을 남겨야 한다.

@@ -40,8 +40,9 @@ NEXT_NODE_INSTRUCTIONS = (
     "directed edge from current_node. Use the CompactAdjacencyGraph weight exactly "
     "as stored. Choose only from the supplied criteria. If available_edges "
     "is present, it is an exact lookup of outgoing edges; choose only a node "
-    "listed there. Previously visited nodes may be selected again when needed "
-    "to reach the target. Return only the selected criteria ID."
+    "listed there. Do not immediately return to previous_node. Nodes visited "
+    "before previous_node may be selected again when needed to reach the target. "
+    "Return only the selected criteria ID."
 )
 
 
@@ -175,16 +176,23 @@ def _run_route(
     for step_index in range(step_limit):
         if current == target:
             break
-        # 현재 Node의 outgoing Edge를 한 번만 정확 조회한다. 이전에 방문한
-        # Node도 후보에 유지해 우회·복귀 후 Target에 도착할 수 있게 한다.
+        # 직전 Node로 즉시 돌아가는 Edge만 제외한다. 그보다 이전에 방문한
+        # Node는 후보에 유지해 다른 경로를 거친 복귀를 허용한다.
         # 무한 순환은 step_limit에서 중단하고 결과에 오류로 기록한다.
+        previous_node = path[-2] if len(path) >= 2 else None
         neighbor_edges = get_available_edges(
-            prepared["compact_graph"], current
+            prepared["compact_graph"],
+            current,
+            visited_nodes=([previous_node] if previous_node is not None else None),
         )
         if candidate_scope == "neighbors":
             candidate_nodes = [int(edge["node"]) for edge in neighbor_edges]
         else:
-            candidate_nodes = [node for node in prepared["nodes"] if node != current]
+            candidate_nodes = [
+                node
+                for node in prepared["nodes"]
+                if node != current and node != previous_node
+            ]
         if not candidate_nodes:
             error = f"이동 가능한 후보 노드가 없습니다: current={current}"
             failed_step = step_index + 1
@@ -208,6 +216,7 @@ def _run_route(
                 {
                     "step": step_index + 1,
                     "current_node": current,
+                    "previous_node": previous_node,
                     "candidate_scope": candidate_scope,
                     "context_mode": context_mode,
                     "available_edges": available_edges,
@@ -241,6 +250,7 @@ def _run_route(
         state = {
             "route_graph": prepared["compact_graph"],
             "current_node": current,
+            "previous_node": previous_node,
             "target_node": target,
             "visited_nodes": path,
             "accumulated_distance": accumulated_distance,
@@ -251,6 +261,7 @@ def _run_route(
         step_record: dict[str, Any] = {
             "step": step_index + 1,
             "current_node": current,
+            "previous_node": previous_node,
             "candidate_scope": candidate_scope,
             "context_mode": context_mode,
             "available_edges": available_edges,
