@@ -45,6 +45,7 @@ class LayaSelector(RouteSelector):
         model: str | None = None,
         device: str | None = None,
         max_length: int | None = None,
+        head_max_length: int | None = None,
         require_cuda: bool | None = None,
         hf_token: str | None = None,
         loader: AgentLoader | None = None,
@@ -60,6 +61,18 @@ class LayaSelector(RouteSelector):
         )
         if not 1 <= self.max_length <= 8192:
             raise ValueError("LAYA_MAX_LENGTH는 1 이상 8192 이하여야 합니다.")
+        configured_head_max = os.getenv("LAYA_HEAD_MAX_LENGTH")
+        self.head_max_length = (
+            head_max_length
+            if head_max_length is not None
+            else int(configured_head_max) if configured_head_max else None
+        )
+        if self.head_max_length is not None and not (
+            1 <= self.head_max_length < self.max_length
+        ):
+            raise ValueError(
+                "LAYA_HEAD_MAX_LENGTH는 1 이상 LAYA_MAX_LENGTH 미만이어야 합니다."
+            )
         self.require_cuda = (
             require_cuda
             if require_cuda is not None
@@ -84,7 +97,7 @@ class LayaSelector(RouteSelector):
                 "Hugging Face Laya 실행 패키지가 없습니다. "
                 "JetPack용 CUDA PyTorch를 먼저 설치한 뒤 "
                 "'python -m pip install -r "
-                "simulation/requirements-laya-jetson.txt'를 실행하세요."
+                "simulation/requirements.txt'를 실행하세요."
             ) from error
         return laya.load(**kwargs)
 
@@ -125,11 +138,10 @@ class LayaSelector(RouteSelector):
             agent, load_seconds = self._ensure_agent()
             fallback_before = int(getattr(agent, "cpu_fallback_count", 0))
             eval_started = time.perf_counter()
-            response = agent.predict(
-                state,
-                dict(questions),
-                max_len=self.max_length,
-            )
+            predict_kwargs: dict[str, Any] = {"max_len": self.max_length}
+            if self.head_max_length is not None:
+                predict_kwargs["head_max_len"] = self.head_max_length
+            response = agent.predict(state, dict(questions), **predict_kwargs)
             eval_seconds = time.perf_counter() - eval_started
             total_seconds = time.perf_counter() - total_started
             fallback_after = int(getattr(agent, "cpu_fallback_count", 0))
@@ -153,10 +165,21 @@ class LayaSelector(RouteSelector):
         if state_truncated is None and isinstance(usage, Mapping):
             # 최신 Laya는 입력 잘림 여부를 최상위가 아니라 usage.truncated로 반환한다.
             state_truncated = usage.get("truncated")
+            # Laya 0.3.21은 truncated를 반환하지 않는다. 단일 질문에서 실제
+            # 조립된 토큰 수가 예산보다 작으면 잘리지 않았다고 판정할 수 있다.
+            input_tokens = usage.get("input_tokens")
+            if (
+                state_truncated is None
+                and len(questions) == 1
+                and isinstance(input_tokens, int)
+                and input_tokens < self.max_length
+            ):
+                state_truncated = False
         runtime = {
             "device": actual_device,
             "precision": precision,
             "max_length": self.max_length,
+            "head_max_length": self.head_max_length,
             "cpu_fallback_count": fallback_after,
         }
         self.last_inference = {
@@ -210,6 +233,12 @@ class LayaSelector(RouteSelector):
             **self._metadata(common),
             "choice": choice,
             "confidence": float(answer.get("confidence", 0.0)),
+            "answer_confidence": float(
+                answer.get(
+                    "answer_confidence",
+                    max(answer.get("probabilities", {}).values(), default=0.0),
+                )
+            ),
             "probabilities": dict(answer.get("probabilities", {})),
         }
 

@@ -286,6 +286,10 @@ def _latency_stats(values: list[float]) -> dict[str, float | int | None]:
 
 def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
     successful = [trial for trial in trials if trial["error"] is None]
+    truncation_reported = [
+        trial for trial in successful
+        if isinstance(trial.get("state_truncated"), bool)
+    ]
     wall_times = [trial["wall_seconds"] for trial in successful]
     server_times = [
         trial["model_total_seconds"]
@@ -302,6 +306,15 @@ def _summarize_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
         "successful_request_count": len(successful),
         "error_count": len(trials) - len(successful),
         "correct_count": sum(bool(trial["correct"]) for trial in trials),
+        "state_truncated_count": sum(
+            trial.get("state_truncated") is True for trial in successful
+        ),
+        "state_truncation_unreported_count": (
+            len(successful) - len(truncation_reported)
+        ),
+        "full_input_preserved_count": sum(
+            trial.get("state_truncated") is False for trial in successful
+        ),
         "accuracy": (
             sum(bool(trial["correct"]) for trial in trials) / len(trials)
             if trials
@@ -327,14 +340,14 @@ def _write_csv(path: Path, trials: list[dict[str, Any]]) -> None:
         "expected_choice", "correct_answer", "correct", "confidence",
         "wall_seconds", "model_total_seconds", "load_seconds", "eval_seconds",
         "realtime_deadline_seconds", "realtime_met", "probabilities", "routing",
-        "error",
+        "usage", "state_truncated", "error",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         for trial in trials:
             row = {field: trial.get(field) for field in fieldnames}
-            for field in ("probabilities", "routing"):
+            for field in ("probabilities", "routing", "usage"):
                 row[field] = json.dumps(
                     trial.get(field), ensure_ascii=False, separators=(",", ":")
                 )
@@ -383,6 +396,7 @@ def run_latency_benchmark(
         "repeats_per_case": repeats,
         "expected_trial_count": len(TEST_CASES) * repeats,
         "realtime_deadline_seconds": realtime_deadline_seconds,
+        "selector_max_length": getattr(selector, "max_length", None),
     }
     manifest = {
         "benchmark": "route-selector-language-position-latency-v3",
@@ -443,6 +457,9 @@ def run_latency_benchmark(
                     "confidence": result.get("confidence"),
                     "probabilities": result.get("probabilities"),
                     "routing": result.get("routing"),
+                    # Laya가 실제로 입력을 모두 읽었는지 결과 파일에서 검증한다.
+                    "usage": result.get("usage"),
+                    "state_truncated": result.get("state_truncated"),
                     "wall_seconds": wall_seconds,
                     "model_total_seconds": result.get("total_duration_seconds"),
                     "load_seconds": result.get("load_duration_seconds"),
@@ -473,6 +490,8 @@ def run_latency_benchmark(
                     "confidence": None,
                     "probabilities": None,
                     "routing": None,
+                    "usage": None,
+                    "state_truncated": None,
                     "wall_seconds": wall_seconds,
                     "model_total_seconds": None,
                     "load_seconds": None,

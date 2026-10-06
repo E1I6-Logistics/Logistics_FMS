@@ -203,6 +203,12 @@ class KevSelector(RouteSelector):
             **self._metadata(common),
             "choice": choice,
             "confidence": float(answer.get("confidence", 0.0)),
+            "answer_confidence": float(
+                answer.get(
+                    "answer_confidence",
+                    max(answer.get("probabilities", {}).values(), default=0.0),
+                )
+            ),
             "probabilities": dict(answer.get("probabilities", {})),
         }
 
