@@ -13,9 +13,11 @@ class _OracleSelector:
 
     def __init__(self):
         self.calls = 0
+        self.states = []
 
     def select_choice(self, state, candidates, _instructions, *, question_id):
         self.calls += 1
+        self.states.append(state)
         choice = {0: "node_1"}[state["current_node"]]
         if choice not in candidates:
             raise AssertionError(f"missing candidate: {choice}")
@@ -97,6 +99,39 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertTrue(result["steps"][1]["forced_step"])
         self.assertFalse(result["steps"][1]["model_called"])
         self.assertTrue(result["full_graph_input_preserved"])
+
+    # Context 모드는 criteria를 바꾸지 않고 available_edges만 추가해야 한다.
+    def test_neighbor_context_changes_only_state_context(self):
+        base_selector = _OracleSelector()
+        context_selector = _OracleSelector()
+        case = {
+            "start": 0,
+            "target": 2,
+            "expected_path": [0, 1, 2],
+            "expected_distance": 2.0,
+        }
+
+        base = _run_route(
+            base_selector, _fixture(), case, "all", 0.15, "full_graph_only"
+        )
+        context = _run_route(
+            context_selector, _fixture(), case, "all", 0.15, "neighbor_context"
+        )
+
+        self.assertNotIn("available_edges", base_selector.states[0])
+        self.assertEqual(
+            context_selector.states[0]["available_edges"],
+            [
+                {"node": 1, "distance": 1.0},
+                {"node": 2, "distance": 3.0},
+            ],
+        )
+        self.assertEqual(
+            base["steps"][0]["candidates"],
+            context["steps"][0]["candidates"],
+        )
+        self.assertEqual(base["context_mode"], "full_graph_only")
+        self.assertEqual(context["context_mode"], "neighbor_context")
 
     # 전체 노드 모드에서 없는 간선을 고르면 첫 실패 단계와 원인을 남겨야 한다.
     def test_invalid_edge_choice_is_recorded(self):

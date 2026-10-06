@@ -929,24 +929,29 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 모델 종류가 달라도 같은 선택 작업으로 비교할 때 사용한다. 모든 모델은 동일한
 `CompactAdjacencyGraph`, 현재 Node, 목표 Node, 방문 Node와 누적 거리를 받는다.
 
-- `neighbors`: 현재 Node에서 실제로 이동 가능한 미방문 Node만 후보로 제공한다.
-- `all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록한다.
+- `--candidate-scope neighbors`: 현재 Node에서 실제로 이동 가능한 미방문 Node만 후보로 제공한다.
+- `--candidate-scope all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록한다.
+- `--context-mode full_graph_only`: 전체 Graph와 현재 상태만 전달한다.
+- `--context-mode neighbor_context`: 동일한 입력에 현재 Node의 미방문 outgoing Edge를 `available_edges`로 추가한다.
+- Context 효과를 비교할 때는 두 실행의 `--candidate-scope`를 동일하게 유지한다.
 - 후보가 1개면 모델을 호출하지 않고 유일한 Edge로 이동하며 `forced_step=true`로 기록한다.
   이 단계는 API 호출 수, 모델 단계 지연시간과 0.15초 충족률의 분모에서 제외한다.
 
 ```bash
-# 실사용 방식
-ROUTE_SELECTOR=laya \
-python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --candidate-scope neighbors \
-  --output simulation/benchmark_results/<환경>-laya-v2-neighbors-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
-
-# 능력 시험
+# Context 미적용
 ROUTE_SELECTOR=laya \
 python -m simulation.evaluation.selector_iterative_route_benchmark \
   --candidate-scope all \
-  --output simulation/benchmark_results/<환경>-laya-v2-all-$(date +%Y%m%d-%H%M%S) \
+  --context-mode full_graph_only \
+  --output simulation/benchmark_results/<환경>-laya-full-graph-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+# 정확 인접 Context 적용: 위 실행과 criteria는 동일
+ROUTE_SELECTOR=laya \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --candidate-scope all \
+  --context-mode neighbor_context \
+  --output simulation/benchmark_results/<환경>-laya-neighbor-context-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15
 ```
 

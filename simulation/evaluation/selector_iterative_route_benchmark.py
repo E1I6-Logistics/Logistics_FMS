@@ -23,6 +23,7 @@ from simulation.services.route_service import (
     build_compact_adjacency_graph,
     build_route_inputs,
     build_edge_weight_lookup,
+    get_available_edges,
     plan_route,
     validate_and_calculate_path_distance,
 )
@@ -37,8 +38,10 @@ NEXT_NODE_INSTRUCTIONS = (
     "Select exactly one next node for the minimum-total-weight route from "
     "current_node to target_node. The selected node must be connected by one "
     "directed edge from current_node. Use the CompactAdjacencyGraph weight exactly "
-    "as stored. Choose only from the supplied criteria. "
-    "Do not select a visited node. Return only the selected criteria ID."
+    "as stored. Choose only from the supplied criteria. If available_edges "
+    "is present, it is an exact lookup of unvisited outgoing edges; choose "
+    "only a node listed there. Do not select a visited node. Return only "
+    "the selected criteria ID."
 )
 
 
@@ -147,6 +150,7 @@ def _run_route(
     case: dict[str, Any],
     candidate_scope: str,
     deadline: float,
+    context_mode: str = "full_graph_only",
 ) -> dict[str, Any]:
     start, target = case["start"], case["target"]
     current = start
@@ -178,6 +182,13 @@ def _run_route(
         candidates = {
             f"node_{node}": f"Node {node}" for node in candidate_nodes
         }
+        available_edges = (
+            get_available_edges(
+                prepared["compact_graph"], current, visited_nodes=path
+            )
+            if context_mode == "neighbor_context"
+            else None
+        )
 
         # 선택지가 하나면 모델이 판단할 내용이 없다. 세 selector 모두 choice 후보를
         # 두 개 이상 요구하므로 API를 호출하지 않고 유일한 edge를 강제 이동으로 남긴다.
@@ -189,6 +200,8 @@ def _run_route(
                     "step": step_index + 1,
                     "current_node": current,
                     "candidate_scope": candidate_scope,
+                    "context_mode": context_mode,
+                    "available_edges": available_edges,
                     "candidates": candidates,
                     "candidate_count": 1,
                     "choice": f"node_{next_node}",
@@ -222,11 +235,15 @@ def _run_route(
             "visited_nodes": path,
             "accumulated_distance": accumulated_distance,
         }
+        if available_edges is not None:
+            state["available_edges"] = available_edges
         step_started = time.perf_counter()
         step_record: dict[str, Any] = {
             "step": step_index + 1,
             "current_node": current,
             "candidate_scope": candidate_scope,
+            "context_mode": context_mode,
+            "available_edges": available_edges,
             "candidates": candidates,
             "candidate_count": len(candidates),
             "forced_step": False,
@@ -330,6 +347,7 @@ def _run_route(
         "steps": steps,
         "api_call_count": api_call_count,
         "candidate_scope": candidate_scope,
+        "context_mode": context_mode,
         "failed_step": failed_step,
         "invalid_edge_count": invalid_edge_count,
         "revisit_count": revisit_count,
@@ -450,6 +468,7 @@ def run_benchmark(
     repeats: int = 5,
     warmups: int = 1,
     candidate_scope: str = "neighbors",
+    context_mode: str = "full_graph_only",
     deadline: float = 0.15,
     selector: Any | None = None,
     progress: bool = True,
@@ -458,6 +477,10 @@ def run_benchmark(
         raise ValueError("repeats must be positive and warmups must be non-negative")
     if candidate_scope not in {"neighbors", "all"}:
         raise ValueError("candidate_scope must be 'neighbors' or 'all'")
+    if context_mode not in {"full_graph_only", "neighbor_context"}:
+        raise ValueError(
+            "context_mode must be 'full_graph_only' or 'neighbor_context'"
+        )
     if deadline <= 0:
         raise ValueError("deadline must be positive")
     output = output.resolve()
@@ -489,6 +512,12 @@ def run_benchmark(
             "expected_trial_count": len(prepared["cases"]) * repeats,
             "questions_per_api_request": 1,
             "candidate_scope": candidate_scope,
+            "context_mode": context_mode,
+            "context_policy": (
+                "exact_current_node_adjacency_each_step"
+                if context_mode == "neighbor_context"
+                else "none"
+            ),
             "max_steps": len(prepared["nodes"]) - 1,
             "realtime_deadline_seconds": deadline,
             "python_role": "state storage, validation, and deterministic single-candidate transition",
@@ -502,7 +531,8 @@ def run_benchmark(
 
     for warmup in range(1, warmups + 1):
         _run_route(
-            selector, prepared, prepared["cases"][0], candidate_scope, deadline
+            selector, prepared, prepared["cases"][0], candidate_scope, deadline,
+            context_mode
         )
         if progress:
             print(f"warmup {warmup}/{warmups} complete")
@@ -512,7 +542,7 @@ def run_benchmark(
     for case in prepared["cases"]:
         for repeat in range(1, repeats + 1):
             result = _run_route(
-                selector, prepared, case, candidate_scope, deadline
+                selector, prepared, case, candidate_scope, deadline, context_mode
             )
             last_result = result
             row = {
@@ -566,7 +596,8 @@ def run_benchmark(
         "target_node", "repeat", "expected_path", "path", "expected_distance",
         "recalculated_distance", "distance_ratio", "api_call_count", "valid_path",
         "random_baseline_path_probability",
-        "candidate_scope", "failed_step", "invalid_edge_count", "revisit_count",
+        "candidate_scope", "context_mode", "failed_step",
+        "invalid_edge_count", "revisit_count",
         "exact_path_match", "distance_match", "wall_seconds",
         "model_total_seconds", "state_truncated_count",
         "state_truncation_reported_count",
@@ -608,6 +639,11 @@ def main() -> int:
     parser.add_argument(
         "--candidate-scope", choices=("neighbors", "all"), default="neighbors"
     )
+    parser.add_argument(
+        "--context-mode",
+        choices=("full_graph_only", "neighbor_context"),
+        default="full_graph_only",
+    )
     parser.add_argument("--deadline", type=float, default=0.15)
     args = parser.parse_args()
     summary = run_benchmark(
@@ -615,6 +651,7 @@ def main() -> int:
         repeats=args.repeats,
         warmups=args.warmups,
         candidate_scope=args.candidate_scope,
+        context_mode=args.context_mode,
         deadline=args.deadline,
         selector=get_selector(),
     )
