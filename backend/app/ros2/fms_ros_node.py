@@ -55,9 +55,11 @@ class FmsRosNode(Node):
         # Goal 수락 대기 중에도 취소 요청을 기억한다. 콜백은 terminal result 뒤 실행
         self._follow_waypoints_pending = set()
         self._follow_waypoints_cancel_callbacks = {}
+        self._follow_waypoints_feedback_tokens = {}
         self.navigation_lock = RLock()
 
         self.navigation_result_callback = None
+        self.navigation_error_callback = None
         self.precision_dock_result_callback = None
         self.aruco_align_result_callback = None
 
@@ -176,28 +178,42 @@ class FmsRosNode(Node):
         goal.poses = poses
 
         # 비동기로 Goal 전송
+        token = object()
+        self._follow_waypoints_feedback_tokens[robot_id] = token
         self._follow_waypoints_pending.add(robot_id)
         try:
             future = client.send_goal_async(
                 goal,
-                feedback_callback=lambda feedback, rid=robot_id: self._on_follow_waypoints_feedback(
-                    rid, feedback
+                feedback_callback=lambda feedback, rid=robot_id, expected=token: self._on_follow_waypoints_feedback(
+                    rid, feedback, expected
                 ),
             )
         except Exception:
             self._follow_waypoints_pending.discard(robot_id)
+            self._follow_waypoints_feedback_tokens.pop(robot_id, None)
             raise
 
         future.add_done_callback(
             lambda future, rid=robot_id: self._on_follow_waypoints_goal_response(rid, future)
         )
 
+    def _navigation_error(self, robot_id: str, reason: str) -> None:
+        self.get_logger().error(f"FollowWaypoints error: {robot_id}, reason={reason}")
+        if getattr(self, "navigation_error_callback", None):
+            self.navigation_error_callback(robot_id, reason)
+
     @_navigation_locked
     def _on_follow_waypoints_goal_response(self, robot_id: str, future) -> None:
-        goal_handle = future.result()
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            # 서버가 수락했는지 알 수 없으므로 pending을 지우고 새 Goal을 보내면 안 된다.
+            self._navigation_error(robot_id, f"goal_response_error:{exc}")
+            return
         self._follow_waypoints_pending.discard(robot_id)
 
         if not goal_handle.accepted:
+            self._follow_waypoints_feedback_tokens.pop(robot_id, None)
             callback = self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
             if callback is not None:
                 callback()
@@ -212,13 +228,16 @@ class FmsRosNode(Node):
 
         self.get_logger().info(f"FollowWaypoints goal accepted: {robot_id}")
 
-        result_future = goal_handle.get_result_async()
-
-        result_future.add_done_callback(
-            lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_result(
-                rid, handle, future
+        try:
+            result_future = goal_handle.get_result_async()
+            result_future.add_done_callback(
+                lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_result(
+                    rid, handle, future
+                )
             )
-        )
+        except Exception as exc:
+            self._navigation_error(robot_id, f"result_subscription_error:{exc}")
+            return
         if robot_id in self._follow_waypoints_cancel_callbacks:
             self.cancel_follow_waypoints(
                 robot_id, self._follow_waypoints_cancel_callbacks[robot_id]
@@ -226,15 +245,16 @@ class FmsRosNode(Node):
 
     @_navigation_locked
     def _on_follow_waypoints_result(self, robot_id: str, goal_handle, future) -> None:
-        result = future.result()
-
-        # 종료된 Goal이 현재 실행 중인 Goal일 때만 삭제
-        current_handle = self._follow_waypoints_goal_handles.get(robot_id)
-
-        if current_handle is goal_handle:
-            self._follow_waypoints_goal_handles.pop(robot_id, None)
-        else:
+        # 이전 Goal의 Future가 실패했어도 현재 Goal에는 영향을 주지 않는다.
+        if self._follow_waypoints_goal_handles.get(robot_id) is not goal_handle:
             return
+        try:
+            result = future.result()
+        except Exception as exc:
+            self._navigation_error(robot_id, f"result_error:{exc}")
+            return
+        self._follow_waypoints_goal_handles.pop(robot_id, None)
+        self._follow_waypoints_feedback_tokens.pop(robot_id, None)
 
         self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
 
@@ -242,15 +262,26 @@ class FmsRosNode(Node):
         if callback is not None:
             callback()
         elif self.navigation_result_callback:
-            self.navigation_result_callback(robot_id, result.status)
+            status = result.status
+            # FollowWaypoints가 완료되어도 건너뛴 waypoint가 있으면 도착 성공이 아니다.
+            if status == GoalStatus.STATUS_SUCCEEDED and getattr(
+                    getattr(result, "result", None), "missed_waypoints", []):
+                status = GoalStatus.STATUS_ABORTED
+            self.navigation_result_callback(robot_id, status)
 
-    def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg) -> None:
+    @_navigation_locked
+    def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg, token=None) -> None:
+        if token is not None and self._follow_waypoints_feedback_tokens.get(robot_id) is not token:
+            return  # 이전 Goal의 늦은 Feedback은 새 경로 인덱스를 바꾸지 않는다.
         feedback = feedback_msg.feedback
 
         self.get_logger().info(
             f"FollowWaypoints feedback: {robot_id}, "
             f"current_waypoint={feedback.current_waypoint}"
         )
+        # 점유 확정은 Pose에서만 한다. Feedback은 현재 Goal의 진행 순서만 전달한다.
+        if getattr(self, "navigation_feedback_callback", None):
+            self.navigation_feedback_callback(robot_id, feedback.current_waypoint)
 
     @_navigation_locked
     def cancel_follow_waypoints(self, robot_id: str, callback=None) -> None:
@@ -268,21 +299,29 @@ class FmsRosNode(Node):
 
         self.get_logger().info(f"FollowWaypoints cancel requested: {robot_id}")
 
-        future = goal_handle.cancel_goal_async()
-        future.add_done_callback(
-            lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_cancel(
-                rid, handle, future, callback
+        try:
+            future = goal_handle.cancel_goal_async()
+            future.add_done_callback(
+                lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_cancel(
+                    rid, handle, future, callback
+                )
             )
-        )
+        except Exception as exc:
+            self._navigation_error(robot_id, f"cancel_send_error:{exc}")
 
     @_navigation_locked
     def _on_follow_waypoints_cancel(
         self, robot_id: str, goal_handle, future, callback=None
     ) -> None:
-        response = future.result()
-
+        if self._follow_waypoints_goal_handles.get(robot_id) is not goal_handle:
+            return
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._navigation_error(robot_id, f"cancel_response_error:{exc}")
+            return
         if not response.goals_canceling:
-            self.get_logger().warning(f"FollowWaypoints cancel failed: {robot_id}")
+            self._navigation_error(robot_id, "cancel_rejected")
             return
 
         self.get_logger().info(f"FollowWaypoints cancel accepted: {robot_id}")
@@ -405,11 +444,13 @@ class FmsRosNode(Node):
         if robot is None:
             return
 
-        robot.update_pose(
-            x=msg.pose.position.x,
-            y=msg.pose.position.y,
-            yaw=self._quaternion_to_yaw(msg.pose.orientation),
-        )
+        x, y = msg.pose.position.x, msg.pose.position.y
+        yaw = self._quaternion_to_yaw(msg.pose.orientation)
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            # 잘못된 메시지로 정상 위치와 pose_received_at을 덮어쓰지 않는다.
+            self._navigation_error(robot_id, "invalid_pose_message")
+            return
+        robot.update_pose(x=x, y=y, yaw=yaw)
 
     def _on_battery_state(self, robot_id: str, msg: BatteryState) -> None:
         robot = fleet_manager.get_robot(robot_id)

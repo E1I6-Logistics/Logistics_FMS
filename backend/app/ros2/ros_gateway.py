@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 from copy import deepcopy
 from functools import wraps
-from ..services.real_navigation import RealNavigation
+from ..services.real_navigation import RealNavigation, measured_distance
+from time import monotonic
 
 
 from ..services.mqtt_manager import mqtt_manager
@@ -138,11 +139,13 @@ class RosGateway:
         self._ros_node = ros_node
         ros_node.navigation_lock = self._navigation.lock
         ros_node.navigation_result_callback = self._on_segment_result
+        ros_node.navigation_feedback_callback = self._navigation.on_feedback
+        ros_node.navigation_error_callback = self._navigation.on_execution_error
         ros_node.precision_dock_result_callback = self.on_precision_dock_result
         ros_node.aruco_align_result_callback = self.on_aruco_align_result
 
     def _on_segment_result(self, robot_id: str, status: int) -> None:
-        self._navigation.on_result(robot_id, status == GoalStatus.STATUS_SUCCEEDED)
+        self._navigation.on_result(robot_id, status == GoalStatus.STATUS_SUCCEEDED, status=status)
 
     def advance_navigation(self) -> None:
         self._navigation.tick()
@@ -190,6 +193,18 @@ class RosGateway:
 
         return robot_id
 
+    def _validate_navigation_request(self, robot_id, node_id):
+        # 기존 Goal을 취소하기 전에 입력 오류를 거절한다.
+        robot = fleet_manager.get_robot(robot_id)
+        if robot is None or not robot.connected:
+            raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
+        if robot.state == RobotState.EMERGENCY_STOP:
+            raise ValueError(f"비상정지 상태입니다: {robot_id}")
+        if robot.state == RobotState.DOCKING:
+            raise ValueError(f"정렬 또는 도킹 진행 중입니다: {robot_id}")
+        target = get_node(node_id)
+        measured_distance(robot, (target["x"], target["y"]), monotonic())
+
     # ROS 노드에 cmd_vel 명령을 발행하고, 응답을 반환
     @_navigation_locked
     def cmd_vel(self, robot_id: str, linear_x: float, angular_z: float) -> dict:
@@ -206,10 +221,19 @@ class RosGateway:
         if not robot.connected:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
 
-        can_update = True
+        if not math.isfinite(linear_x) or not math.isfinite(angular_z):
+            raise ValueError("속도 명령은 유한한 값이어야 합니다.")
+        active = (robot_id in self._navigation._executing
+                  or robot_id in self._navigation._stopping
+                  or robot_id in self._navigation._arrivals
+                  or robot.state in (RobotState.DOCKING, RobotState.TASK_ASSIGNED)
+                  or (robot.order_id is not None and robot.state == RobotState.WAITING))
+        if active and (linear_x != 0.0 or angular_z != 0.0):
+            raise ValueError(f"자동 동작 중입니다. 먼저 정지해야 합니다: {robot_id}")
+        can_update = not active
         if robot_id in self._navigation._robots:
             can_update = self._navigation._traffic.validate_manual_velocity(
-                robot_id, linear_x, angular_z)
+                robot_id, linear_x, angular_z) and can_update
         self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=linear_x, angular_z=angular_z)
 
         if not can_update:
@@ -238,9 +262,12 @@ class RosGateway:
         if not robot.connected:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
 
+        # 취소/전송 중 예외가 나도 비상정지 상태를 잃지 않는다.
+        robot.set_state(RobotState.EMERGENCY_STOP)
         # 실행 중인 Nav2 주행 취소
         self._navigation.stop(
-            robot_id, callback=lambda: self._navigation.cancel_after_stop(robot_id))
+            robot_id, callback=lambda: self._navigation.cancel_after_stop(robot_id),
+            reason="emergency_stop")
         # 속도 명령 0
         self._ros_node.publish_cmd_vel(robot_id=robot_id, linear_x=0.0, angular_z=0.0)
 
@@ -289,6 +316,8 @@ class RosGateway:
         if robot.state != RobotState.EMERGENCY_STOP:
             raise ValueError(f"비상정지 상태가 아닙니다: {robot_id}")
 
+        if robot_id in self._navigation._stopping:
+            raise ValueError(f"주행 취소 종료를 기다리고 있습니다: {robot_id}")
         robot.set_state(RobotState.IDLE)
 
         return {
@@ -334,8 +363,10 @@ class RosGateway:
         if robot.state == RobotState.EMERGENCY_STOP:
             raise ValueError(f"비상정지 상태입니다: {robot_id}")
 
+        self._validate_navigation_request(robot_id, node_id)
         self._navigation.stop(
-            robot_id, callback=lambda: self._start_navigation(robot_id, node_id)
+            robot_id, callback=lambda: self._start_navigation(robot_id, node_id),
+            reason="new_goal_request",
         )
 
         return {
@@ -363,11 +394,13 @@ class RosGateway:
         if charging_node is None:
             raise ValueError(f"충전 스테이션이 지정되지 않은 Robot입니다: {robot_id}")
 
+        self._validate_navigation_request(robot_id, charging_node)
         self._navigation.stop(
             robot_id,
             callback=lambda: self._start_navigation(
                 robot_id, charging_node, NavigationType.CHARGING
             ),
+            reason="charging_request",
         )
 
         return {
@@ -392,8 +425,8 @@ class RosGateway:
             self._navigation.request(robot_id, node_id, navigation_type)
         except (ValueError, RuntimeError):
             robot = fleet_manager.get_robot(robot_id)
-            if robot is not None and robot.state != RobotState.EMERGENCY_STOP:
-                robot.set_state(RobotState.PAUSED)
+            if robot is not None:
+                self._navigation._pause(robot_id, "navigation_request_failed")
             raise
 
     @_navigation_locked
@@ -404,32 +437,21 @@ class RosGateway:
             return
 
         if status == GoalStatus.STATUS_SUCCEEDED:
-            # 실제 현재 위치와 목적지 위치 거리 확인
-            if robot.goal_node is not None:
-                if robot.x is None or robot.y is None:
-                    print(f"[{robot_id}] 도착 확인 실패: 현재 위치 정보 없음")
-                    robot.set_state(RobotState.PAUSED)
-                    return
-
+            if robot.state in (RobotState.EMERGENCY_STOP, RobotState.PAUSED) or not robot.connected:
+                return
+            # 최종 후속 작업도 같은 원본 좌표/최신성/거리 조건을 통과해야 한다.
+            try:
+                if robot.goal_node is None:
+                    raise ValueError("최종 목적지가 없습니다.")
                 goal = get_node(robot.goal_node)
-
-                dx = goal["x"] - robot.x
-                dy = goal["y"] - robot.y
-                distance = math.sqrt(dx * dx + dy * dy)
-
-                print(
-                    f"[{robot_id}] 도착 거리 확인: "
-                    f"goal={robot.goal_node}, "
-                    f"distance={distance:.3f}m"
-                )
-
+                distance = measured_distance(robot, (goal["x"], goal["y"]), monotonic())
+                print(f"[{robot_id}] 도착 거리 확인: goal={robot.goal_node}, "
+                      f"distance={distance:.3f}m, tolerance={ARRIVAL_DISTANCE_THRESHOLD:.3f}m")
                 if distance > ARRIVAL_DISTANCE_THRESHOLD:
-                    print(
-                        f"[{robot_id}] 도착 위치 불일치: "
-                        f"{distance:.3f}m > {ARRIVAL_DISTANCE_THRESHOLD:.3f}m"
-                    )
-                    robot.set_state(RobotState.PAUSED)
-                    return
+                    raise ValueError(f"도착 위치 불일치: {distance:.3f}m")
+            except (OSError, KeyError, ValueError) as exc:
+                self._navigation._pause(robot_id, f"final_arrival_failed:{exc}")
+                return
 
             # 가장 가까운 노드 복귀 완료
             if robot.navigation_type == NavigationType.RETURN:
@@ -510,9 +532,11 @@ class RosGateway:
         target = get_node(nearest_node)
 
         # 기존 복귀 목적과 yaw는 유지하며 동일한 예약 실행부를 통과한다.
+        self._validate_navigation_request(robot_id, nearest_node)
         self._navigation.stop(
             robot_id,
             callback=lambda: self._start_navigation(robot_id, nearest_node, NavigationType.RETURN),
+            reason="return_request",
         )
 
         return {
@@ -536,6 +560,9 @@ class RosGateway:
         if robot is None:
             return
 
+        if not robot.connected or robot.state == RobotState.EMERGENCY_STOP:
+            return
+
         if status == GoalStatus.STATUS_SUCCEEDED:
             robot.current_node = robot.goal_node
             robot.set_state(RobotState.IDLE)
@@ -551,6 +578,9 @@ class RosGateway:
         robot = fleet_manager.get_robot(robot_id)
 
         if robot is None:
+            return
+
+        if not robot.connected or robot.state == RobotState.EMERGENCY_STOP:
             return
 
         if status == GoalStatus.STATUS_SUCCEEDED:

@@ -54,6 +54,7 @@ class RosCancellationTest(unittest.TestCase):
         self.node._follow_waypoints_goal_handles = {}
         self.node._follow_waypoints_pending = set()
         self.node._follow_waypoints_cancel_callbacks = {}
+        self.node._follow_waypoints_feedback_tokens = {}
         self.node.get_logger = Mock(return_value=Mock())
         self.node.navigation_result_callback = Mock()
 
@@ -103,6 +104,54 @@ class RosCancellationTest(unittest.TestCase):
         self.node._on_follow_waypoints_result("robot1", old, future)
         self.assertIs(self.node._follow_waypoints_goal_handles["robot1"], current)
         self.node.navigation_result_callback.assert_not_called()
+
+    def test_result_future_exception_keeps_current_handle_and_reports_failure(self):
+        handle, future = Mock(), Mock()
+        future.result.side_effect = RuntimeError("lost result")
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        self.node.navigation_error_callback = Mock()
+        self.node._on_follow_waypoints_result("robot1", handle, future)
+        self.assertIs(self.node._follow_waypoints_goal_handles["robot1"], handle)
+        self.node.navigation_error_callback.assert_called_once()
+        self.node.navigation_result_callback.assert_not_called()
+
+    def test_old_failed_future_does_not_affect_new_goal(self):
+        handle, future = Mock(), Mock()
+        future.result.side_effect = RuntimeError("old result")
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        self.node.navigation_error_callback = Mock()
+        self.node._on_follow_waypoints_result("robot1", Mock(), future)
+        future.result.assert_not_called()
+        self.node.navigation_error_callback.assert_not_called()
+
+    def test_cancel_rejected_keeps_handle_and_does_not_run_next_command(self):
+        handle, future, callback = Mock(), Mock(), Mock()
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        self.node._follow_waypoints_cancel_callbacks["robot1"] = callback
+        self.node.navigation_error_callback = Mock()
+        future.result.return_value = SimpleNamespace(goals_canceling=[])
+        self.node._on_follow_waypoints_cancel("robot1", handle, future, callback)
+        callback.assert_not_called()
+        self.node.navigation_error_callback.assert_called_once_with("robot1", "cancel_rejected")
+        self.assertIs(self.node._follow_waypoints_goal_handles["robot1"], handle)
+
+    def test_success_with_missed_waypoints_is_failure(self):
+        handle, future = Mock(), Mock()
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        future.result.return_value = SimpleNamespace(
+            status=4, result=SimpleNamespace(missed_waypoints=[0]))
+        self.node._on_follow_waypoints_result("robot1", handle, future)
+        self.node.navigation_result_callback.assert_called_once_with("robot1", 6)
+
+    def test_old_goal_feedback_does_not_update_new_goal(self):
+        current = object()
+        self.node._follow_waypoints_feedback_tokens["robot1"] = current
+        self.node.navigation_feedback_callback = Mock()
+        feedback = SimpleNamespace(feedback=SimpleNamespace(current_waypoint=1))
+        self.node._on_follow_waypoints_feedback("robot1", feedback, object())
+        self.node.navigation_feedback_callback.assert_not_called()
+        self.node._on_follow_waypoints_feedback("robot1", feedback, current)
+        self.node.navigation_feedback_callback.assert_called_once_with("robot1", 1)
 
 
 class GatewaySequenceTest(unittest.TestCase):
@@ -155,9 +204,51 @@ class GatewaySequenceTest(unittest.TestCase):
     def test_segment_callback_does_not_run_final_callback_directly(self):
         self.gateway._navigation.on_result = Mock()
         self.node.navigation_result_callback("robot1", 4)
-        self.gateway._navigation.on_result.assert_called_once_with("robot1", True)
+        self.gateway._navigation.on_result.assert_called_once_with("robot1", True, status=4)
         self.node.send_precision_dock.assert_not_called()
         self.node.send_aruco_align.assert_not_called()
+
+    def test_nan_pose_does_not_start_docking(self):
+        self.robot.goal_node = "5"
+        self.robot.x = float("nan")
+        self.gateway.on_navigation_result("robot1", 4)
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        self.node.send_aruco_align.assert_not_called()
+        self.node.send_precision_dock.assert_not_called()
+
+    def test_outside_arrival_tolerance_does_not_start_docking(self):
+        self.robot.goal_node = "5"
+        self.robot.x = 1.8
+        self.gateway.on_navigation_result("robot1", 4)
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        self.node.send_aruco_align.assert_not_called()
+
+    def test_stale_pose_does_not_start_docking(self):
+        self.robot.goal_node = "5"
+        self.robot.pose_received_at -= 10.
+        self.gateway.on_navigation_result("robot1", 4)
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        self.node.send_aruco_align.assert_not_called()
+
+    def test_invalid_new_request_does_not_cancel_existing_navigation(self):
+        self.robot.connected = False
+        with self.assertRaises(ValueError):
+            self.gateway.navigate_to_node("robot1", "2")
+        self.node.cancel_follow_waypoints.assert_not_called()
+
+    def test_late_docking_result_keeps_emergency_state(self):
+        self.robot.state = RobotState.EMERGENCY_STOP
+        self.gateway.on_precision_dock_result("robot1", 4)
+        self.gateway.on_aruco_align_result("robot1", 4)
+        self.assertEqual(self.robot.state, RobotState.EMERGENCY_STOP)
+        gateway_module.mqtt_manager.send_job.assert_not_called()
+
+    def test_zero_velocity_during_docking_keeps_docking_state(self):
+        self.robot.state = RobotState.DOCKING
+        self.gateway.cmd_vel("robot1", 0., 0.)
+        self.assertEqual(self.robot.state, RobotState.DOCKING)
+        with self.assertRaises(ValueError):
+            self.gateway.cmd_vel("robot1", .1, 0.)
 
 
 if __name__ == "__main__":
