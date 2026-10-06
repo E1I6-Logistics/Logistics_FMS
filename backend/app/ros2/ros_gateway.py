@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .fms_ros_node import FmsRosNode
 
+ARRIVAL_DISTANCE_THRESHOLD = 0.15  # 15cm
+
 GOAL_YAWS = {
     "0": 0.0,
     "1": 0.0,
@@ -64,6 +66,51 @@ NODE_ITEM_MAP = {
     "3": ["A", "B", "C", "D"],
     "4": ["A", "B", "C", "D"],
 }
+
+
+def simplify_waypoint_nodes(node_ids):
+    # 노드가 2개 이하이면 줄일 필요 없음
+    if len(node_ids) <= 2:
+        return node_ids.copy()
+
+    result = [node_ids[0]]
+
+    for index in range(1, len(node_ids) - 1):
+        previous = get_node(node_ids[index - 1])
+        current = get_node(node_ids[index])
+        next_node = get_node(node_ids[index + 1])
+
+        # 이전 노드 -> 현재 노드 방향
+        angle1 = math.atan2(
+            current["y"] - previous["y"],
+            current["x"] - previous["x"],
+        )
+
+        # 현재 노드 -> 다음 노드 방향
+        angle2 = math.atan2(
+            next_node["y"] - current["y"],
+            next_node["x"] - current["x"],
+        )
+
+        # 두 진행 방향의 차이
+        angle_diff = abs(
+            math.atan2(
+                math.sin(angle2 - angle1),
+                math.cos(angle2 - angle1),
+            )
+        )
+
+        # 거의 직선이면 현재 노드를 Waypoint에서 제외
+        if angle_diff < math.radians(5):
+            continue
+
+        # 방향이 바뀌는 노드는 유지
+        result.append(node_ids[index])
+
+    # 목적지는 항상 유지
+    result.append(node_ids[-1])
+
+    return result
 
 
 class RosGateway:
@@ -343,6 +390,8 @@ class RosGateway:
         # 경로에 포함된 Node / Edge ID
         node_ids = list(path.route)
         edge_ids = find_edge_ids(graph, node_ids)
+        waypoint_node_ids = simplify_waypoint_nodes(node_ids)
+
         robot.current_node = current_node
         robot.goal_node = str(target["id"])
         robot.navigation_type = navigation_type
@@ -354,13 +403,13 @@ class RosGateway:
             "segment_index": 0,
         }
 
-        # 경로의 Node ID를 실제 Map 좌표로 변환
+        # 실제 Nav2에 전달할 Waypoint 생성
         waypoints = []
 
         # 시작 노드와 목적지 노드가 같은 경우
-        if len(node_ids) == 1:
-            current = get_node(node_ids[0])
-            target_yaw = GOAL_YAWS.get(str(node_ids[0]))
+        if len(waypoint_node_ids) == 1:
+            current = get_node(waypoint_node_ids[0])
+            target_yaw = GOAL_YAWS.get(str(waypoint_node_ids[0]))
 
             if target_yaw is not None:
                 yaw = target_yaw
@@ -370,14 +419,14 @@ class RosGateway:
             waypoints.append((current["x"], current["y"], yaw))
 
         else:
-            # 경로에 포함된 모든 Node를 Waypoint로 변환
-            for index in range(len(node_ids)):
-                current_id = node_ids[index]
+            for index in range(len(waypoint_node_ids)):
+                current_id = waypoint_node_ids[index]
                 current = get_node(current_id)
 
-                # 마지막 노드가 아니면 다음 노드 방향
-                if index < len(node_ids) - 1:
-                    next_id = node_ids[index + 1]
+                # 마지막 노드가 아니면
+                # 현재 노드 -> 다음 Waypoint 방향을 yaw로 사용
+                if index < len(waypoint_node_ids) - 1:
+                    next_id = waypoint_node_ids[index + 1]
                     next_node = get_node(next_id)
 
                     dx = next_node["x"] - current["x"]
@@ -385,17 +434,17 @@ class RosGateway:
 
                     yaw = math.atan2(dy, dx)
 
-                # 마지막 목적지 노드
+                # 마지막 목적지
                 else:
                     target_yaw = GOAL_YAWS.get(str(current_id))
 
-                    # 방향이 지정된 특수 노드
+                    # 특수 목적지 노드는 기존 고정 yaw 사용
                     if target_yaw is not None:
                         yaw = target_yaw
 
-                    # 일반 노드는 기존처럼 진입 방향 유지
+                    # 일반 목적지는 진입 방향 유지
                     else:
-                        previous_id = node_ids[index - 1]
+                        previous_id = waypoint_node_ids[index - 1]
                         previous = get_node(previous_id)
 
                         dx = current["x"] - previous["x"]
@@ -462,6 +511,33 @@ class RosGateway:
             return
 
         if status == GoalStatus.STATUS_SUCCEEDED:
+            # 실제 현재 위치와 목적지 위치 거리 확인
+            if robot.goal_node is not None:
+                if robot.x is None or robot.y is None:
+                    print(f"[{robot_id}] 도착 확인 실패: 현재 위치 정보 없음")
+                    robot.set_state(RobotState.PAUSED)
+                    return
+
+                goal = get_node(robot.goal_node)
+
+                dx = goal["x"] - robot.x
+                dy = goal["y"] - robot.y
+                distance = math.sqrt(dx * dx + dy * dy)
+
+                print(
+                    f"[{robot_id}] 도착 거리 확인: "
+                    f"goal={robot.goal_node}, "
+                    f"distance={distance:.3f}m"
+                )
+
+                if distance > ARRIVAL_DISTANCE_THRESHOLD:
+                    print(
+                        f"[{robot_id}] 도착 위치 불일치: "
+                        f"{distance:.3f}m > {ARRIVAL_DISTANCE_THRESHOLD:.3f}m"
+                    )
+                    robot.set_state(RobotState.PAUSED)
+                    return
+
             # 가장 가까운 노드 복귀 완료
             if robot.navigation_type == NavigationType.RETURN:
                 robot.current_node = robot.goal_node
