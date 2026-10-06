@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..ros2.ros_gateway import ros_gateway
-from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 from ..services.websocket_manager import manager
 from ..services.fleet_manager import fleet_manager
@@ -19,6 +18,7 @@ async def dashboard_websocket(websocket: WebSocket):
     print("[WS DASHBOARD] mode =", mode_manager.mode)
     try:
         if mode_manager.mode == "simulation":
+            from ..services.mock_data import mock_fms
             await websocket.send_json(
                 {"type": "system", "data": {"mode": mode_manager.mode, "source": "mock"}}
             )
@@ -77,6 +77,7 @@ async def cmd_vel_websocket(websocket: WebSocket):
                 continue
             try:
                 if mode_manager.mode == "simulation":
+                    from ..services.mock_data import mock_fms
                     acknowledgement = mock_fms.cmd_vel(
                         robot_id,
                         float(data.get("linear_x", 0.0)),

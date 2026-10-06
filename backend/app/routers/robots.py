@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 from ..services.fleet_manager import fleet_manager
 from ..services.map_service import world_to_pixel
@@ -14,6 +13,7 @@ router = APIRouter(prefix="/api/robots", tags=["robots"])
 async def fetch_robots():
     # Simulation 모드
     if mode_manager.mode == "simulation":
+        from ..services.mock_data import mock_fms
         return mock_fms.robot_snapshots(mode_manager.mode)
 
     # Real 모드

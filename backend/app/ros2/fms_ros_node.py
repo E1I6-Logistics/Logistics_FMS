@@ -3,6 +3,8 @@ from __future__ import annotations
 import rclpy as rp
 from rclpy.node import Node
 import math
+from functools import wraps
+from threading import RLock
 
 from rclpy.publisher import Publisher
 from rclpy.subscription import Subscription
@@ -20,6 +22,15 @@ from action_msgs.msg import GoalStatus
 from sensor_msgs.msg import BatteryState
 from turtlebot3_my_msg.action import PrecisionDock
 from logitle_aruco_msgs.action import AlignAndCorrectWithAruco
+
+
+def _navigation_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.navigation_lock:
+            return method(self, *args, **kwargs)
+
+    return locked
 
 
 class FmsRosNode(Node):
@@ -41,6 +52,10 @@ class FmsRosNode(Node):
 
         # 현재 실행 중인 FollowWaypoints Goal 관리
         self._follow_waypoints_goal_handles = {}
+        # Goal 수락 대기 중에도 취소 요청을 기억한다. 콜백은 terminal result 뒤 실행
+        self._follow_waypoints_pending = set()
+        self._follow_waypoints_cancel_callbacks = {}
+        self.navigation_lock = RLock()
 
         self.navigation_result_callback = None
         self.precision_dock_result_callback = None
@@ -119,12 +134,19 @@ class FmsRosNode(Node):
 
         publisher.publish(message)
 
+    @_navigation_locked
     def send_follow_waypoints_goal(
         self, robot_id: str, waypoints: list[tuple[float, float, float]]
     ) -> None:
         client = self._follow_waypoints_clients.get(robot_id)
         if client is None:
             raise ValueError(f"Robot is not registered: {robot_id}")
+
+        if (
+            robot_id in self._follow_waypoints_pending
+            or robot_id in self._follow_waypoints_goal_handles
+        ):
+            raise RuntimeError(f"이전 FollowWaypoints 실행이 종료되지 않았습니다: {robot_id}")
 
         # Nav2 FollowWaypoints Action Server 연결 확인
         if not client.wait_for_server(timeout_sec=2.0):
@@ -154,21 +176,32 @@ class FmsRosNode(Node):
         goal.poses = poses
 
         # 비동기로 Goal 전송
-        future = client.send_goal_async(
-            goal,
-            feedback_callback=lambda feedback, rid=robot_id: self._on_follow_waypoints_feedback(
-                rid, feedback
-            ),
-        )
+        self._follow_waypoints_pending.add(robot_id)
+        try:
+            future = client.send_goal_async(
+                goal,
+                feedback_callback=lambda feedback, rid=robot_id: self._on_follow_waypoints_feedback(
+                    rid, feedback
+                ),
+            )
+        except Exception:
+            self._follow_waypoints_pending.discard(robot_id)
+            raise
 
         future.add_done_callback(
             lambda future, rid=robot_id: self._on_follow_waypoints_goal_response(rid, future)
         )
 
+    @_navigation_locked
     def _on_follow_waypoints_goal_response(self, robot_id: str, future) -> None:
         goal_handle = future.result()
+        self._follow_waypoints_pending.discard(robot_id)
 
         if not goal_handle.accepted:
+            callback = self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
+            if callback is not None:
+                callback()
+                return
             self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
             if self.navigation_result_callback:
                 self.navigation_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
@@ -186,7 +219,12 @@ class FmsRosNode(Node):
                 rid, handle, future
             )
         )
+        if robot_id in self._follow_waypoints_cancel_callbacks:
+            self.cancel_follow_waypoints(
+                robot_id, self._follow_waypoints_cancel_callbacks[robot_id]
+            )
 
+    @_navigation_locked
     def _on_follow_waypoints_result(self, robot_id: str, goal_handle, future) -> None:
         result = future.result()
 
@@ -200,7 +238,10 @@ class FmsRosNode(Node):
 
         self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
 
-        if self.navigation_result_callback:
+        callback = self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
+        if callback is not None:
+            callback()
+        elif self.navigation_result_callback:
             self.navigation_result_callback(robot_id, result.status)
 
     def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg) -> None:
@@ -211,13 +252,18 @@ class FmsRosNode(Node):
             f"current_waypoint={feedback.current_waypoint}"
         )
 
+    @_navigation_locked
     def cancel_follow_waypoints(self, robot_id: str, callback=None) -> None:
+        callback = callback or (lambda: None)
+        self._follow_waypoints_cancel_callbacks[robot_id] = callback
+        if robot_id in self._follow_waypoints_pending:
+            return
         goal_handle = self._follow_waypoints_goal_handles.get(robot_id)
 
         # 실행 중인 Goal이 없으면 바로 다음 작업
         if goal_handle is None:
-            if callback:
-                callback()
+            self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
+            callback()
             return
 
         self.get_logger().info(f"FollowWaypoints cancel requested: {robot_id}")
@@ -229,6 +275,7 @@ class FmsRosNode(Node):
             )
         )
 
+    @_navigation_locked
     def _on_follow_waypoints_cancel(
         self, robot_id: str, goal_handle, future, callback=None
     ) -> None:
@@ -240,13 +287,7 @@ class FmsRosNode(Node):
 
         self.get_logger().info(f"FollowWaypoints cancel accepted: {robot_id}")
 
-        current_handle = self._follow_waypoints_goal_handles.get(robot_id)
-
-        if current_handle is goal_handle:
-            self._follow_waypoints_goal_handles.pop(robot_id, None)
-
-        if callback:
-            callback()
+        # 취소 수락은 실행 종료가 아니다. handle과 예약은 result 수신까지 유지한다.
 
     def send_precision_dock(self, robot_id):
         client = self._precision_dock_clients.get(robot_id)
@@ -358,6 +399,7 @@ class FmsRosNode(Node):
         if self.aruco_align_result_callback:
             self.aruco_align_result_callback(robot_id, result.status)
 
+    @_navigation_locked
     def _on_amcl_pose(self, robot_id: str, msg: PoseStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)
         if robot is None:

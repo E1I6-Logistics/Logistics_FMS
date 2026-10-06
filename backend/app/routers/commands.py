@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..schemas.command import GoalCoordinateRequest, GoalNodeRequest, StopRequest
-from ..services.mock_data import mock_fms
 from ..ros2.ros_gateway import ros_gateway
 from ..services.mode_service import mode_manager
 
@@ -13,6 +12,9 @@ router = APIRouter(prefix="/api/command", tags=["commands"])
 @router.post("/goal")
 async def send_coordinate_goal(payload: GoalCoordinateRequest):
     try:
+        if mode_manager.mode != "simulation":
+            raise ValueError("좌표 직접 설정은 Simulation 모드 전용입니다. 실제 이동은 goal-node를 사용하세요.")
+        from ..services.mock_data import mock_fms
         result = mock_fms.navigate_to_pose(payload.robot_id, payload.target_x, payload.target_y)
         result["mode"] = mode_manager.mode
         return result
@@ -24,6 +26,7 @@ async def send_coordinate_goal(payload: GoalCoordinateRequest):
 async def send_node_goal(payload: GoalNodeRequest):
     try:
         if mode_manager.mode == "simulation":
+            from ..services.mock_data import mock_fms
             result = mock_fms.navigate_to_node(payload.robot_id, payload.node_id)
             result["mode"] = mode_manager.mode
         else:
@@ -60,6 +63,7 @@ async def charging_station(payload: StopRequest):
 async def stop_robot(payload: StopRequest):
     try:
         if mode_manager.mode == "simulation":
+            from ..services.mock_data import mock_fms
             result = mock_fms.stop_robot(payload.robot_id)
         else:
             result = ros_gateway.emergency_stop(payload.robot_id)

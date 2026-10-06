@@ -5,9 +5,10 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 from ..services.websocket_manager import manager
+from .robots import fetch_robots
+from ..schemas.robot import to_ui_robot_id
 
 router = APIRouter(prefix="/api/mode", tags=["mode"])
 
@@ -32,10 +33,23 @@ async def get_mode():
 
 @router.put("")
 async def set_mode(payload: ModeRequest):
+    # 실제 모드 전환에서는 시뮬레이션 모듈을 로드하지 않는다.
+    if payload.mode == "simulation":
+        from ..services.mock_data import mock_fms
+        states = mock_fms.robot_snapshots(payload.mode)
+    else:
+        states = None
     mode_manager.set_mode(payload.mode)
+    if states is None:
+        states = await fetch_robots()
+        for state in states:
+            state["ui_id"] = to_ui_robot_id(state["robot_id"])
     await manager.broadcast(
-        {"type": "system", "data": {"mode": mode_manager.mode, "source": "mock"}}
+        {"type": "system", "data": {
+            "mode": mode_manager.mode,
+            "source": "mock" if mode_manager.mode == "simulation" else "ros2",
+        }}
     )
-    for state in mock_fms.robot_snapshots(mode_manager.mode):
+    for state in states:
         await manager.broadcast({"type": "telemetry", "data": state})
     return _snapshot()

@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import CORS_ORIGINS
+from .config import CORS_ORIGINS, REAL_NAVIGATION_INTERVAL_S
+import logging
 
 from .routers.commands import router as commands_router
 from .routers.connections import router as connections_router
@@ -31,7 +32,6 @@ import asyncio
 from contextlib import suppress
 from time import monotonic
 
-from .services.mock_data import mock_fms
 from .services.websocket_manager import manager
 from .services.mqtt_manager import mqtt_manager
 
@@ -64,10 +64,15 @@ async def lifespan(app: FastAPI):
         name="mock-simulation",
     )
 
+    navigation_task = asyncio.create_task(run_real_navigation(), name="real-navigation")
+
     try:
         yield
 
     finally:
+        navigation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await navigation_task
         simulation_task.cancel()
 
         try:
@@ -145,6 +150,8 @@ async def run_mock_simulation() -> None:
         if mode != "simulation":
             continue
 
+        # 실제 모드 시작/실행에는 시뮬레이션 모듈이 필요하지 않다.
+        from .services.mock_data import mock_fms
         mock_fms.advance_simulation(dt, now)
 
         # 갱신 후의 상태를 웹에 전송
@@ -155,3 +162,13 @@ async def run_mock_simulation() -> None:
                     "data": state,
                 }
             )
+
+
+async def run_real_navigation() -> None:
+    # 화면 모드가 바뀌어도 이미 접수한 실제 ROS 요청의 관리를 계속한다.
+    while True:
+        await asyncio.sleep(REAL_NAVIGATION_INTERVAL_S)
+        try:
+            ros_gateway.advance_navigation()
+        except (ValueError, RuntimeError):
+            logging.getLogger(__name__).exception("실제 로봇 내비게이션 갱신 실패")
