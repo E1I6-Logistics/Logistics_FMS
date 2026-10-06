@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 from simulation.evaluation.device_metadata import git_metadata, selector_device_metadata
 from simulation.route_selector import get_selector
 from simulation.services.route_service import (
-    build_compact_route_graph,
+    build_compact_adjacency_graph,
     build_route_inputs,
     build_edge_weight_lookup,
     plan_route,
@@ -36,8 +36,8 @@ MANIFEST_FILENAME = "manifest.json"
 NEXT_NODE_INSTRUCTIONS = (
     "Select exactly one next node for the minimum-total-weight route from "
     "current_node to target_node. The selected node must be connected by one "
-    "directed edge from current_node. Use edge weight exactly as stored. All graph "
-    "nodes are listed as criteria, but invalid non-neighbors must not be selected. "
+    "directed edge from current_node. Use the CompactAdjacencyGraph weight exactly "
+    "as stored. Choose only from the supplied criteria. "
     "Do not select a visited node. Return only the selected criteria ID."
 )
 
@@ -86,7 +86,7 @@ def _prepare() -> dict[str, Any]:
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
     points, edges = build_route_inputs(graph, require_stored_weight=True)
     edge_weights = build_edge_weight_lookup(points, edges)
-    compact_graph = build_compact_route_graph(
+    compact_graph = build_compact_adjacency_graph(
         graph,
         graph_path.name,
         require_stored_weight=True,
@@ -117,10 +117,36 @@ def _prepare() -> dict[str, Any]:
     }
 
 
+def _random_path_baseline(
+    prepared: dict[str, Any], case: dict[str, Any], candidate_scope: str
+) -> float:
+    """Probability of reproducing the ground-truth path by uniform choices."""
+    probability = 1.0
+    visited = [case["expected_path"][0]]
+    for current, expected_next in zip(
+        case["expected_path"], case["expected_path"][1:]
+    ):
+        if candidate_scope == "neighbors":
+            pool = {
+                end
+                for (edge_start, end) in prepared["edge_weights"]
+                if edge_start == current and end not in visited
+            }
+        else:
+            pool = {node for node in prepared["nodes"] if node != current}
+        if expected_next not in pool or not pool:
+            return 0.0
+        probability *= 1.0 / len(pool)
+        visited.append(expected_next)
+    return probability
+
+
 def _run_route(
     selector: Any,
     prepared: dict[str, Any],
     case: dict[str, Any],
+    candidate_scope: str,
+    deadline: float,
 ) -> dict[str, Any]:
     start, target = case["start"], case["target"]
     current = start
@@ -129,16 +155,66 @@ def _run_route(
     api_call_count = 0
     accumulated_distance = 0.0
     error: str | None = None
+    failed_step: int | None = None
+    invalid_edge_count = 0
+    revisit_count = 0
     started = time.perf_counter()
 
     for step_index in range(len(prepared["nodes"]) - 1):
         if current == target:
             break
+        if candidate_scope == "neighbors":
+            candidate_nodes = sorted(
+                end
+                for (edge_start, end) in prepared["edge_weights"]
+                if edge_start == current and end not in path
+            )
+        else:
+            candidate_nodes = [node for node in prepared["nodes"] if node != current]
+        if not candidate_nodes:
+            error = f"이동 가능한 후보 노드가 없습니다: current={current}"
+            failed_step = step_index + 1
+            break
         candidates = {
-            f"node_{node}": f"Node {node}"
-            for node in prepared["nodes"]
-            if node != current
+            f"node_{node}": f"Node {node}" for node in candidate_nodes
         }
+
+        # 선택지가 하나면 모델이 판단할 내용이 없다. 세 selector 모두 choice 후보를
+        # 두 개 이상 요구하므로 API를 호출하지 않고 유일한 edge를 강제 이동으로 남긴다.
+        if len(candidate_nodes) == 1:
+            next_node = candidate_nodes[0]
+            weight = prepared["edge_weights"][(current, next_node)]
+            steps.append(
+                {
+                    "step": step_index + 1,
+                    "current_node": current,
+                    "candidate_scope": candidate_scope,
+                    "candidates": candidates,
+                    "candidate_count": 1,
+                    "choice": f"node_{next_node}",
+                    "next_node": next_node,
+                    "edge_weight": weight,
+                    "forced_step": True,
+                    "model_called": False,
+                    "accepted": True,
+                    "error": None,
+                    "confidence": None,
+                    "answer_confidence": None,
+                    "probabilities": None,
+                    "usage": None,
+                    "state_truncated": None,
+                    "wall_seconds": 0.0,
+                    "model_total_seconds": None,
+                    "eval_seconds": None,
+                    "runtime": None,
+                    "realtime_met": None,
+                }
+            )
+            accumulated_distance += weight
+            path.append(next_node)
+            current = next_node
+            continue
+
         state = {
             "route_graph": prepared["compact_graph"],
             "current_node": current,
@@ -147,6 +223,15 @@ def _run_route(
             "accumulated_distance": accumulated_distance,
         }
         step_started = time.perf_counter()
+        step_record: dict[str, Any] = {
+            "step": step_index + 1,
+            "current_node": current,
+            "candidate_scope": candidate_scope,
+            "candidates": candidates,
+            "candidate_count": len(candidates),
+            "forced_step": False,
+            "model_called": True,
+        }
         try:
             api_call_count += 1
             result = selector.select_choice(
@@ -157,37 +242,47 @@ def _run_route(
             )
             step_wall = time.perf_counter() - step_started
             choice = str(result.get("choice", ""))
+            step_record.update(
+                choice=choice,
+                confidence=result.get("confidence"),
+                answer_confidence=result.get("answer_confidence"),
+                probabilities=result.get("probabilities"),
+                usage=result.get("usage"),
+                state_truncated=result.get("state_truncated"),
+                wall_seconds=step_wall,
+                model_total_seconds=result.get("total_duration_seconds"),
+                eval_seconds=result.get("eval_duration_seconds"),
+                runtime=result.get("runtime"),
+                realtime_met=step_wall <= deadline,
+            )
             if not choice.startswith("node_"):
                 raise ValueError(f"잘못된 next-node 응답: {choice!r}")
             next_node = int(choice.removeprefix("node_"))
+            step_record["next_node"] = next_node
             if next_node in path:
+                revisit_count += 1
                 raise ValueError(f"이미 방문한 노드 재선택: {next_node}")
             edge_key = (current, next_node)
             if edge_key not in prepared["edge_weights"]:
+                invalid_edge_count += 1
                 raise ValueError(f"존재하지 않는 방향성 edge: {current} -> {next_node}")
             weight = prepared["edge_weights"][edge_key]
-            steps.append(
-                {
-                    "step": step_index + 1,
-                    "current_node": current,
-                    "choice": choice,
-                    "next_node": next_node,
-                    "edge_weight": weight,
-                    "confidence": result.get("confidence"),
-                    "probabilities": result.get("probabilities"),
-                    # Laya의 토큰 수와 입력 잘림 여부를 단계별로 보존한다.
-                    "usage": result.get("usage"),
-                    "state_truncated": result.get("state_truncated"),
-                    "wall_seconds": step_wall,
-                    "model_total_seconds": result.get("total_duration_seconds"),
-                    "eval_seconds": result.get("eval_duration_seconds"),
-                }
-            )
+            step_record.update(edge_weight=weight, accepted=True, error=None)
+            steps.append(step_record)
             accumulated_distance += weight
             path.append(next_node)
             current = next_node
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
+            failed_step = step_index + 1
+            step_record.update(
+                accepted=False,
+                error=error,
+                wall_seconds=step_record.get(
+                    "wall_seconds", time.perf_counter() - step_started
+                ),
+            )
+            steps.append(step_record)
             break
 
     if error is None and current != target:
@@ -209,13 +304,19 @@ def _run_route(
             error = f"{type(exc).__name__}: {exc}"
 
     wall_seconds = time.perf_counter() - started
-    truncation_values = [step.get("state_truncated") for step in steps]
+    # 강제 이동은 모델 입력이 없으므로 Laya 입력 잘림 집계에서 제외한다.
+    truncation_values = [
+        step.get("state_truncated")
+        for step in steps
+        if step.get("model_called") is True
+    ]
     state_truncated_count = sum(value is True for value in truncation_values)
     state_truncation_reported_count = sum(
         isinstance(value, bool) for value in truncation_values
     )
     truncation_reporting_complete = (
-        bool(steps) and state_truncation_reported_count == len(steps)
+        state_truncation_reported_count == len(truncation_values)
+        if truncation_values else None
     )
     # Laya만 tokenizer 사용량과 잘림 여부를 보고한다. 미보고(None)를
     # '잘리지 않음'으로 오인하지 않고 별도 상태로 남긴다.
@@ -228,6 +329,10 @@ def _run_route(
         "path": path,
         "steps": steps,
         "api_call_count": api_call_count,
+        "candidate_scope": candidate_scope,
+        "failed_step": failed_step,
+        "invalid_edge_count": invalid_edge_count,
+        "revisit_count": revisit_count,
         "valid_path": valid_path,
         "recalculated_distance": recalculated_distance,
         "exact_path_match": path == case["expected_path"],
@@ -240,6 +345,13 @@ def _run_route(
                 abs_tol=1e-9,
             )
         ),
+        "distance_ratio": (
+            recalculated_distance / case["expected_distance"]
+            if recalculated_distance is not None else None
+        ),
+        "random_baseline_path_probability": _random_path_baseline(
+            prepared, case, candidate_scope
+        ),
         "wall_seconds": wall_seconds,
         "state_truncated_count": state_truncated_count,
         "state_truncation_reported_count": state_truncation_reported_count,
@@ -248,14 +360,20 @@ def _run_route(
         "model_total_seconds": sum(
             float(step["model_total_seconds"])
             for step in steps
-            if step["model_total_seconds"] is not None
+            if step.get("model_total_seconds") is not None
         ),
+        "step_wall_seconds": [step["wall_seconds"] for step in steps],
         "error": error,
     }
 
 
 def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     completed = [row for row in rows if row["error"] is None]
+    all_steps = [step for row in rows for step in row["steps"]]
+    model_steps = [step for step in all_steps if step.get("model_called") is True]
+    # 입력 토큰 수와 state 잘림 여부는 현재 Laya selector만 보고한다.
+    # Kev/Ollama의 None 값을 잘림 미보고 오류로 집계하지 않는다.
+    laya_rows = [row for row in rows if row.get("selector_name") == "laya"]
     return {
         "trial_count": len(rows),
         "completed_count": len(completed),
@@ -263,14 +381,20 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "valid_path_count": sum(bool(row["valid_path"]) for row in rows),
         "exact_path_match_count": sum(bool(row["exact_path_match"]) for row in rows),
         "distance_match_count": sum(bool(row["distance_match"]) for row in rows),
+        "invalid_edge_count": sum(row["invalid_edge_count"] for row in rows),
+        "revisit_count": sum(row["revisit_count"] for row in rows),
+        "forced_step_count": sum(
+            step.get("forced_step") is True for step in all_steps
+        ),
+        "model_decision_step_count": len(model_steps),
         "state_truncated_trial_count": sum(
-            row["state_truncated_count"] > 0 for row in rows
+            row["state_truncated_count"] > 0 for row in laya_rows
         ),
         "state_truncation_unreported_trial_count": sum(
-            not row["state_truncation_reporting_complete"] for row in rows
+            row["state_truncation_reporting_complete"] is False for row in laya_rows
         ),
         "full_graph_input_preserved_count": sum(
-            row["full_graph_input_preserved"] is True for row in rows
+            row["full_graph_input_preserved"] is True for row in laya_rows
         ),
         "exact_path_accuracy": (
             sum(bool(row["exact_path_match"]) for row in rows) / len(rows)
@@ -279,7 +403,41 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_api_call_count": (
             mean(row["api_call_count"] for row in rows) if rows else None
         ),
+        "mean_distance_ratio": (
+            mean(
+                row["distance_ratio"]
+                for row in rows
+                if row["distance_ratio"] is not None
+            )
+            if any(row["distance_ratio"] is not None for row in rows)
+            else None
+        ),
+        "mean_random_baseline_path_probability": (
+            mean(row["random_baseline_path_probability"] for row in rows)
+            if rows else None
+        ),
+        "step_realtime_met_count": sum(
+            step.get("realtime_met") is True for step in model_steps
+        ),
+        "step_realtime_met_rate": (
+            sum(step.get("realtime_met") is True for step in model_steps)
+            / len(model_steps)
+            if model_steps else None
+        ),
+        "mean_answer_confidence": (
+            mean(
+                float(step["answer_confidence"])
+                for step in model_steps
+                if step.get("answer_confidence") is not None
+            )
+            if any(step.get("answer_confidence") is not None for step in model_steps)
+            else None
+        ),
         "wall_latency": _stats([row["wall_seconds"] for row in completed]),
+        "all_trial_wall_latency": _stats([row["wall_seconds"] for row in rows]),
+        "step_wall_latency": _stats(
+            [step["wall_seconds"] for step in model_steps if "wall_seconds" in step]
+        ),
         "model_total_latency": _stats(
             [row["model_total_seconds"] for row in completed]
         ),
@@ -291,11 +449,17 @@ def run_benchmark(
     *,
     repeats: int = 5,
     warmups: int = 1,
+    candidate_scope: str = "neighbors",
+    deadline: float = 0.15,
     selector: Any | None = None,
     progress: bool = True,
 ) -> dict[str, Any]:
     if repeats < 1 or warmups < 0:
         raise ValueError("repeats must be positive and warmups must be non-negative")
+    if candidate_scope not in {"neighbors", "all"}:
+        raise ValueError("candidate_scope must be 'neighbors' or 'all'")
+    if deadline <= 0:
+        raise ValueError("deadline must be positive")
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     trials_path = output / TRIALS_FILENAME
@@ -315,7 +479,7 @@ def run_benchmark(
         "graph": {
             "source": str(prepared["graph_path"].relative_to(ROOT)),
             "sha256": hashlib.sha256(prepared["graph_path"].read_bytes()).hexdigest(),
-            "model_input_format": "CompactRouteGraph",
+            "model_input_format": "CompactAdjacencyGraph",
             "node_count": len(prepared["nodes"]),
         },
         "settings": {
@@ -324,17 +488,22 @@ def run_benchmark(
             "case_count": len(prepared["cases"]),
             "expected_trial_count": len(prepared["cases"]) * repeats,
             "questions_per_api_request": 1,
-            "candidate_scope": "all_nodes_except_current",
+            "candidate_scope": candidate_scope,
             "max_steps": len(prepared["nodes"]) - 1,
-            "python_role": "state storage and validation only",
+            "realtime_deadline_seconds": deadline,
+            "python_role": "state storage, validation, and deterministic single-candidate transition",
+            "single_candidate_policy": "forced_step_without_model_call",
             "selector_max_length": getattr(selector, "max_length", None),
+            "selector_head_max_length": getattr(selector, "head_max_length", None),
         },
         "device": selector_device_metadata(selector),
     }
     _json_dump(output / MANIFEST_FILENAME, manifest)
 
     for warmup in range(1, warmups + 1):
-        _run_route(selector, prepared, prepared["cases"][0])
+        _run_route(
+            selector, prepared, prepared["cases"][0], candidate_scope, deadline
+        )
         if progress:
             print(f"warmup {warmup}/{warmups} complete")
 
@@ -342,7 +511,9 @@ def run_benchmark(
     last_result = None
     for case in prepared["cases"]:
         for repeat in range(1, repeats + 1):
-            result = _run_route(selector, prepared, case)
+            result = _run_route(
+                selector, prepared, case, candidate_scope, deadline
+            )
             last_result = result
             row = {
                 "timestamp": _utc_now(),
@@ -393,7 +564,9 @@ def run_benchmark(
     fields = [
         "timestamp", "selector_name", "requested_model", "start_node",
         "target_node", "repeat", "expected_path", "path", "expected_distance",
-        "recalculated_distance", "api_call_count", "valid_path",
+        "recalculated_distance", "distance_ratio", "api_call_count", "valid_path",
+        "random_baseline_path_probability",
+        "candidate_scope", "failed_step", "invalid_edge_count", "revisit_count",
         "exact_path_match", "distance_match", "wall_seconds",
         "model_total_seconds", "state_truncated_count",
         "state_truncation_reported_count",
@@ -432,11 +605,17 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument(
+        "--candidate-scope", choices=("neighbors", "all"), default="neighbors"
+    )
+    parser.add_argument("--deadline", type=float, default=0.15)
     args = parser.parse_args()
     summary = run_benchmark(
         args.output,
         repeats=args.repeats,
         warmups=args.warmups,
+        candidate_scope=args.candidate_scope,
+        deadline=args.deadline,
         selector=get_selector(),
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
