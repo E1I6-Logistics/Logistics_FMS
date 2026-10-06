@@ -956,7 +956,7 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 # Context 미적용
 ROUTE_SELECTOR=laya \
 python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --candidate-scope all \
+  --candidate-scope neighbors \
   --context-mode full_graph_only \
   --output simulation/benchmark_results/<환경>-laya-full-graph-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15 \
@@ -965,7 +965,7 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
 # 정확 인접 Context 적용: 위 실행과 criteria는 동일
 ROUTE_SELECTOR=laya \
 python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --candidate-scope all \
+  --candidate-scope neighbors \
   --context-mode neighbor_context \
   --output simulation/benchmark_results/<환경>-laya-neighbor-context-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15 \
@@ -1000,5 +1000,23 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
 따라서 0.8B와 4B 모두 전체 Graph와 현재 상태를 받되, `available_edges` 안의 Node만
 choice 후보로 받는다. `requested_model`과 결과 폴더가 다르므로 결과를 서로 구분할 수 있다.
 
-Ollama는 `OLLAMA_MODEL`을 지정한다. 결과에는 실패 단계, 단계별 후보·선택·확률·입력
+Ollama는 `OLLAMA_MODEL`을 지정한다. 
+
+```bash
+ROUTE_SELECTOR=ollama \
+OLLAMA_MODEL=qwen3:4b \
+OLLAMA_HOST=http://127.0.0.1:11434 \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --candidate-scope neighbors \
+  --context-mode neighbor_context \
+  --output "simulation/benchmark_results/pc-qwen3-4b-neighbor-context-$(date +%Y%m%d-%H%M%S)" \
+  --repeats 5 \
+  --warmups 1 \
+  --deadline 0.15 \
+  --case-count 5 \
+  --route-seed 20260928 \
+  --max-steps 24
+```
+
+결과에는 실패 단계, 단계별 후보·선택·확률·입력
 사용량·응답시간, 재방문, 목표 도착 여부, 최단 경로·거리 일치와 무작위 기준선을 기록한다.
