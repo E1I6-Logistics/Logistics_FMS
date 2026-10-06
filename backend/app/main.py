@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS
+
 from .routers.commands import router as commands_router
 from .routers.connections import router as connections_router
 from .routers.map import router as map_router
@@ -13,6 +14,7 @@ from .routers.mode import router as mode_router
 from .routers.robots import router as robots_router
 from .routers.websocket import router as websocket_router
 from .routers.orders import router as orders_router
+from .routers.omx import router as omx_router
 
 from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
@@ -53,10 +55,7 @@ async def lifespan(app: FastAPI):
     ros_gateway.set_ros_node(ros_node)
 
     # FastAPI와 별도 Thread에서 ROS2 spin
-    ros_thread = threading.Thread(
-        target=executor.spin,
-        daemon=True,
-    )
+    ros_thread = threading.Thread(target=executor.spin, daemon=True)
 
     ros_thread.start()
 
@@ -108,6 +107,7 @@ app.include_router(commands_router)
 app.include_router(connections_router)
 app.include_router(websocket_router)
 app.include_router(orders_router)
+app.include_router(omx_router)
 
 
 @app.get("/")

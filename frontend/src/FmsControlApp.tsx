@@ -7,7 +7,9 @@ import {
   sendCharging,
   stopAllRobots,
   emergencyReleaseRobot,
-  returnNearestNode
+  returnNearestNode,
+  getOmxDevices,
+  type OmxDeviceDto,
 } from './api/fmsApi'
 import { useCmdVel } from './hooks/useCmdVel'
 import { useRobotFleet } from './hooks/useRobotFleet'
@@ -25,6 +27,7 @@ export default function FmsControlApp() {
   const [targetNode, setTargetNode] = useState<string | null>(null)
   const [commandState, setCommandState] = useState<CommandState>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [omxDevices, setOmxDevices] = useState<OmxDeviceDto[]>([])
 
   const {
     managedIds,
@@ -66,6 +69,27 @@ export default function FmsControlApp() {
       setSelectedRobot(null)
     }
   }, [managedIds, selectedRobot])
+
+  useEffect(() => {
+    const refreshOmx = async () => {
+      try {
+        const devices = await getOmxDevices()
+
+        console.log('OMX:', devices)
+
+        setOmxDevices(devices)
+      } catch (error) {
+        console.warn('OMX 상태 조회 실패:', error)
+      }
+    }
+
+    void refreshOmx()
+
+    const timer = window.setInterval(refreshOmx, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+  
 
   const nearestNode = useMemo(() => {
     if (!selectedLiveRobot?.hasPose) return null
@@ -290,6 +314,7 @@ export default function FmsControlApp() {
               graphError={graphError}
               visibleRobotIds={mapRobotIds as RobotId[]}
               robotStates={managedRobots}
+              omxDevices={omxDevices}
             />
             <button
               onClick={emergencyStopAll}

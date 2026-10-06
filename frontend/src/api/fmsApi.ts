@@ -184,6 +184,15 @@ export type RobotStateDto = {
   connection_state: string
 }
 
+export type OmxDeviceDto = {
+  omx_id: string
+  connected: boolean
+  x: number
+  y: number
+  pixel_x: number
+  pixel_y: number
+}
+
 export function getConnections() {
   return request<{ devices: ConnectionDeviceDto[] }>('/api/connections')
 }
@@ -194,4 +203,8 @@ export function getRobots() {
 
 export function dashboardWsUrl() {
   return `${WS_BASE}/ws/dashboard`
+}
+
+export function getOmxDevices() {
+  return request<OmxDeviceDto[]>('/api/omx')
 }
