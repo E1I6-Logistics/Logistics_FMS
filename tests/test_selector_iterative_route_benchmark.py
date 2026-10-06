@@ -2,7 +2,11 @@
 
 import unittest
 
-from simulation.evaluation.selector_iterative_route_benchmark import _run_route, _summarize
+from simulation.evaluation.selector_iterative_route_benchmark import (
+    _prepare,
+    _run_route,
+    _summarize,
+)
 
 
 class _OracleSelector:
@@ -75,6 +79,32 @@ def _fixture():
 
 
 class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
+    # 같은 seed는 동일한 5개 경로를 만들고 Start·Docking 집합은 겹치지 않아야 한다.
+    def test_random_cases_are_reproducible_disjoint_and_target_docking_nodes(self):
+        first = _prepare(case_count=5, route_seed=20261006)
+        second = _prepare(case_count=5, route_seed=20261006)
+        first_pairs = [
+            (case["start"], case["target"]) for case in first["cases"]
+        ]
+        second_pairs = [
+            (case["start"], case["target"]) for case in second["cases"]
+        ]
+        starts = {start for start, _target in first_pairs}
+        targets = {target for _start, target in first_pairs}
+
+        self.assertEqual(first_pairs, second_pairs)
+        self.assertEqual(len(first_pairs), 5)
+        self.assertEqual(len(starts), 5)
+        self.assertEqual(len(targets), 5)
+        self.assertTrue(starts.isdisjoint(targets))
+        self.assertTrue(targets.issubset(set(range(7))))
+        self.assertTrue(
+            all(case["expected_path"][0] == case["start"] for case in first["cases"])
+        )
+        self.assertTrue(
+            all(case["expected_path"][-1] == case["target"] for case in first["cases"])
+        )
+
     # 올바른 다음 노드를 두 번 고르면 최단 경로와 거리까지 일치해야 한다.
     def test_oracle_selector_reaches_exact_route(self):
         selector = _OracleSelector()

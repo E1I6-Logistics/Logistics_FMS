@@ -929,6 +929,16 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 모델 종류가 달라도 같은 선택 작업으로 비교할 때 사용한다. 모든 모델은 동일한
 `CompactAdjacencyGraph`, 현재 Node, 목표 Node, 방문 Node와 누적 거리를 받는다.
 
+경로는 설정 파일의 고정 Start·Target 목록을 사용하지 않고 실행 시작 시 랜덤 생성한다.
+
+- 기본 5개 경로를 생성한다. `--case-count`로 개수를 변경할 수 있다.
+- Target은 도킹 Node `0~6` 중 중복 없이 선택한다.
+- Start도 전체 맵 Node 중 중복 없이 선택하며, 이번 실행에서 뽑힌 Target 집합과 겹치지 않는다.
+- Start에서 Target까지 유효한 방향성 경로가 있는 조합만 사용한다.
+- 기본 `route_seed`는 benchmark config의 `20260928`이다. 같은 seed는 모든 모델에 같은 경로를 제공한다.
+- 생성된 seed와 Start·Target 목록은 `manifest.json`의 `settings`에 기록한다.
+- 새 랜덤 조합이 필요하면 `--route-seed`를 바꾸되, 모델 비교에서는 같은 seed를 사용한다.
+
 - 기본값은 `--candidate-scope neighbors --context-mode neighbor_context`다.
 - `neighbors`에서는 `available_edges`를 정확 조회하고, 그 안의 Node만 Laya·Kev·Ollama의 `criteria`로 제공한다.
 - `previous_node`로 즉시 돌아가는 Edge는 `available_edges`와 `criteria`에서 제외해 `6 → 14 → 6` 같은 왕복을 막는다.
@@ -949,7 +959,8 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
   --candidate-scope all \
   --context-mode full_graph_only \
   --output simulation/benchmark_results/<환경>-laya-full-graph-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
+  --repeats 5 --warmups 1 --deadline 0.15 \
+  --case-count 5 --route-seed 20260928
 
 # 정확 인접 Context 적용: 위 실행과 criteria는 동일
 ROUTE_SELECTOR=laya \
@@ -957,7 +968,8 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
   --candidate-scope all \
   --context-mode neighbor_context \
   --output simulation/benchmark_results/<환경>-laya-neighbor-context-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
+  --repeats 5 --warmups 1 --deadline 0.15 \
+  --case-count 5 --route-seed 20260928
 ```
 
 `ROUTE_SELECTOR`를 `kev` 또는 `ollama`로 바꾸면 같은 입력과 검증 규칙으로 실행한다.

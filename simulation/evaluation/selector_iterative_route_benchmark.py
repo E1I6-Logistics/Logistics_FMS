@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import math
+import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,6 +34,8 @@ TRIALS_FILENAME = "selector_iterative_route_trials.jsonl"
 SUMMARY_FILENAME = "selector_iterative_route_summary.json"
 CSV_FILENAME = "selector_iterative_route_samples.csv"
 MANIFEST_FILENAME = "manifest.json"
+DEFAULT_CASE_COUNT = 5
+DOCKING_NODE_IDS = tuple(range(7))
 
 NEXT_NODE_INSTRUCTIONS = (
     "Select exactly one next node for the minimum-total-weight route from "
@@ -84,7 +87,60 @@ def _stats(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
-def _prepare() -> dict[str, Any]:
+def _generate_random_cases(
+    graph: dict[str, Any],
+    nodes: list[int],
+    *,
+    case_count: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Create reproducible unique Start→Docking pairs with disjoint node sets."""
+    docking_nodes = [node for node in DOCKING_NODE_IDS if node in nodes]
+    if case_count < 1:
+        raise ValueError("case_count must be positive")
+    if case_count > len(docking_nodes):
+        raise ValueError(
+            f"case_count={case_count} exceeds docking nodes={len(docking_nodes)}"
+        )
+    if len(nodes) - case_count < case_count:
+        raise ValueError(
+            "시작 Node 집합과 도착 Node 집합을 겹치지 않게 만들 수 없습니다."
+        )
+
+    rng = random.Random(seed)
+    # A retry loop also protects future directed maps where some random pairs
+    # may not have a valid route. The recorded seed reproduces the same retries.
+    for _attempt in range(1_000):
+        targets = rng.sample(docking_nodes, case_count)
+        start_pool = [node for node in nodes if node not in targets]
+        starts = rng.sample(start_pool, case_count)
+        cases: list[dict[str, Any]] = []
+        try:
+            for start, target in zip(starts, targets):
+                baseline = plan_route(
+                    str(start), str(target), graph, require_stored_weight=True
+                )
+                cases.append(
+                    {
+                        "start": start,
+                        "target": target,
+                        "expected_path": [
+                            int(node) for node in baseline["node_ids"]
+                        ],
+                        "expected_distance": float(baseline["cost"]),
+                    }
+                )
+        except ValueError:
+            continue
+        return cases
+    raise RuntimeError("유효한 랜덤 Start→Docking 경로 조합을 만들지 못했습니다.")
+
+
+def _prepare(
+    *,
+    case_count: int = DEFAULT_CASE_COUNT,
+    route_seed: int | None = None,
+) -> dict[str, Any]:
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     graph_path = ROOT / config["graph"]["path"]
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
@@ -99,20 +155,18 @@ def _prepare() -> dict[str, Any]:
     print("=============\n")
     print(compact_graph)
 
-    cases = []
-    for configured in config["cases"]:
-        start, target = int(configured["start"]), int(configured["goal"])
-        baseline = plan_route(
-            str(start), str(target), graph, require_stored_weight=True
-        )
-        cases.append(
-            {
-                "start": start,
-                "target": target,
-                "expected_path": [int(node) for node in baseline["node_ids"]],
-                "expected_distance": float(baseline["cost"]),
-            }
-        )
+    effective_seed = (
+        int(route_seed)
+        if route_seed is not None
+        else int(config.get("settings", {}).get("seed", 20260928))
+    )
+    nodes = sorted(points)
+    cases = _generate_random_cases(
+        graph,
+        nodes,
+        case_count=case_count,
+        seed=effective_seed,
+    )
     return {
         "graph_path": graph_path,
         "graph": graph,
@@ -120,8 +174,10 @@ def _prepare() -> dict[str, Any]:
         "points": points,
         "edges": edges,
         "edge_weights": edge_weights,
-        "nodes": sorted(points),
+        "nodes": nodes,
         "cases": cases,
+        "route_seed": effective_seed,
+        "docking_nodes": [node for node in DOCKING_NODE_IDS if node in nodes],
     }
 
 
@@ -134,14 +190,19 @@ def _random_path_baseline(
     for current, expected_next in zip(
         case["expected_path"], case["expected_path"][1:]
     ):
+        previous_node = visited[-2] if len(visited) >= 2 else None
         if candidate_scope == "neighbors":
             pool = {
                 end
                 for (edge_start, end) in prepared["edge_weights"]
-                if edge_start == current and end not in visited
+                if edge_start == current and end != previous_node
             }
         else:
-            pool = {node for node in prepared["nodes"] if node != current}
+            pool = {
+                node
+                for node in prepared["nodes"]
+                if node != current and node != previous_node
+            }
         if expected_next not in pool or not pool:
             return 0.0
         probability *= 1.0 / len(pool)
@@ -493,6 +554,8 @@ def run_benchmark(
     *,
     repeats: int = 5,
     warmups: int = 1,
+    case_count: int = DEFAULT_CASE_COUNT,
+    route_seed: int | None = None,
     candidate_scope: str = "neighbors",
     context_mode: str = "neighbor_context",
     max_steps: int | None = None,
@@ -502,6 +565,8 @@ def run_benchmark(
 ) -> dict[str, Any]:
     if repeats < 1 or warmups < 0:
         raise ValueError("repeats must be positive and warmups must be non-negative")
+    if case_count < 1:
+        raise ValueError("case_count must be positive")
     if candidate_scope not in {"neighbors", "all"}:
         raise ValueError("candidate_scope must be 'neighbors' or 'all'")
     if context_mode not in {"full_graph_only", "neighbor_context"}:
@@ -518,7 +583,7 @@ def run_benchmark(
     if trials_path.exists() and trials_path.stat().st_size:
         raise FileExistsError(f"existing trial file would be overwritten: {trials_path}")
 
-    prepared = _prepare()
+    prepared = _prepare(case_count=case_count, route_seed=route_seed)
     effective_max_steps = max_steps or len(prepared["nodes"]) * 2
     selector = selector or get_selector()
     selector_name = getattr(selector, "name", selector.__class__.__name__)
@@ -539,6 +604,13 @@ def run_benchmark(
             "repeats_per_case": repeats,
             "warmups": warmups,
             "case_count": len(prepared["cases"]),
+            "route_seed": prepared["route_seed"],
+            "case_generation_policy": "seeded_unique_disjoint_start_to_docking",
+            "docking_target_nodes": prepared["docking_nodes"],
+            "generated_cases": [
+                {"start": case["start"], "target": case["target"]}
+                for case in prepared["cases"]
+            ],
             "expected_trial_count": len(prepared["cases"]) * repeats,
             "questions_per_api_request": 1,
             "candidate_scope": candidate_scope,
@@ -668,6 +740,13 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument("--case-count", type=int, default=DEFAULT_CASE_COUNT)
+    parser.add_argument(
+        "--route-seed",
+        type=int,
+        default=None,
+        help="랜덤 경로 생성 시드 (기본: benchmark config의 seed)",
+    )
     parser.add_argument(
         "--candidate-scope", choices=("neighbors", "all"), default="neighbors"
     )
@@ -688,6 +767,8 @@ def main() -> int:
         args.output,
         repeats=args.repeats,
         warmups=args.warmups,
+        case_count=args.case_count,
+        route_seed=args.route_seed,
         candidate_scope=args.candidate_scope,
         context_mode=args.context_mode,
         max_steps=args.max_steps,
