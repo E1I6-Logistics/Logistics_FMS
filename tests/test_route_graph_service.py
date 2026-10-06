@@ -32,6 +32,41 @@ class RouteGraphServiceTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "FeatureCollection"):
                     route_service.load_route_graph()
 
+    # V2 입력은 좌표와 edge 배열 없이 방향별 adjacency와 저장 weight만 보존한다.
+    def test_builds_v2_compact_adjacency_graph(self):
+        graph = route_service.build_compact_adjacency_graph(
+            load_graph(), "route_graph.geojson", require_stored_weight=False
+        )
+
+        self.assertEqual(graph["type"], "CompactAdjacencyGraph")
+        self.assertNotIn("node_coordinates", graph)
+        self.assertNotIn("edges", graph)
+        self.assertEqual(
+            graph["adjacency"]["1"],
+            [{"to": 2, "weight": 1.0}, {"to": 3, "weight": 3.0}, {"to": 4, "weight": 2 ** 0.5}],
+        )
+
+    # 서로 반대 방향의 edge는 같은 weight로 합치지 않고 각각 유지한다.
+    def test_preserves_asymmetric_directed_weights(self):
+        graph = {
+            "type": "CompactAdjacencyGraph",
+            "nodes": [0, 1],
+            "adjacency": {
+                "0": [{"to": 1, "weight": 0.352}],
+                "1": [{"to": 0, "weight": 0.223}],
+            },
+        }
+
+        edges = route_service.compact_graph_edges(graph)
+
+        self.assertEqual(
+            edges,
+            [
+                {"from": 0, "to": 1, "weight": 0.352},
+                {"from": 1, "to": 0, "weight": 0.223},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

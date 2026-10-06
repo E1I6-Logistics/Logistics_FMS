@@ -39,6 +39,7 @@ from simulation.evaluation.iterative_chain import (
     run_iterative_chain,
 )
 from simulation.services.route_service import (
+    build_compact_adjacency_graph,
     build_compact_route_graph,
     build_route_inputs,
     plan_route,
@@ -171,16 +172,38 @@ def load_and_validate_config(config_path: Path) -> dict:
     if len(edges) != graph_config["directed_edge_count"]:
         raise ValueError("graph edge count does not match the benchmark config")
 
-    compact_graph = build_compact_route_graph(
-        graph, graph_path.name, require_stored_weight=True
+    model_input_format = graph_config.get(
+        "model_input_format", "CompactRouteGraph"
     )
+    if model_input_format == "CompactAdjacencyGraph":
+        compact_graph = build_compact_adjacency_graph(
+            graph, graph_path.name, require_stored_weight=True
+        )
+    elif model_input_format == "CompactRouteGraph":
+        compact_graph = build_compact_route_graph(
+            graph, graph_path.name, require_stored_weight=True
+        )
+    else:
+        raise ValueError(f"unknown model_input_format: {model_input_format}")
     retrieval_config = config.get(
         "retrieval", {"enabled": False, "policy": "full_graph"}
     )
-    if retrieval_config.get("enabled") and retrieval_config.get("policy") != (
-        "path_relevant_adjacency_once"
+    if (
+        retrieval_config.get("enabled")
+        and retrieval_config.get("policy") != "path_relevant_adjacency_once"
     ):
         raise ValueError(f"unknown retrieval policy: {retrieval_config.get('policy')}")
+    neighbor_context_config = config.get(
+        "neighbor_context", {"enabled": False, "policy": "none"}
+    )
+    if (
+        neighbor_context_config.get("enabled")
+        and neighbor_context_config.get("policy")
+        != "exact_current_node_adjacency_each_step"
+    ):
+        raise ValueError(
+            f"unknown neighbor context policy: {neighbor_context_config.get('policy')}"
+        )
 
     validated_cases = []
     for case in config["cases"]:
@@ -314,11 +337,14 @@ def _compute_model_answer(provider: Any, case: dict, prepared: dict) -> dict:
     if settings.get("execution_strategy", "single_call") == "iterative_chain":
         return run_iterative_chain(
             provider,
-            model_graph,
+            prepared["compact_graph"],
             int(case["start"]),
             int(case["goal"]),
             instructions=prepared["config"]["prompt"],
             max_steps=int(settings.get("max_chain_steps", len(prepared["points"]))),
+            neighbor_context_enabled=bool(
+                prepared["config"].get("neighbor_context", {}).get("enabled")
+            ),
         )
     return provider.compute_shortest_path(
         model_graph, int(case["start"]), int(case["goal"])
@@ -451,6 +477,9 @@ def _run_trial(
             "route_graph_sha256": prepared["graph_sha256"],
             "compact_graph": case.get("model_graph", prepared["compact_graph"]),
             "retrieval": case.get("retrieval"),
+            "neighbor_context": prepared["config"].get(
+                "neighbor_context", {"enabled": False, "policy": "none"}
+            ),
         },
         "baseline": {
             "path": baseline_path,

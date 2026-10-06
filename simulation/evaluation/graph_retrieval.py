@@ -11,6 +11,8 @@ import copy
 from collections import deque
 from typing import Any
 
+from simulation.services.route_service import compact_graph_edges
+
 
 def _reachable(seed: int, adjacency: dict[int, list[int]]) -> set[int]:
     visited = {seed}
@@ -35,7 +37,7 @@ def retrieve_path_relevant_graph(
     forward = {node: [] for node in nodes}
     reverse = {node: [] for node in nodes}
     normalized_edges = []
-    for edge in graph.get("edges", []):
+    for edge in compact_graph_edges(graph):
         start, end = int(edge["from"]), int(edge["to"])
         weight = float(edge["weight"])
         if start not in nodes or end not in nodes:
@@ -56,6 +58,7 @@ def retrieve_path_relevant_graph(
     ]
 
     adjacency_index = []
+    adjacency_map: dict[str, list[dict[str, int | float]]] = {}
     for node in sorted(relevant_nodes):
         neighbors = sorted(
             (
@@ -66,6 +69,10 @@ def retrieve_path_relevant_graph(
             key=lambda item: (item["node"], item["distance"]),
         )
         adjacency_index.append({"node": node, "neighbors": neighbors})
+        adjacency_map[str(node)] = [
+            {"to": item["node"], "weight": item["distance"]}
+            for item in neighbors
+        ]
 
     metadata = {
         "enabled": True,
@@ -79,21 +86,33 @@ def retrieve_path_relevant_graph(
         "retrieved_node_count": len(relevant_nodes),
         "retrieved_edge_count": len(relevant_edges),
     }
-    retrieved = {
-        "type": "CompactRouteGraph",
-        "source_graph": graph.get("source_graph"),
-        "directed": True,
-        "weight_rule": graph.get("weight_rule"),
-        "nodes": sorted(relevant_nodes),
-        "node_coordinates": [
-            item
-            for item in graph.get("node_coordinates", [])
-            if int(item["id"]) in relevant_nodes
-        ],
-        "edges": relevant_edges,
-        "adjacency": adjacency_index,
-        "retrieval": metadata,
-    }
+    if graph.get("type") == "CompactAdjacencyGraph":
+        retrieved = {
+            "type": "CompactAdjacencyGraph",
+            "source_graph": graph.get("source_graph"),
+            "directed": True,
+            "weight_rule": graph.get("weight_rule"),
+            "nodes": sorted(relevant_nodes),
+            "adjacency": adjacency_map,
+            "retrieval": metadata,
+        }
+    else:
+        # Legacy V1 inputs keep their original edge-list representation.
+        retrieved = {
+            "type": "CompactRouteGraph",
+            "source_graph": graph.get("source_graph"),
+            "directed": True,
+            "weight_rule": graph.get("weight_rule"),
+            "nodes": sorted(relevant_nodes),
+            "node_coordinates": [
+                item
+                for item in graph.get("node_coordinates", [])
+                if int(item["id"]) in relevant_nodes
+            ],
+            "edges": relevant_edges,
+            "adjacency": adjacency_index,
+            "retrieval": metadata,
+        }
     return retrieved, copy.deepcopy(metadata)
 
 
@@ -103,9 +122,9 @@ def full_graph_metadata(graph: dict[str, Any]) -> dict[str, Any]:
         "enabled": False,
         "policy": "full_graph",
         "source_node_count": len(graph.get("nodes", [])),
-        "source_edge_count": len(graph.get("edges", [])),
+        "source_edge_count": len(compact_graph_edges(graph)),
         "retrieved_node_count": len(graph.get("nodes", [])),
-        "retrieved_edge_count": len(graph.get("edges", [])),
+        "retrieved_edge_count": len(compact_graph_edges(graph)),
     }
 
 
@@ -116,7 +135,7 @@ def ground_truth_coverage(
     nodes = {int(node) for node in retrieved_graph.get("nodes", [])}
     edges = {
         (int(edge["from"]), int(edge["to"]))
-        for edge in retrieved_graph.get("edges", [])
+        for edge in compact_graph_edges(retrieved_graph)
     }
     path_nodes = {int(node) for node in expected_path}
     path_edges = set(zip(expected_path, expected_path[1:]))

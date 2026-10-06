@@ -221,6 +221,99 @@ def build_compact_route_graph(
     }
 
 
+def build_compact_adjacency_graph(
+    graph: dict,
+    source_graph: str,
+    *,
+    require_stored_weight: bool = False,
+) -> dict:
+    """Build the coordinate-free adjacency format used by V2 experiments."""
+    points, edges = build_route_inputs(
+        graph, require_stored_weight=require_stored_weight
+    )
+    edge_weights = build_edge_weight_lookup(points, edges)
+    adjacency: dict[str, list[dict[str, int | float]]] = {
+        str(node): [] for node in sorted(points)
+    }
+    for (start, end), weight in sorted(edge_weights.items()):
+        adjacency[str(start)].append({"to": end, "weight": weight})
+    return {
+        "type": "CompactAdjacencyGraph",
+        "source_graph": source_graph,
+        "directed": True,
+        "weight_rule": (
+            "GeoJSON properties.weight exactly"
+            if require_stored_weight
+            else "properties.weight; legacy positive cost or node distance fallback"
+        ),
+        "nodes": sorted(points),
+        "adjacency": adjacency,
+    }
+
+
+def compact_graph_edges(graph: dict[str, Any]) -> list[dict[str, int | float]]:
+    """Normalize CompactRouteGraph or CompactAdjacencyGraph edges."""
+    graph_type = graph.get("type")
+    if graph_type == "CompactAdjacencyGraph":
+        records: list[dict[str, int | float]] = []
+        adjacency = graph.get("adjacency")
+        if not isinstance(adjacency, dict):
+            raise ValueError("CompactAdjacencyGraph.adjacency는 객체여야 합니다.")
+        for raw_start, neighbors in adjacency.items():
+            if not isinstance(neighbors, list):
+                raise ValueError("CompactAdjacencyGraph의 인접 목록은 배열이어야 합니다.")
+            start = int(raw_start)
+            for neighbor in neighbors:
+                if not isinstance(neighbor, dict):
+                    raise ValueError("CompactAdjacencyGraph의 인접 항목은 객체여야 합니다.")
+                records.append(
+                    {
+                        "from": start,
+                        "to": int(neighbor["to"]),
+                        "weight": float(neighbor["weight"]),
+                    }
+                )
+        return records
+    if graph_type == "CompactRouteGraph":
+        return [
+            {
+                "from": int(edge["from"]),
+                "to": int(edge["to"]),
+                "weight": float(edge["weight"]),
+            }
+            for edge in graph.get("edges", [])
+        ]
+    raise ValueError(f"지원하지 않는 compact graph type: {graph_type!r}")
+
+
+
+def get_available_edges(
+    graph: dict[str, Any],
+    current_node: int,
+    *,
+    visited_nodes: list[int] | set[int] | None = None,
+) -> list[dict[str, int | float]]:
+    """Return exact unvisited outgoing edges for one node.
+
+    Node/Edge IDs are structured data, so V2 iterative routing uses an exact
+    adjacency lookup instead of vector-similarity retrieval.  The returned
+    distance is the stored directed edge weight; it is not recalculated.
+    """
+    nodes = {int(node) for node in graph.get("nodes", [])}
+    current_node = int(current_node)
+    if current_node not in nodes:
+        raise ValueError(f"현재 노드가 graph에 없습니다: {current_node}")
+
+    visited = {int(node) for node in (visited_nodes or [])}
+    available = [
+        {"node": int(edge["to"]), "distance": float(edge["weight"])}
+        for edge in compact_graph_edges(graph)
+        if int(edge["from"]) == current_node
+        and int(edge["to"]) not in visited
+    ]
+    return sorted(available, key=lambda item: (item["node"], item["distance"]))
+
+
 def build_edge_weight_lookup(
     points: dict[int, tuple[float, float]],
     edges: list[tuple[int, int, float]],

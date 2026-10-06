@@ -1,0 +1,219 @@
+{
+  "matrix_id": "route-generation-v2-live-map",
+  "description": "V2 direct, CoT, and iterative calls with and without graph retrieval",
+  "graph": {
+    "path": "routes/test.geojson",
+    "model_input_format": "CompactAdjacencyGraph",
+    "sha256": "9b0ca28cca7c3c55fc795a7a0f8145c3b7f781511567dc92bdb54c0e97d48d68",
+    "node_count": 12,
+    "directed_edge_count": 38,
+    "weight_property": "weight"
+  },
+  "models": [
+    {
+      "name": "qwen3:0.6b",
+      "think": false
+    },
+    {
+      "name": "deepseek-coder:1.3b"
+    },
+    {
+      "name": "llama3.2:3b"
+    },
+    {
+      "name": "qwen3:4b",
+      "think": false
+    },
+    {
+      "name": "gemma3:4b"
+    },
+    {
+      "name": "llama3.1:8b"
+    },
+    {
+      "name": "mistral-nemo:12b"
+    },
+    {
+      "name": "gemma3:12b"
+    },
+    {
+      "name": "deepseek-coder:6.7b"
+    },
+    {
+      "name": "phi4:14b"
+    }
+  ],
+  "cases": [
+    {
+      "start": 0,
+      "goal": 2,
+      "expected_path": [
+        0,
+        1,
+        2
+      ],
+      "expected_distance": 0.7888975962857319
+    },
+    {
+      "start": 3,
+      "goal": 15,
+      "expected_path": [
+        3,
+        19,
+        15
+      ],
+      "expected_distance": 0.9079639151037295
+    },
+    {
+      "start": 5,
+      "goal": 18,
+      "expected_path": [
+        5,
+        15,
+        16,
+        18
+      ],
+      "expected_distance": 1.1957974846863562
+    },
+    {
+      "start": 1,
+      "goal": 4,
+      "expected_path": [
+        1,
+        17,
+        15,
+        19,
+        4
+      ],
+      "expected_distance": 1.9782743545908796
+    },
+    {
+      "start": 6,
+      "goal": 2,
+      "expected_path": [
+        6,
+        19,
+        15,
+        17,
+        2
+      ],
+      "expected_distance": 2.0830581681796576
+    }
+  ],
+  "settings": {
+    "temperature": 0,
+    "seed": 20260928,
+    "num_ctx": 4096,
+    "num_predict": 512,
+    "timeout_seconds": 120,
+    "realtime_deadline_seconds": 0.15,
+    "max_attempts": 1,
+    "repeats": 5,
+    "warmups_per_model": 1,
+    "keep_alive": "5m"
+  },
+  "experiments": [
+    {
+      "name": "direct_no_rag",
+      "description": "V2 direct_no_rag on the actual frontend route graph",
+      "experiment_mode": "V2_DIRECT_NO_RAG",
+      "response_format": "direct",
+      "execution_strategy": "single_call",
+      "max_chain_steps": 12,
+      "retrieval": {
+        "enabled": false,
+        "policy": "full_graph"
+      },
+      "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\nroute_graph is a CompactAdjacencyGraph. Its adjacency object maps each node ID to\noutgoing entries with to and weight. Traverse only those directed entries and use weight\nexactly as stored. Return the minimum-weight path and total weight as schema-constrained JSON.",
+      "neighbor_context": {
+        "enabled": false,
+        "policy": "none"
+      }
+    },
+    {
+      "name": "direct_graph_retrieval",
+      "description": "V2 direct_graph_retrieval on the actual frontend route graph",
+      "experiment_mode": "V2_DIRECT_GRAPH_RETRIEVAL",
+      "response_format": "direct",
+      "execution_strategy": "single_call",
+      "max_chain_steps": 12,
+      "retrieval": {
+        "enabled": true,
+        "policy": "path_relevant_adjacency_once"
+      },
+      "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\nroute_graph is a CompactAdjacencyGraph. Its adjacency object maps each node ID to\noutgoing entries with to and weight. Traverse only those directed entries and use weight\nexactly as stored. Return the minimum-weight path and total weight as schema-constrained JSON.",
+      "neighbor_context": {
+        "enabled": false,
+        "policy": "none"
+      }
+    },
+    {
+      "name": "cot_no_rag",
+      "description": "V2 cot_no_rag on the actual frontend route graph",
+      "experiment_mode": "V2_COT_NO_RAG",
+      "response_format": "cot",
+      "execution_strategy": "single_call",
+      "max_chain_steps": 12,
+      "retrieval": {
+        "enabled": false,
+        "policy": "full_graph"
+      },
+      "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\nroute_graph is a CompactAdjacencyGraph whose adjacency entries contain to and weight.\nWithin this one API call, apply Dijkstra: initialize tentative distances, repeatedly\nsettle the reachable node with minimum distance, relax outgoing adjacency entries,\nrecord predecessors, stop when target is settled, and reconstruct the path. Return\nconcise reasoning_steps, the final path, and total weight as schema-constrained JSON.",
+      "neighbor_context": {
+        "enabled": false,
+        "policy": "none"
+      }
+    },
+    {
+      "name": "cot_graph_retrieval",
+      "description": "V2 cot_graph_retrieval on the actual frontend route graph",
+      "experiment_mode": "V2_COT_GRAPH_RETRIEVAL",
+      "response_format": "cot",
+      "execution_strategy": "single_call",
+      "max_chain_steps": 12,
+      "retrieval": {
+        "enabled": true,
+        "policy": "path_relevant_adjacency_once"
+      },
+      "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\nroute_graph is a CompactAdjacencyGraph whose adjacency entries contain to and weight.\nWithin this one API call, apply Dijkstra: initialize tentative distances, repeatedly\nsettle the reachable node with minimum distance, relax outgoing adjacency entries,\nrecord predecessors, stop when target is settled, and reconstruct the path. Return\nconcise reasoning_steps, the final path, and total weight as schema-constrained JSON.",
+      "neighbor_context": {
+        "enabled": false,
+        "policy": "none"
+      }
+    },
+    {
+      "name": "iterative_full_graph_only",
+      "description": "V2 iterative_full_graph_only on the actual frontend route graph",
+      "experiment_mode": "V2_ITERATIVE_FULL_GRAPH_ONLY",
+      "response_format": "iterative_chain",
+      "execution_strategy": "iterative_chain",
+      "max_chain_steps": 12,
+      "retrieval": {
+        "enabled": false,
+        "policy": "full_graph"
+      },
+      "prompt": "Choose exactly one next node from current_node toward target_node so that the\ncomplete route has minimum total weight. Use the full directed CompactAdjacencyGraph,\ncurrent_node, target_node, visited_nodes, and accumulated_distance. If available_edges\nis present, it is an exact adjacency lookup for the current node; select only from it.\nDo not select a visited node. Return only selected_node as schema-constrained JSON.",
+      "neighbor_context": {
+        "enabled": false,
+        "policy": "none"
+      }
+    },
+    {
+      "name": "iterative_neighbor_context",
+      "description": "V2 iterative_neighbor_context on the actual frontend route graph",
+      "experiment_mode": "V2_ITERATIVE_NEIGHBOR_CONTEXT",
+      "response_format": "iterative_chain",
+      "execution_strategy": "iterative_chain",
+      "max_chain_steps": 12,
+      "retrieval": {
+        "enabled": false,
+        "policy": "full_graph"
+      },
+      "prompt": "Choose exactly one next node from current_node toward target_node so that the\ncomplete route has minimum total weight. Use the full directed CompactAdjacencyGraph,\ncurrent_node, target_node, visited_nodes, and accumulated_distance. If available_edges\nis present, it is an exact adjacency lookup for the current node; select only from it.\nDo not select a visited node. Return only selected_node as schema-constrained JSON.",
+      "neighbor_context": {
+        "enabled": true,
+        "policy": "exact_current_node_adjacency_each_step"
+      }
+    }
+  ]
+}

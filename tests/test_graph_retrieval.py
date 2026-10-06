@@ -49,6 +49,27 @@ class GraphRetrievalTest(unittest.TestCase):
         self.assertTrue(coverage["ground_truth_path_available"])
         self.assertEqual(coverage["ground_truth_edge_recall"], 1.0)
 
+    # V2 adjacency 입력은 Retrieval 뒤에도 edges 중복 없이 같은 형식을 유지한다.
+    def test_preserves_v2_compact_adjacency_format(self):
+        graph = {
+            "type": "CompactAdjacencyGraph",
+            "nodes": [1, 2, 3, 4],
+            "adjacency": {
+                "1": [{"to": 2, "weight": 1.0}, {"to": 4, "weight": 0.5}],
+                "2": [{"to": 3, "weight": 2.0}],
+                "3": [],
+                "4": [],
+            },
+        }
+
+        retrieved, metadata = retrieve_path_relevant_graph(graph, 1, 3)
+
+        self.assertEqual(retrieved["type"], "CompactAdjacencyGraph")
+        self.assertEqual(retrieved["nodes"], [1, 2, 3])
+        self.assertNotIn("edges", retrieved)
+        self.assertEqual(retrieved["adjacency"]["1"], [{"to": 2, "weight": 1.0}])
+        self.assertEqual(metadata["retrieved_edge_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

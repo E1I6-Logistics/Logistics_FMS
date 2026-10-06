@@ -2,7 +2,9 @@
 
 from .route_service import (
     ROUTE_GRAPH_PATH,
+    build_compact_adjacency_graph,
     build_compact_route_graph,
+    compact_graph_edges,
     build_edge_weight_lookup,
     build_route_inputs,
     compare_path_metrics,
@@ -14,7 +16,9 @@ from .route_service import (
 
 __all__ = [
     "ROUTE_GRAPH_PATH",
+    "build_compact_adjacency_graph",
     "build_compact_route_graph",
+    "compact_graph_edges",
     "build_edge_weight_lookup",
     "build_route_inputs",
     "compare_path_metrics",
