@@ -198,8 +198,22 @@ ollama pull gemma3:4b
 ollama list
 ```
 
-PC의 10종 목록과 모델 선정 근거는 참고 문서에 정리한다. 두 장비에서 같은 태그를
-비교할 때는 `ollama list`의 ID가 같은지 확인한다.
+PC V2는 위 5종에 다음 5종을 추가해 총 10종을 사용한다.
+
+```bash
+ollama pull llama3.1:8b
+ollama pull mistral-nemo:12b
+ollama pull gemma3:12b
+ollama pull deepseek-coder:6.7b
+ollama pull phi4:14b
+
+ollama list
+```
+
+DeepSeek-R1은 `think=false`에서도 최종 JSON 전에 출력 예산을 소진했으므로 V2 대상에서
+제외하고, non-thinking 비교군인 `deepseek-coder:1.3b`와
+`deepseek-coder:6.7b`를 사용한다. 두 장비에서 같은 태그를 비교할 때는
+`ollama list`의 ID가 같은지 확인한다.
 
 원격 Ollama 서버를 사용한다면 벤치마크를 실행할 터미널에서 지정한다.
 
@@ -286,7 +300,7 @@ ROUTE_SELECTOR=laya
 LAYA_HF_MODEL=convaiinnovations/laya-multilingual
 LAYA_DEVICE=cuda:0
 LAYA_REQUIRE_CUDA=true
-# 전체 CompactRouteGraph가 잘리지 않도록 PC와 Jetson에서 같은 값 사용
+# V1 후보 선택 입력이 잘리지 않도록 PC와 Jetson에서 같은 값 사용
 LAYA_MAX_LENGTH=4096
 HF_HOME=/home/<사용자명>/.cache/huggingface
 # HF_TOKEN=
@@ -295,67 +309,10 @@ HF_HOME=/home/<사용자명>/.cache/huggingface
 공개 checkpoint에는 일반적으로 `HF_TOKEN`이 필요하지 않다. `LAYA_REQUIRE_CUDA=true`이면
 CUDA를 사용할 수 없거나 CPU fallback이 발생했을 때 시험을 실패 처리한다.
 `LAYA_MAX_LENGTH`는 글자 수가 아니라 질문 head까지 포함한 토큰 예산이다. Laya가
-허용하는 범위는 1~8192이며, 전체 그래프 비교에서는 PC와 Jetson 모두 4096으로
+허용하는 범위는 1~8192이며, V1 재측정에서는 PC와 Jetson 모두 4096으로
 고정한다.
 
-### 5.2 smoke test
-
-첫 실행은 checkpoint를 다운로드하므로 이후보다 오래 걸린다.
-
-```bash
-python - <<'PY'
-import json
-from pathlib import Path
-
-from simulation.route_selector import get_selector
-from simulation.services.route_service import (
-    build_compact_route_graph,
-    build_route_inputs,
-    plan_route,
-    validate_and_calculate_path_distance,
-)
-
-graph_path = Path("routes/test.geojson")
-graph = json.loads(graph_path.read_text(encoding="utf-8"))
-points, edges = build_route_inputs(graph, require_stored_weight=True)
-shortest = plan_route("0", "2", graph, require_stored_weight=True)
-shortest_path = [int(node) for node in shortest["node_ids"]]
-_, shortest_distance = validate_and_calculate_path_distance(
-    points, edges, shortest_path, 0, 2
-)
-
-state = {
-    "start_node": 0,
-    "target_node": 2,
-    "route_graph": build_compact_route_graph(
-        graph, graph_path.name, require_stored_weight=True
-    ),
-}
-candidates = {
-    "route_a": "path=[0,18,17,2], distance=1.436310720336",
-    "route_b": f"path={shortest_path}, distance={shortest_distance:.12f}",
-}
-
-selector = get_selector()
-try:
-    result = selector.select_route(
-        state,
-        candidates,
-    )
-    print("choice:", result["choice"])
-    print("confidence:", result["confidence"])
-    print("runtime:", result["runtime"])
-    print("load_seconds:", result["load_duration_seconds"])
-    print("eval_seconds:", result["eval_duration_seconds"])
-finally:
-    selector.release()
-PY
-```
-
-`runtime.device`는 `cuda` 또는 `cuda:0`처럼 `cuda`로 시작해야 한다. 실행 중
-`sudo tegrastats` 또는 `nvidia-smi`에서 GPU 사용도 확인한다.
-
-### 5.3 반복 벤치마크
+### 5.2 V1 후보 선택 반복 측정
 
 ```bash
 python -m simulation.evaluation.selector_latency_benchmark \
@@ -366,9 +323,6 @@ python -m simulation.evaluation.selector_question_types_benchmark \
   --output simulation/benchmark_results/<환경>-laya-question-types-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1
 
-python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --output simulation/benchmark_results/<환경>-laya-iterative-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1
 ```
 
 `<환경>`에는 `pc-rtx4070` 또는 `jetson-orin`을 사용한다. 첫 명령은 직관·사고 질문과
@@ -376,14 +330,115 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
 옮긴다. 기본 반복 5회 기준 총 350회이며, 이 중 실제 경로 선택은 250회다. 두 번째
 명령은 choice·score·noul 질문을 시험한다.
 
-세 번째 명령은 동일한 전체 CompactRouteGraph에서 Laya가 다음 노드를 하나씩
-선택하도록 반복 호출한다. 각 단계의 `usage`와 `state_truncated`가
-`selector_iterative_route_trials.jsonl`의 `steps`에 저장된다. 전체 그래프 조건의
-정상 결과라면 요약 파일에서 `state_truncated_trial_count`가 0이고,
-`state_truncation_unreported_trial_count`도 0이며,
-`full_graph_input_preserved_count`가 전체 trial 수와 같아야 한다.
-`usage.state_tokens_dropped`가 0보다 크거나 `state_truncated=true`이면 그 실행은
-전체 그래프 비교 결과에서 제외한다.
+여기서 반복은 동일한 V1 후보 선택 문제를 통계 측정을 위해 5회 실행한다는 뜻이다.
+다음 노드를 여러 번 선택해 하나의 경로를 만드는 V2 Iterative 시험과는 다르다.
+
+V1 Laya 재측정 결과는 `selector_latency_trials.jsonl`에 `usage`와
+`state_truncated`로 기록된다. 정상 결과라면 요약 파일에서
+`state_truncated_count=0`, `state_truncation_unreported_count=0`이고,
+`full_input_preserved_count`가 성공한 요청 수와 같아야 한다.
+`usage.state_tokens_dropped`가 0보다 크거나 `state_truncated=true`이면 해당 실행은
+V1 재측정 결과에서 제외한다.
+
+### 5.3 V1 AllRoutes 전체 경로 선택 시험
+
+기존 V1 시험은 코드가 고른 경로 후보 5개 중 하나를 선택한다. AllRoutes 시험은
+각 Start/Target 사이의 **모든 유효 단순 유향 경로**를 생성해 한 번의 선택 문제로
+전달한다. 단순 경로는 같은 노드를 두 번 방문하지 않는 경로다.
+
+모델 입력은 다음과 같이 구성한다.
+
+- `state`: Start/Target과 전체 `CompactRouteGraph`
+- `criteria`: `path=[0, 3, 4, 6]` 형태의 전체 경로 후보
+- 후보에는 거리나 정답 표시를 넣지 않음
+- 모델은 CompactRouteGraph의 기존 Edge `weight` 합을 비교해 최단 경로를 선택
+- 후보 순서는 언어·경로·반복마다 고정 seed로 섞고 그 seed를 결과에 기록
+
+현재 실제 맵의 후보 수는 다음과 같다.
+
+| Start → Target | 전체 단순 경로 수 |
+| --- | ---: |
+| 0 → 2 | 24 |
+| 3 → 15 | 25 |
+| 5 → 18 | 39 |
+| 1 → 4 | 63 |
+| 6 → 2 | 82 |
+
+Laya는 그래프 입력과 최대 82개의 선택지를 모두 보존해야 하므로 AllRoutes 실행 전에
+토큰 예산을 별도로 늘린다.
+
+```bash
+export LAYA_MAX_LENGTH=8192
+export LAYA_HEAD_MAX_LENGTH=2048
+```
+
+`LAYA_MAX_LENGTH`는 전체 입력 예산이고, `LAYA_HEAD_MAX_LENGTH`는 선택지 head가 사용할
+수 있는 최대 토큰 수다. 선택지가 잘리면 해당 실행은 유효한 비교 결과로 사용하지 않는다.
+
+Laya 실행:
+
+```bash
+ROUTE_SELECTOR=laya \
+python -m simulation.evaluation.selector_all_routes_benchmark \
+  --output simulation/benchmark_results/<환경>-laya-all-routes-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+Kev 벤치마크 명령만 실행해서는 안 된다. 처음 사용하는 환경에서는 다음 순서가
+필수다.
+
+1. [6.1 공통 설치](#61-공통-설치)에 따라 Kev 저장소와 서버 의존성을 설치한다.
+2. 터미널 1에서 시험할 모델의 서버를 실행한다.
+   - 0.8B: [6.2 Kev-0.8B 서버 실행](#62-kev-08b-서버-실행)
+   - 4B: [6.4 Kev-4B 서버 실행](#64-kev-4b-서버-실행)
+3. `GET /v1/models`에서 `run`, `device`, `backend`, `dtype`을 확인한다.
+4. 서버 터미널을 열어 둔 상태로 터미널 2에서 벤치마크를 실행한다.
+
+아래 예시는 Kev-0.8B 서버가 8011 포트에서 실행 중인 경우다.
+
+```bash
+cd ~/Logistics_FMS
+source ~/venv/robot/bin/activate
+
+ROUTE_SELECTOR=kev \
+KEV_HOST=http://127.0.0.1:8011 \
+KEV_MODEL=kev-08b \
+KEV_REQUIRE_CUDA=true \
+python -m simulation.evaluation.selector_all_routes_benchmark \
+  --output simulation/benchmark_results/<환경>-kev-08b-all-routes-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+Kev-4B를 시험할 때는 0.8B 서버를 종료하고 4B 서버를 실행한 뒤
+`KEV_MODEL=kev-4b`와 결과 폴더 이름을 `kev-4b`로 변경한다. `KEV_MODEL`은 모델을
+다운로드하거나 서버에 로드하는 설정이 아니라, 현재 서버의 `--run` checkpoint가
+기대한 모델과 일치하는지 검증하고 결과에 모델명을 기록하는 설정이다.
+
+Ollama 실행:
+
+```bash
+ROUTE_SELECTOR=ollama OLLAMA_MODEL=qwen3:4b \
+python -m simulation.evaluation.selector_all_routes_benchmark \
+  --output simulation/benchmark_results/<환경>-qwen3-4b-all-routes-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+결과 폴더에는 다음 파일이 생성된다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `manifest.json` | 그래프·프롬프트 해시, 후보 수, seed, 모델과 장치 |
+| `selector_all_routes_trials.jsonl` | 요청별 후보 순서, 선택 경로, 확률, 시간과 오류 |
+| `selector_all_routes_summary.json` | 전체·언어별·경로별 정확도와 지연시간 |
+| `selector_all_routes_samples.csv` | 그래프 작성용 행 단위 결과 |
+
+정상 결과는 `error_count=0`이어야 한다. Laya는 추가로
+`state_truncated_count=0`, `state_truncation_unreported_count=0`,
+`option_completeness_unreported_count=0`, `incomplete_option_trial_count=0`,
+Laya와 Kev는
+`incomplete_probability_trial_count=0`도 확인한다. Ollama가 선택지별 확률을 반환하지
+않는 경우 확률 완전성은 `null`이며 오류가 아니다. 정확도는 후보 수에 따른 무작위
+기준선 `1 / candidate_count`와 함께 비교한다.
 
 ## 6. Kev 경로 선택 시험
 
@@ -698,18 +753,19 @@ cat /etc/nv_tegra_release 2>/dev/null || true
 V1은 기존 Direct LLM 경로 생성 시험이다. V2는 같은 Graph, 모델, Start/Target,
 Ground Truth와 공통 모델 설정으로 다음 6조건을 실행한다.
 
-| V2 조건 | 모델 동작 | Graph Retrieval |
+| V2 조건 | 모델 동작 | 추가 입력 방식 |
 | --- | --- | --- |
-| `direct_no_rag` | 한 번에 최종 경로 생성 | 미적용 |
-| `direct_rag` | 한 번에 최종 경로 생성 | 적용 |
-| `cot_no_rag` | 한 요청 안에서 단계별 계산 후 경로 생성 | 미적용 |
-| `cot_rag` | 한 요청 안에서 단계별 계산 후 경로 생성 | 적용 |
-| `iterative_no_rag` | 모델 API를 여러 번 호출해 탐색 상태 연결 | 미적용 |
-| `iterative_rag` | Retrieval Graph로 모델 API를 여러 번 호출 | 적용 |
+| `direct_no_rag` | 한 번에 최종 경로 생성 | 전체 Graph |
+| `direct_graph_retrieval` | 한 번에 최종 경로 생성 | 검색한 경로 관련 부분 Graph |
+| `cot_no_rag` | 한 요청 안에서 단계별 계산 후 경로 생성 | 전체 Graph |
+| `cot_graph_retrieval` | 한 요청 안에서 단계별 계산 후 경로 생성 | 검색한 경로 관련 부분 Graph |
+| `iterative_full_graph_only` | 전체 Graph와 현재 상태를 보고 다음 Node 하나를 선택해 Target까지 반복 | 전체 Graph만 사용 |
+| `iterative_neighbor_context` | 같은 입력에 현재 Node 직접 연결정보를 추가하고 Target까지 반복 | 전체 Graph + 정확 조회한 `available_edges` |
 
 여섯 조건은 하나의 `route_generation_v2_matrix.json`에서 파생된다. 따라서 설정
-파일을 여섯 개 복사하지 않고도 조건을 고정할 수 있다. PC와 Jetson의 모델 목록이
-다르기 때문에 장비별 matrix 파일만 분리한다.
+파일을 여섯 개 복사하지 않고도 조건을 고정할 수 있다. V2는 PC 환경에서만
+실행하며 하나의 PC matrix로 조건을 고정한다.
+
 
 ### 9.2 CoT와 Dijkstra의 차이
 
@@ -720,90 +776,95 @@ CoT와 Dijkstra는 같은 개념이 아니다.
 
 이 시험의 CoT 프롬프트가 Dijkstra 순서를 지시하지만, 모델이 그 순서를 정확히
 수행한다는 보장은 없다. 그래서 최종 경로와 각 Edge를 코드로 다시 검증한다.
-Iterative 조건에서는 모델이 매 호출마다 최소 tentative distance Node와 relaxation을
-선택한다. Python은 상태 저장과 검증만 하며 잘못된 선택을 대신 수정하지 않는다.
+Iterative 조건은 모델에게 Dijkstra의 tentative distance나 relaxation을 계산하게 하지
+않는다. 매 호출에서 모델은 전체 Graph, 현재 위치, Target, 방문 경로와 누적 거리를
+보고 다음 Node 하나만 선택한다. Python은 상태 저장과 모델이 반환한 Node의 실제
+방향성 Edge 존재 여부만 검증하며, `criteria`나 선택 후보를 모델 입력에 만들지 않는다.
+모델이 고른 Node를 최단 경로 Node로 대신 수정하지도 않는다.
+
+```text
+Start Node
+    ↓
+모델 API가 다음 Node 하나 선택
+    ↓
+실제 Edge 검증 후 현재 Node 갱신
+    ↓
+Target 도착까지 반복
+```
+
+직접 연결이 하나인 단계도 같은 입력 형식을 유지하기 위해 모델을 호출한다. 최종적으로
+Target 도착 여부, 전체 경로 유효성, Ground Truth 최단 경로·거리 일치율, API 호출
+횟수와 총 시간을 비교한다.
 
 ### 9.3 Graph Retrieval 정의
 
-입력의 원본은 항상 실제 프론트 Graph 전체 좌표·Edge와 Start/Target이다. 모델 입력에는
-`node_coordinates`도 포함하지만 경로 비용은 저장된 Edge `weight`만 사용한다. Retrieval 적용
-조건에서는 LLM 호출 전에 다음 조회를 한 번 수행한다.
+입력의 원본은 항상 실제 프론트 Graph의 전체 Node·Edge와 Start/Target이다. V2 모델 입력은
+좌표를 제거한 `CompactAdjacencyGraph`이며 경로 비용은 저장된 Edge `weight`만 사용한다.
+
+```json
+{
+  "type": "CompactAdjacencyGraph",
+  "directed": true,
+  "nodes": [0, 1],
+  "adjacency": {
+    "0": [{"to": 1, "weight": 0.352}],
+    "1": [{"to": 0, "weight": 0.223}]
+  }
+}
+```
+
+반대 방향 Edge는 별도 항목이며 서로 다른 weight를 그대로 유지한다. Direct·CoT의
+Retrieval 적용 조건에서는 LLM 호출 전에 다음 조회를 한 번 수행한다.
 
 1. Start에서 방향성 Edge를 따라 도달 가능한 Node를 구한다.
 2. 역방향으로 Target에 도달할 수 있는 Node를 구한다.
 3. 두 집합의 교집합과 그 사이 Edge를 조회한다.
-4. 각 기준 Node에 대해 인접 Node와 저장된 `weight`를 adjacency로 만든다.
+4. 각 기준 Node에 대해 인접 Node와 저장된 `weight`만 adjacency에 유지한다.
 
 Retrieval은 최단 경로나 최단 후보를 계산하지 않는다. 따라서 모델 입력에는
 `shortest_path`가 없고 다음과 같은 연결 정보만 들어간다.
 
 ```json
-{
-  "node": 1,
-  "neighbors": [
-    {"node": 0, "distance": 0.3777115936682494},
-    {"node": 2, "distance": 0.41118600261748245}
-  ]
-}
+"1": [
+  {"to": 0, "weight": 0.3777115936682494},
+  {"to": 2, "weight": 0.41118600261748245}
+]
 ```
 
 현재 Graph는 작고 연결성이 높아 Retrieval 결과가 전체 Graph와 같을 수도 있다.
 이 경우 정확도 향상 여부와 함께 입력 표현을 adjacency로 명확히 한 효과를 측정한다.
 Retrieval이 Ground Truth Edge를 누락하면 모델 실패와 구분해 기록한다.
 
-### 9.4 V1 DeepSeek non-thinking 비교군 실행
+Direct·CoT에는 경로 관련 부분 Graph를 만드는 Graph Retrieval 조건이 있다.
+Iterative에는 Vector RAG나 부분 Graph Retrieval을 사용하지 않는다. Node ID와 방향성
+Edge는 값이 정확히 정의된 구조화 데이터이므로 임베딩 유사도로 찾는 것보다
+`adjacency[current_node]`를 조회하는 편이 정확하고 빠르다. 이 조건을
+`iterative_neighbor_context`라고 부른다.
 
-DeepSeek-R1은 현재 시험 환경에서 `think=false`가 기대대로 적용되지 않고 출력
-예산을 모두 사용한 뒤 최종 JSON 없이 종료됐다. 실시간 경로 생성 비교에서는
-R1 대신 `<think>` 출력을 전제로 하지 않는 DeepSeek Coder를 사용한다.
+매 단계 전체 Graph와 상태는 그대로 보내고, Python이 현재 Node에서 이동 가능한
+미방문 Edge를 정확히 조회해 다음 형태로 추가한다.
 
-| 장비 | 모델 | Ollama 용량 | 비교 목적 |
-| --- | --- | ---: | --- |
-| Jetson·PC | `deepseek-coder:1.3b` | 약 776MB | 임베디드 환경의 경량·저지연 비교 |
-| PC | `deepseek-coder:6.7b` | 약 3.8GB | 8~12GB VRAM PC의 정확도·속도 비교 |
-
-두 모델은 코드와 자연어를 함께 학습한 코드 특화 모델이다. 따라서 일반 범용
-DeepSeek 모델과 동일한 계열 성능으로 해석하지 않고, 그래프 JSON 이해와 경로
-출력 형식 준수 능력을 검증하는 별도 비교군으로 기록한다. 두 모델 모두 공통
-`num_ctx=4096`, `num_predict=512`, timeout 120초를 사용한다.
-
-모델을 설치한다.
-
-```bash
-# Jetson과 PC 공통
-ollama pull deepseek-coder:1.3b
-
-# PC 추가
-ollama pull deepseek-coder:6.7b
+```json
+"available_edges": [
+  {"node": 1, "distance": 0.3777115936682494},
+  {"node": 18, "distance": 0.428476667276754}
+]
 ```
 
-설정만 확인한다. Ollama에는 요청하지 않는다.
+두 Iterative 조건의 입력 차이는 `available_edges` 유무뿐이다.
 
-```bash
-python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark.json \
-  --check
+```text
+iterative_full_graph_only
+= 전체 Graph + current + target + visited + accumulated distance
+
+iterative_neighbor_context
+= 같은 입력 + adjacency[current_node]에서 정확히 조회한 available_edges
 ```
 
-Jetson 또는 PC에서 1.3B만 실행한다.
+Vector RAG는 자연어 장애물 보고, 안전 정책, 운송 규칙, 과거 운행 사례처럼 ID로
+정확히 조회하기 어려운 비정형 정보를 의미 유사도로 검색할 때 별도 적용한다.
 
-```bash
-python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark_jetson.json \
-  --model deepseek-coder:1.3b \
-  --output simulation/benchmark_results/v1-deepseek-coder-1.3b-$(date +%Y%m%d-%H%M%S)
-```
-
-PC에서 6.7B를 실행한다.
-
-```bash
-python -m simulation.evaluation.benchmark \
-  --config simulation/evaluation/route_generation_benchmark.json \
-  --model deepseek-coder:6.7b \
-  --output simulation/benchmark_results/v1-deepseek-coder-6.7b-$(date +%Y%m%d-%H%M%S)
-```
-
-### 9.5 V2 6조건 실행
+### 9.4 V2 6조건 실행
 
 Ollama를 호출하지 않고 행렬 구조와 Ground Truth를 먼저 확인한다.
 
@@ -821,25 +882,9 @@ python -m simulation.evaluation.v2_benchmark \
   --output simulation/benchmark_results/pc-v2-$(date +%Y%m%d-%H%M%S)
 ```
 
-Jetson 5종을 실행한다.
+V2는 Jetson에서 실행하지 않는다. PC 결과만 V2 비교 자료로 사용한다.
 
-```bash
-python -m simulation.evaluation.v2_benchmark \
-  --matrix simulation/evaluation/route_generation_v2_matrix_jetson.json \
-  --output simulation/benchmark_results/jetson-v2-$(date +%Y%m%d-%H%M%S)
-```
-
-한 조건 또는 한 모델만 먼저 실행할 수 있다.
-
-```bash
-python -m simulation.evaluation.v2_benchmark \
-  --matrix simulation/evaluation/route_generation_v2_matrix.json \
-  --only cot_rag \
-  --model qwen3:0.6b \
-  --output simulation/benchmark_results/v2-cot-rag-smoke-$(date +%Y%m%d-%H%M%S)
-```
-
-### 9.6 결과 확인
+### 9.5 결과 확인
 
 V2 최상위 폴더에는 `matrix_manifest.json`, 파생 설정 6개와 조건별 결과 폴더가
 생긴다. 각 조건 폴더의 주요 파일은 다음과 같다.
@@ -868,13 +913,44 @@ V2_DIR=simulation/benchmark_results/<pc-v2-결과폴더>
 
 python -m simulation.evaluation.compare_strategy_results \
   --generation DirectNoRAG="$V2_DIR/direct_no_rag" \
-  --generation DirectRAG="$V2_DIR/direct_rag" \
+  --generation DirectGraphRetrieval="$V2_DIR/direct_graph_retrieval" \
   --generation CoTNoRAG="$V2_DIR/cot_no_rag" \
-  --generation CoTRAG="$V2_DIR/cot_rag" \
-  --generation IterativeNoRAG="$V2_DIR/iterative_no_rag" \
-  --generation IterativeRAG="$V2_DIR/iterative_rag" \
+  --generation CoTGraphRetrieval="$V2_DIR/cot_graph_retrieval" \
+  --generation IterativeFullGraph="$V2_DIR/iterative_full_graph_only" \
+  --generation IterativeNeighborContext="$V2_DIR/iterative_neighbor_context" \
   --output "$V2_DIR/comparison"
 ```
 
 비교할 핵심 값은 최단 경로·거리 일치율, 총 응답시간, 실제 입력·출력 토큰,
 API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
+
+### 9.6 Ollama·Laya·Kev 공통 다음 노드 반복 선택
+
+모델 종류가 달라도 같은 선택 작업으로 비교할 때 사용한다. 모든 모델은 동일한
+`CompactAdjacencyGraph`, 현재 Node, 목표 Node, 방문 Node와 누적 거리를 받는다.
+
+- `neighbors`: 현재 Node에서 실제로 이동 가능한 미방문 Node만 후보로 제공한다.
+- `all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록한다.
+- 후보가 1개면 모델을 호출하지 않고 유일한 Edge로 이동하며 `forced_step=true`로 기록한다.
+  이 단계는 API 호출 수, 모델 단계 지연시간과 0.15초 충족률의 분모에서 제외한다.
+
+```bash
+# 실사용 방식
+ROUTE_SELECTOR=laya \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --candidate-scope neighbors \
+  --output simulation/benchmark_results/<환경>-laya-v2-neighbors-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+# 능력 시험
+ROUTE_SELECTOR=laya \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --candidate-scope all \
+  --output simulation/benchmark_results/<환경>-laya-v2-all-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+`ROUTE_SELECTOR`를 `kev` 또는 `ollama`로 바꾸면 같은 입력과 검증 규칙으로 실행한다.
+Kev는 해당 서버를 먼저 실행하고 `KEV_MODEL`을 지정하며, Ollama는 `OLLAMA_MODEL`을
+지정한다. 결과에는 실패 단계, 단계별 후보·선택·확률·입력 사용량·응답시간,
+없는 Edge 선택, 재방문, 목표 도착 여부, 최단 경로·거리 일치와 무작위 기준선을 기록한다.
