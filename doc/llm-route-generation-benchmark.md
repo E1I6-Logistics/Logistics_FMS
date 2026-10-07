@@ -127,9 +127,9 @@ Jetson에서는 실행 중 다른 터미널에서 `sudo tegrastats`의 `GR3D_FRE
 | 고정 기준 | 값 |
 | --- | --- |
 | 실행 커밋 | 실행 시 `manifest.json`의 `executed_commit`에 자동 기록 |
-| 그래프 | `routes/test.geojson` |
+| 그래프 | `routes/test_int.geojson` |
 | 그래프 크기 | 노드 12개, 유향 간선 38개 |
-| 그래프 SHA-256 | `9b0ca28cca7c3c55fc795a7a0f8145c3b7f781511567dc92bdb54c0e97d48d68` |
+| 그래프 SHA-256 | `f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193` |
 | V1 Direct 프롬프트 SHA-256 | `f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72` |
 | V2 Direct 프롬프트 SHA-256 | `47e58ad5ebe0f5dede1985128bb3055c800ab785a87372ce80ddf2fb25c4660c` |
 | V2 CoT 프롬프트 SHA-256 | `b2592acb671b10b493325b9f432fc16ea293a596bd7ae8cd00a72e58cd9c9278` |
@@ -928,107 +928,183 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 
 모델 종류가 달라도 같은 선택 작업으로 비교할 때 사용한다. 모든 모델은 동일한
 `CompactAdjacencyGraph`, 현재 Node, 목표 Node, 방문 Node와 누적 거리를 받는다.
+`--graph`로 사용할 GeoJSON을 명시하며, 정수 weight 시험은
+`routes/test_int.geojson`을 사용한다. 실제 경로 비용은 좌표로 다시 계산하지 않고 저장된
+`weight`를 그대로 사용한다.
 
-경로는 설정 파일의 고정 Start·Target 목록을 사용하지 않고 실행 시작 시 랜덤 생성한다.
+경로 생성 방식은 두 가지다.
 
-- 기본 5개 경로를 생성한다. `--case-count`로 개수를 변경할 수 있다.
-- Target은 도킹 Node `0~6` 중 중복 없이 선택한다.
-- Start도 전체 맵 Node 중 중복 없이 선택하며, 이번 실행에서 뽑힌 Target 집합과 겹치지 않는다.
-- Start에서 Target까지 유효한 방향성 경로가 있는 조합만 사용한다.
-- `--route-seed`를 생략하면 실행마다 새 랜덤 seed와 경로 조합을 만든다.
-- 생성된 seed와 Start·Target 목록은 `manifest.json`의 `settings`에 기록한다.
-- 모델 비교에서는 첫 실행의 manifest에 기록된 `route_seed`를 나머지 모델에 지정한다.
+- `--case-mode random`: 기본 5개 Start→Docking 경로를 만든다. Target은 도킹 Node
+  `0~6`, Start는 Target 집합과 겹치지 않으며 유효한 방향성 경로만 사용한다.
+- `--case-mode all-pairs`: 전체 Node에서 도킹 Node `0~6`으로 갈 수 있는 모든 조합을
+  사용한다. 현재 12 Node 맵에서는 Start와 Target이 같은 7쌍을 제외한 77쌍이다.
+- random 모드에서 `--route-seed`를 생략하면 실행마다 새 seed를 만들고 manifest에
+  기록한다. 모델·Context 비교에는 반드시 첫 실행과 같은 seed를 재사용한다.
+
+다음 노드 선택 규칙은 아래와 같다.
 
 - 기본값은 `--candidate-scope neighbors --context-mode neighbor_context`다.
-- `neighbors`에서는 `available_edges`를 정확 조회하고, 그 안의 Node만 Laya·Kev·Ollama의 `criteria`로 제공한다.
-- `previous_node`로 즉시 돌아가는 Edge는 `available_edges`와 `criteria`에서 제외해 `6 → 14 → 6` 같은 왕복을 막는다.
-- 직전 Node가 아닌 과거 방문 Node는 다시 선택할 수 있다. 재방문은 `revisited=true`와 `revisit_count`로 기록하고 Target 도착까지 계속한다.
-- 무한 순환은 `--max-steps`에서 중단한다. 기본값은 전체 Node 수의 2배이며 현재 맵에서는 24회다.
-- 전체 `CompactAdjacencyGraph`는 후보 Node에서 Target까지의 남은 경로 비용을 판단할 수 있도록 계속 제공한다.
-- `--candidate-scope all`: 현재 Node를 제외한 전체 Node를 후보로 제공하며 없는 Edge 선택도 실패로 기록하는 능력 시험이다.
-- `--context-mode full_graph_only`: 전체 Graph와 현재 상태만 전달한다.
-- `--context-mode neighbor_context`: 동일한 입력에 현재 Node의 outgoing Edge와 weight를 `available_edges`로 추가하며 직전 Node로 돌아가는 Edge만 제외한다.
-- Context 효과를 비교할 때는 두 실행의 `--candidate-scope`를 동일하게 유지한다.
-- 후보가 1개면 모델을 호출하지 않고 유일한 Edge로 이동하며 `forced_step=true`로 기록한다.
-  이 단계는 API 호출 수, 모델 단계 지연시간과 0.15초 충족률의 분모에서 제외한다.
+- `neighbors`는 현재 Node에서 실제로 나가는 `available_edges`의 Node만 criteria로 준다.
+- `available_edges`는 `node`와 저장된 `weight`를 가진다. 벡터 유사도 검색이 아니라
+  `adjacency[current_node]`의 정확 조회 결과다.
+- Node 재방문은 유효한 도착을 위한 복구 수단으로 허용한다.
+- 같은 방향성 Edge는 한 번만 사용할 수 있어 삼각형 이상의 순환도 반복할 수 없다.
+- Node별 방문은 최대 2회다.
+- 직전 Node는 일반 후보에서 제외하지만 다른 후보가 하나도 없으면 아직 사용하지 않은
+  역방향 Edge를 통한 한 단계 backtrack을 허용한다.
+- 후보가 하나면 모델을 호출하지 않고 강제 이동하며 `forced_step=true`로 기록한다.
+- 기본 최대 이동 횟수는 Node 수의 두 배다. 현재 맵에서는 24회다.
+
+#### 동일 조건 예비 시험
+
+첫 실행에서 seed를 하나 만든다.
 
 ```bash
-# Context 미적용
 ROUTE_SELECTOR=laya \
 python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --graph routes/test_int.geojson \
+  --case-mode random \
   --candidate-scope neighbors \
   --context-mode full_graph_only \
-  --output simulation/benchmark_results/<환경>-laya-full-graph-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15 \
-  --case-count 5
-
-# 정확 인접 Context 적용: 위 실행과 criteria는 동일
-ROUTE_SELECTOR=laya \
-python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --candidate-scope neighbors \
-  --context-mode neighbor_context \
-  --output simulation/benchmark_results/<환경>-laya-neighbor-context-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15 \
-  --case-count 5
+  --output simulation/benchmark_results/laya-full-graph-$(date +%Y%m%d-%H%M%S) \
+  --repeats 5 --warmups 1 --deadline 0.15 --case-count 5
 ```
 
-첫 실행의 결과 폴더에서 비교용 seed를 확인한다.
+생성된 seed를 확인한다.
 
 ```bash
 python -c 'import json; print(json.load(open("<첫-결과폴더>/manifest.json"))["settings"]["route_seed"])'
 ```
 
-다른 모델을 같은 경로로 비교할 때만 출력된 값을 지정한다.
+이후 Laya·Kev·Ollama와 두 Context 조건에 모두 같은 값을 지정한다.
 
 ```bash
---route-seed <첫-실행에서-확인한-seed>
+--graph routes/test_int.geojson \
+--case-mode random \
+--route-seed <첫-실행-seed>
 ```
 
-`ROUTE_SELECTOR`를 `kev` 또는 `ollama`로 바꾸면 같은 입력과 검증 규칙으로 실행한다.
-Kev는 0.8B와 4B를 각각 측정한다. 두 checkpoint는 같은 8011 포트를 사용하므로 서버를
-동시에 실행하지 않고, 한 모델의 시험이 끝난 뒤 서버를 종료하고 다음 모델을 실행한다.
+Neighbor Context 조건은 다음처럼 실행한다. `--output`은 생략할 수 있으며, 생략하면
+selector와 model 이름을 포함한 폴더가 자동 생성된다.
 
 ```bash
-# Kev-0.8B 서버가 실행 중일 때
-ROUTE_SELECTOR=kev \
-KEV_HOST=http://127.0.0.1:8011 \
-KEV_MODEL=kev-08b \
+ROUTE_SELECTOR=laya \
 python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --output simulation/benchmark_results/<환경>-kev-08b-iterative-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15
-
-# 0.8B 서버를 종료하고 Kev-4B 서버를 실행한 뒤 측정
-ROUTE_SELECTOR=kev \
-KEV_HOST=http://127.0.0.1:8011 \
-KEV_MODEL=kev-4b \
-python -m simulation.evaluation.selector_iterative_route_benchmark \
-  --output simulation/benchmark_results/<환경>-kev-4b-iterative-$(date +%Y%m%d-%H%M%S) \
-  --repeats 5 --warmups 1 --deadline 0.15 \
-  --max-steps 24
-```
-
-두 명령은 기본값인 `candidate_scope=neighbors`, `context_mode=neighbor_context`를 사용한다.
-`--max-steps`를 생략해도 현재 12개 Node 맵에서는 기본값 24가 적용된다.
-따라서 0.8B와 4B 모두 전체 Graph와 현재 상태를 받되, `available_edges` 안의 Node만
-choice 후보로 받는다. `requested_model`과 결과 폴더가 다르므로 결과를 서로 구분할 수 있다.
-
-Ollama는 `OLLAMA_MODEL`을 지정한다. 
-
-```bash
-ROUTE_SELECTOR=ollama \
-OLLAMA_MODEL=qwen3:4b \
-OLLAMA_HOST=http://127.0.0.1:11434 \
-python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --graph routes/test_int.geojson \
+  --case-mode random \
+  --route-seed <첫-실행-seed> \
   --candidate-scope neighbors \
   --context-mode neighbor_context \
-  --output "simulation/benchmark_results/pc-qwen3-4b-neighbor-context-$(date +%Y%m%d-%H%M%S)" \
-  --repeats 5 \
-  --warmups 1 \
-  --deadline 0.15 \
-  --case-count 5 \
-  --route-seed 20260928 \
-  --max-steps 24
+  --repeats 5 --warmups 1 --deadline 0.15 --case-count 5
 ```
 
-결과에는 실패 단계, 단계별 후보·선택·확률·입력
-사용량·응답시간, 재방문, 목표 도착 여부, 최단 경로·거리 일치와 무작위 기준선을 기록한다.
+Kev는 서버의 checkpoint와 `KEV_MODEL`을 일치시킨다.
+
+```bash
+# Kev-0.8B 서버 실행 중
+ROUTE_SELECTOR=kev KEV_HOST=http://127.0.0.1:8011 KEV_MODEL=kev-08b \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --graph routes/test_int.geojson --case-mode random \
+  --route-seed <첫-실행-seed> \
+  --candidate-scope neighbors --context-mode neighbor_context \
+  --repeats 5 --warmups 1 --deadline 0.15
+
+# 서버를 Kev-4B checkpoint로 교체한 뒤 실행
+ROUTE_SELECTOR=kev KEV_HOST=http://127.0.0.1:8011 KEV_MODEL=kev-4b \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --graph routes/test_int.geojson --case-mode random \
+  --route-seed <첫-실행-seed> \
+  --candidate-scope neighbors --context-mode neighbor_context \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+Ollama 단일 모델은 환경 변수 방식으로도 실행할 수 있다.
+
+```bash
+ROUTE_SELECTOR=ollama OLLAMA_MODEL=qwen3:4b \
+OLLAMA_HOST=http://127.0.0.1:11434 \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --graph routes/test_int.geojson --case-mode random \
+  --route-seed <첫-실행-seed> \
+  --candidate-scope neighbors --context-mode neighbor_context \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+Ollama 여러 모델의 목록과 공통·모델별 파라미터는
+`simulation/evaluation/selector_iterative_benchmark.json`에서 관리한다.
+`ollama_defaults`에는 공통 host, timeout, keep-alive, temperature, seed,
+`num_ctx`, `num_predict`를 두고, 각 `models` 항목은 `enabled`, `think`,
+`options`로 필요한 값만 덮어쓴다. 실행 전에는 Ollama 요청 없이 JSON, Graph 파일,
+Graph SHA-256과 선택 모델을 검사한다.
+
+```bash
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --config simulation/evaluation/selector_iterative_benchmark.json \
+  --check
+```
+
+한 모델만 실행한다.
+
+```bash
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --config simulation/evaluation/selector_iterative_benchmark.json \
+  --model qwen3:4b \
+  --output simulation/benchmark_results/pc-qwen3-4b-iterative-$(date +%Y%m%d-%H%M%S)
+```
+
+여러 모델만 골라 같은 Graph, 경로, 반복 조건으로 순서대로 실행한다. `--model`은
+반복해서 사용한다.
+
+```bash
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --config simulation/evaluation/selector_iterative_benchmark.json \
+  --model qwen3:0.6b \
+  --model qwen3:4b \
+  --model phi4:14b \
+  --output simulation/benchmark_results/pc-selected-models-$(date +%Y%m%d-%H%M%S)
+```
+
+`--model`을 생략하면 JSON에서 `enabled: true`인 모델을 모두 실행한다. 각 모델 결과는
+상위 결과 폴더 아래 모델명별 하위 폴더에 저장되고, 전체 실행 상태는
+`selector_iterative_matrix_manifest.json`에 기록된다. JSON 설정 모드에서는 Graph,
+case, seed, 반복 횟수, Context 조건을 JSON 값으로 통일하므로 같은 명령에 별도
+`--graph`, `--repeats` 등을 섞지 않는다.
+
+#### 최종 비교 시험
+
+코드와 프롬프트가 확정된 뒤에는 표본 운에 좌우되지 않도록 `all-pairs`로 한 번만 최종
+측정한다. all-pairs에는 seed를 사용하지 않는다.
+
+```bash
+ROUTE_SELECTOR=<laya|kev|ollama> \
+python -m simulation.evaluation.selector_iterative_route_benchmark \
+  --graph routes/test_int.geojson \
+  --case-mode all-pairs \
+  --candidate-scope neighbors \
+  --context-mode neighbor_context \
+  --repeats 5 --warmups 1 --deadline 0.15
+```
+
+실행 전에 selector runtime을 검사한다. Kev 서버 미연결·checkpoint 불일치, Laya 로드
+실패, Ollama 모델 미설치는 trial 실패로 섞지 않고 manifest의 `status=failed`,
+`failure_stage=selector_preflight`로 기록한 뒤 실행을 중단한다.
+
+결과 판독 시 다음 값을 함께 본다.
+
+| 값 | 의미 |
+| --- | --- |
+| `reached_target_count` | 유효한 방향성 Edge만 지나 Target에 도착한 횟수 |
+| `non_revisiting_valid_path_count` | 재방문 없이 Target에 도착한 횟수 |
+| `revisit_trial_count` | 한 번 이상 과거 Node를 다시 방문한 trial 수 |
+| `backtrack_step_count` | 후보가 없어 미사용 역방향 Edge로 복귀한 단계 수 |
+| `cycle_prevented_count` | Edge 재사용·방문 상한·직전 Node 규칙으로 제외한 후보 수 |
+| `max_node_visit_count` | 한 Node의 최대 방문 횟수 |
+| `mean_step_excess` | Ground Truth보다 추가로 이동한 평균 단계 수 |
+| `exact_path_match_count` | Ground Truth 경로 완전 일치 횟수 |
+| `distance_match_count` | Ground Truth 최단 거리 일치 횟수 |
+| `mean_distance_ratio` | 선택 경로 거리 ÷ 최단 거리 |
+
+`valid_path`는 “도착 가능한 유효 Edge 경로”를 뜻한다. 최단 경로 품질은
+`exact_path_match`, `distance_match`, `distance_ratio`, `step_excess`로 따로 판단한다.
+manifest에는 Graph 경로·SHA-256, 생성된 Start/Target, prompt 원문·SHA-256·버전,
+selector·model·device가 기록된다.
