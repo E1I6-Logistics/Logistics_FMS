@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..services.mode_service import mode_manager
@@ -33,6 +33,11 @@ async def get_mode():
 
 @router.put("")
 async def set_mode(payload: ModeRequest):
+    from ..services.scenario_service import scenario_manager
+    try:
+        scenario_manager.ensure_available()
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     # 실제 모드 전환에서는 시뮬레이션 모듈을 로드하지 않는다.
     if payload.mode == "simulation":
         from ..services.mock_data import mock_fms
