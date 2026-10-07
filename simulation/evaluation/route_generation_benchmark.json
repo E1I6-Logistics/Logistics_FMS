@@ -3,9 +3,9 @@
   "description": "PC actual frontend map direct path generation",
   "graph": {
     "path": "routes/test_int.geojson",
-    "sha256": "f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193",
-    "node_count": 12,
-    "directed_edge_count": 38,
+    "sha256": "a2a02f6d97738997206ef7866e1e70e1e2c4c1ca0377fc6cd3675544abac92db",
+    "node_count": 13,
+    "directed_edge_count": 30,
     "weight_property": "weight"
   },
   "models": [
@@ -44,59 +44,60 @@
   ],
   "cases": [
     {
-      "start": 0,
-      "goal": 2,
+      "start": 2,
+      "goal": 11,
       "expected_path": [
-        0,
-        1,
-        2
+        2,
+        9,
+        7,
+        11
       ],
-      "expected_distance": 79.0
+      "expected_distance": 191.0
+    },
+    {
+      "start": 8,
+      "goal": 5,
+      "expected_path": [
+        8,
+        7,
+        5
+      ],
+      "expected_distance": 69.0
     },
     {
       "start": 3,
-      "goal": 15,
+      "goal": 1,
       "expected_path": [
         3,
-        19,
-        15
+        11,
+        7,
+        9,
+        1
       ],
-      "expected_distance": 90.0
+      "expected_distance": 191.0
     },
     {
-      "start": 5,
-      "goal": 18,
+      "start": 4,
+      "goal": 0,
       "expected_path": [
-        5,
-        15,
-        16,
-        18
+        4,
+        12,
+        8,
+        10,
+        0
       ],
-      "expected_distance": 120.0
+      "expected_distance": 190.0
     },
     {
-      "start": 1,
-      "goal": 4,
+      "start": 12,
+      "goal": 0,
       "expected_path": [
-        1,
-        17,
-        15,
-        19,
-        4
+        12,
+        8,
+        10,
+        0
       ],
-      "expected_distance": 197.0
-    },
-    {
-      "start": 6,
-      "goal": 2,
-      "expected_path": [
-        6,
-        19,
-        15,
-        17,
-        2
-      ],
-      "expected_distance": 208.0
+      "expected_distance": 176.0
     }
   ],
   "settings": {
@@ -116,7 +117,7 @@
   "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\n\nInput contains start_node, target_node, and the complete CompactRouteGraph.\nNodes are integer IDs. Edges are directed objects with from, to, and weight.\nTraverse only from from to to. Use every stored weight exactly as given and never\nrecalculate it from coordinates. Return the valid path with minimum total weight and\nthe sum of its edge weights. Return only JSON matching the schema.",
   "prompt_sha256": "f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72",
   "experiment_mode": "V1_DIRECT",
-  "comparison_condition_sha256": "346f3eb4fe312d6407855470e55de58ba2a4df146db68f29ef7580c13313a25e",
+  "comparison_condition_sha256": "1f139b3351bd1c5a968110daf9c7817a293c465c27a08b3be0708fb8eb8cd1a8",
   "retrieval": {
     "enabled": false,
     "policy": "full_graph"

@@ -41,11 +41,14 @@ def _blocked_route_state(language: str) -> dict[str, Any]:
         if language == "ko"
         else "A route cannot be used when it contains a blocked node."
     )
+    planned_nodes = [int(node) for node in planned["node_ids"]]
+    if len(planned_nodes) < 3:
+        raise ValueError("차단 시험 경로에는 내부 Node가 필요합니다.")
     return {
         "start_node": 0,
         "target_node": 2,
-        "planned_route": [int(node) for node in planned["node_ids"]],
-        "blocked_nodes": [1],
+        "planned_route": planned_nodes,
+        "blocked_nodes": [planned_nodes[1]],
         "route_graph": build_compact_route_graph(
             graph, graph_path.name, require_stored_weight=True
         ),

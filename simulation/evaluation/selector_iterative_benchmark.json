@@ -2,7 +2,7 @@
   "benchmark_id": "selector-iterative-ollama-models",
   "graph": {
     "path": "routes/test_int.geojson",
-    "sha256": "f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193"
+    "sha256": "a2a02f6d97738997206ef7866e1e70e1e2c4c1ca0377fc6cd3675544abac92db"
   },
   "ollama_defaults": {
     "host": "http://127.0.0.1:11434",
@@ -16,16 +16,48 @@
     }
   },
   "models": [
-    {"name": "qwen3:0.6b", "enabled": true, "think": false},
-    {"name": "deepseek-coder:1.3b", "enabled": true},
-    {"name": "llama3.2:3b", "enabled": true},
-    {"name": "qwen3:4b", "enabled": true, "think": false},
-    {"name": "gemma3:4b", "enabled": true},
-    {"name": "llama3.1:8b", "enabled": true},
-    {"name": "mistral-nemo:12b", "enabled": true},
-    {"name": "gemma3:12b", "enabled": true},
-    {"name": "deepseek-coder:6.7b", "enabled": true},
-    {"name": "phi4:14b", "enabled": true}
+    {
+      "name": "qwen3:0.6b",
+      "enabled": true,
+      "think": false
+    },
+    {
+      "name": "deepseek-coder:1.3b",
+      "enabled": true
+    },
+    {
+      "name": "llama3.2:3b",
+      "enabled": true
+    },
+    {
+      "name": "qwen3:4b",
+      "enabled": true,
+      "think": false
+    },
+    {
+      "name": "gemma3:4b",
+      "enabled": true
+    },
+    {
+      "name": "llama3.1:8b",
+      "enabled": true
+    },
+    {
+      "name": "mistral-nemo:12b",
+      "enabled": true
+    },
+    {
+      "name": "gemma3:12b",
+      "enabled": true
+    },
+    {
+      "name": "deepseek-coder:6.7b",
+      "enabled": true
+    },
+    {
+      "name": "phi4:14b",
+      "enabled": true
+    }
   ],
   "settings": {
     "case_mode": "random",
@@ -35,7 +67,7 @@
     "context_mode": "neighbor_context",
     "repeats": 5,
     "warmups": 1,
-    "max_steps": 24,
+    "max_steps": 26,
     "deadline_seconds": 0.15
   }
 }

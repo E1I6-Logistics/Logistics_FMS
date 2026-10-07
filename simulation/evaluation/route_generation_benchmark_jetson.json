@@ -3,9 +3,9 @@
   "description": "Jetson actual frontend map direct path generation",
   "graph": {
     "path": "routes/test_int.geojson",
-    "sha256": "f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193",
-    "node_count": 12,
-    "directed_edge_count": 38,
+    "sha256": "a2a02f6d97738997206ef7866e1e70e1e2c4c1ca0377fc6cd3675544abac92db",
+    "node_count": 13,
+    "directed_edge_count": 30,
     "weight_property": "weight"
   },
   "models": [
@@ -29,59 +29,60 @@
   ],
   "cases": [
     {
-      "start": 0,
-      "goal": 2,
+      "start": 2,
+      "goal": 11,
       "expected_path": [
-        0,
-        1,
-        2
+        2,
+        9,
+        7,
+        11
       ],
-      "expected_distance": 79.0
+      "expected_distance": 191.0
+    },
+    {
+      "start": 8,
+      "goal": 5,
+      "expected_path": [
+        8,
+        7,
+        5
+      ],
+      "expected_distance": 69.0
     },
     {
       "start": 3,
-      "goal": 15,
+      "goal": 1,
       "expected_path": [
         3,
-        19,
-        15
+        11,
+        7,
+        9,
+        1
       ],
-      "expected_distance": 90.0
+      "expected_distance": 191.0
     },
     {
-      "start": 5,
-      "goal": 18,
+      "start": 4,
+      "goal": 0,
       "expected_path": [
-        5,
-        15,
-        16,
-        18
+        4,
+        12,
+        8,
+        10,
+        0
       ],
-      "expected_distance": 120.0
+      "expected_distance": 190.0
     },
     {
-      "start": 1,
-      "goal": 4,
+      "start": 12,
+      "goal": 0,
       "expected_path": [
-        1,
-        17,
-        15,
-        19,
-        4
+        12,
+        8,
+        10,
+        0
       ],
-      "expected_distance": 197.0
-    },
-    {
-      "start": 6,
-      "goal": 2,
-      "expected_path": [
-        6,
-        19,
-        15,
-        17,
-        2
-      ],
-      "expected_distance": 208.0
+      "expected_distance": 176.0
     }
   ],
   "settings": {
@@ -107,7 +108,7 @@
     "single_loaded_model": true,
     "single_concurrent_request": true
   },
-  "comparison_condition_sha256": "945a5bec7c73a923c93093e385f9e5a56c41161f50c9f77719628e2827c2ac0b",
+  "comparison_condition_sha256": "c0bcd75a63f0ec4604bbbec7335fcd08f8b8a25a5dd21131ef59e815840d39ad",
   "retrieval": {
     "enabled": false,
     "policy": "full_graph"

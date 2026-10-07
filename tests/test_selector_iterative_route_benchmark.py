@@ -480,10 +480,10 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertEqual(prepared["graph_path"].name, "test_int.geojson")
         self.assertEqual(
             prepared["compact_graph"]["adjacency"]["0"],
-            [{"to": 1, "weight": 38}, {"to": 18, "weight": 43}],
+            [{"to": 10, "weight": 51}],
         )
 
-    # all-pairs는 12개 Node에서 도킹 0~6과 동일한 7쌍을 제외한 77쌍이다.
+    # all-pairs는 13개 Node에서 도킹 0~6과 동일한 7쌍을 제외한 84쌍이다.
     def test_all_pairs_generates_every_start_to_docking_pair(self):
         prepared = _prepare(
             graph_path=Path("routes/test_int.geojson"),
@@ -491,7 +491,7 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         )
 
         pairs = {(case["start"], case["target"]) for case in prepared["cases"]}
-        self.assertEqual(len(pairs), 77)
+        self.assertEqual(len(pairs), 84)
         self.assertTrue(all(start != target for start, target in pairs))
         self.assertTrue(all(target in range(7) for _start, target in pairs))
         self.assertIsNone(prepared["route_seed"])
