@@ -114,7 +114,11 @@ class FmsRosNode(Node):
         self._follow_waypoints_clients[robot_id] = action_follow_waypoints_client
         self._precision_dock_clients[robot_id] = action_precision_dock_client
         self._aruco_align_clients[robot_id] = action_aruco_align_client
-
+        print(
+            f"[ROS ACTION READY] robot={robot_id} "
+            f"navigate_through_poses={action_follow_waypoints_client.server_is_ready()}",
+            flush=True,
+        )
         # 모든 인터페이스 생성이 끝난 후 등록 처리
         self._registered_robots.add(robot_id)
         print(f"[{strftime('%H:%M:%S')}] [ROS NODE] Robot registered: {robot_id}", flush=True)
@@ -153,9 +157,13 @@ class FmsRosNode(Node):
             or robot_id in self._follow_waypoints_goal_handles
         ):
             raise RuntimeError(f"이전 NavigateThroughPoses 실행이 종료되지 않았습니다: {robot_id}")
-
+        print(
+            f"[ROS NAV CHECK] robot={robot_id} "
+            f"ready={client.server_is_ready()}",
+            flush=True,
+        )
         # Nav2 NavigateThroughPoses Action Server 연결 확인
-        if not client.wait_for_server(timeout_sec=2.0):
+        if not client.wait_for_server(timeout_sec=5.0):
             raise RuntimeError(f"NavigateThroughPoses Action Server를 찾을 수 없습니다: {robot_id}")
 
         # NavigateThroughPoses Goal 생성
@@ -408,9 +416,12 @@ class FmsRosNode(Node):
             print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} client not available", flush=True)
             raise ValueError(f"PrecisionDock client not found: {robot_id}")
 
-        print(f"[{strftime('%H:%M:%S')}] [ROS DOCK] robot={robot_id} "
-              f"ready={client.server_is_ready()}", flush=True)
-        if not client.wait_for_server(timeout_sec=2.0):
+        print(
+            f"[ROS NAV CHECK] robot={robot_id} "
+            f"ready={client.server_is_ready()}",
+            flush=True,
+        )      
+        if not client.wait_for_server(timeout_sec=5.0):
             print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} server not available", flush=True)
             if self.precision_dock_result_callback:
                 self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
@@ -500,9 +511,13 @@ class FmsRosNode(Node):
 
         if client is None:
             raise ValueError(f"Aruco Align Action client를 찾을 수 없습니다: {robot_id}")
-
+        print(
+            f"[ROS NAV CHECK] robot={robot_id} "
+            f"ready={client.server_is_ready()}",
+            flush=True,
+        )
         # Action Server 연결 확인
-        if not client.wait_for_server(timeout_sec=2.0):
+        if not client.wait_for_server(timeout_sec=5.0):
             print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO ERROR] robot={robot_id} "
                   "Action Server를 찾을 수 없습니다.", flush=True)
 
