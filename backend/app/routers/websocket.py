@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from time import strftime
 
 from ..ros2.ros_gateway import ros_gateway
 from ..services.mode_service import mode_manager
@@ -16,7 +17,7 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await manager.connect(websocket)
-    print("[WS DASHBOARD] mode =", mode_manager.mode)
+    print(f"[{strftime('%H:%M:%S')}] [WS DASHBOARD] mode =", mode_manager.mode)
     try:
         if mode_manager.mode == "simulation":
             from ..services.mock_data import mock_fms
@@ -26,7 +27,7 @@ async def dashboard_websocket(websocket: WebSocket):
             for state in mock_fms.robot_snapshots(mode_manager.mode):
                 await websocket.send_json({"type": "telemetry", "data": state})
         else:
-            print("[REAL WS] Sending telemetry for all robots")
+            print(f"[{strftime('%H:%M:%S')}] [REAL WS] Sending telemetry for all robots")
             await websocket.send_json(
                 {"type": "system", "data": {"mode": mode_manager.mode, "source": "ros2"}}
             )
@@ -55,7 +56,7 @@ async def dashboard_websocket(websocket: WebSocket):
                     "source": "ros2",
                     "pose_source": "AMCL",
                 }
-                print("[REAL WS]", robot.robot_id, "route=", robot.route)
+                print(f"[{strftime('%H:%M:%S')}] [REAL WS]", robot.robot_id, "route=", robot.route)
                 await websocket.send_json({"type": "telemetry", "data": state})
 
         while True:

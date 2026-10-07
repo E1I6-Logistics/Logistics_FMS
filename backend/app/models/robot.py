@@ -95,8 +95,17 @@ class Robot:
 
         if connected:
             if self.state == RobotState.OFFLINE:
-                self.state = RobotState.IDLE
-        else:
+                # 진행 중이던 이동/주문은 연결 복구만으로 IDLE 또는 자동 재출발시키지 않는다.
+                active = (self.route is not None or self.navigation_type is not None
+                          or self.order_id is not None)
+                if active:
+                    self.state = RobotState.PAUSED
+                elif self.pose_received_at is None:
+                    self.state = RobotState.INITIALIZING
+                else:
+                    self.state = RobotState.IDLE
+        elif self.state != RobotState.EMERGENCY_STOP:
+            # 연결 여부는 connected에 남기고 비상정지는 명시적 해제 전까지 유지한다.
             self.state = RobotState.OFFLINE
 
     def set_state(self, state: RobotState) -> None:
