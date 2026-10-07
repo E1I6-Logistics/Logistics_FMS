@@ -1,11 +1,15 @@
 """모델 없이 V2 다음 노드 반복 선택과 실패 기록을 검증한다."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from simulation.evaluation.selector_iterative_route_benchmark import (
     _prepare,
     _run_route,
     _summarize,
+    run_benchmark,
 )
 
 
@@ -158,8 +162,8 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertEqual(
             selector.states[0]["available_edges"],
             [
-                {"node": 1, "distance": 1.0},
-                {"node": 2, "distance": 3.0},
+                {"node": 1, "weight": 1},
+                {"node": 2, "weight": 3},
             ],
         )
         self.assertEqual(
@@ -190,8 +194,8 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertEqual(
             context_selector.states[0]["available_edges"],
             [
-                {"node": 1, "distance": 1.0},
-                {"node": 2, "distance": 3.0},
+                {"node": 1, "weight": 1},
+                {"node": 2, "weight": 3},
             ],
         )
         self.assertEqual(
@@ -233,7 +237,7 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertEqual(result["steps"][1]["candidates"], {"node_2": "Node 2"})
         self.assertEqual(
             result["steps"][1]["available_edges"],
-            [{"node": 2, "distance": 1.0}],
+            [{"node": 2, "weight": 1}],
         )
 
     # 직전 Node가 아니면 과거 방문 Node로 돌아간 뒤 Target에 도착할 수 있다.
@@ -297,11 +301,14 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertIsNone(result["error"])
         self.assertEqual(result["path"], [0, 1, 2, 0, 3])
         self.assertTrue(result["valid_path"])
+        self.assertTrue(result["has_revisit"])
+        self.assertFalse(result["non_revisiting_valid_path"])
+        self.assertGreater(result["step_excess"], 0)
         self.assertEqual(result["revisit_count"], 1)
         self.assertTrue(result["steps"][2]["revisited"])
 
-    # 3개 이상 Node의 순환은 허용하지만 max_steps에서 실패로 종료한다.
-    def test_longer_cycle_stops_at_max_steps(self):
+    # 삼각형 순환도 동일 방향 Edge를 두 번째 사용하기 전에 중단한다.
+    def test_triangle_cycle_stops_before_reusing_directed_edge(self):
         class _MustNotRunSelector:
             name = "laya"
 
@@ -341,9 +348,58 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
             max_steps=4,
         )
 
-        self.assertEqual(result["path"], [0, 1, 2, 0, 1])
-        self.assertEqual(result["revisit_count"], 2)
-        self.assertIn("최대 단계 초과: max_steps=4", result["error"])
+        self.assertEqual(result["path"], [0, 1, 2, 0])
+        self.assertEqual(result["revisit_count"], 1)
+        self.assertEqual(result["used_edge_count"], 3)
+        self.assertEqual(result["max_node_visit_count"], 2)
+        self.assertGreaterEqual(result["cycle_prevented_count"], 1)
+        self.assertIn("순환 방지 조건", result["error"])
+
+    # 일반 후보가 없으면 아직 사용하지 않은 역방향 Edge로 한 번 복귀할 수 있다.
+    def test_unused_reverse_edge_is_allowed_as_backtrack(self):
+        class _MustNotRunSelector:
+            name = "laya"
+
+            def select_choice(self, *args, **kwargs):
+                raise AssertionError("단일 후보 backtrack에서는 selector를 호출하면 안 됩니다.")
+
+        prepared = {
+            "compact_graph": {
+                "type": "CompactAdjacencyGraph",
+                "directed": True,
+                "nodes": [0, 1, 2],
+                "adjacency": {
+                    "0": [{"to": 1, "weight": 1}],
+                    "1": [{"to": 0, "weight": 1}],
+                    "2": [],
+                },
+            },
+            "points": {0: (0.0, 0.0), 1: (1.0, 0.0), 2: (2.0, 0.0)},
+            "edges": [(0, 1, 1.0), (1, 0, 1.0)],
+            "edge_weights": {(0, 1): 1.0, (1, 0): 1.0},
+            "nodes": [0, 1, 2],
+        }
+
+        result = _run_route(
+            _MustNotRunSelector(),
+            prepared,
+            {
+                "start": 0,
+                "target": 2,
+                "expected_path": [0, 1, 2],
+                "expected_distance": 2.0,
+            },
+            "neighbors",
+            0.15,
+            max_steps=4,
+        )
+
+        self.assertEqual(result["path"], [0, 1, 0])
+        self.assertEqual(result["backtrack_step_count"], 1)
+        self.assertTrue(result["steps"][1]["backtrack_allowed"])
+        self.assertTrue(result["steps"][1]["backtrack"])
+        self.assertIn("순환 방지 조건", result["error"])
+
 
     # 전체 노드 모드에서 없는 간선을 고르면 첫 실패 단계와 원인을 남겨야 한다.
     def test_invalid_edge_choice_is_recorded(self):
@@ -407,6 +463,62 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
         self.assertEqual(summary["state_truncation_unreported_trial_count"], 0)
         self.assertIsNone(summary["step_realtime_met_rate"])
         self.assertTrue(all(step["forced_step"] for step in result["steps"]))
+
+
+    # 정수 weight 맵을 명시하면 모델 입력에서도 정수 표현을 유지해야 한다.
+    def test_explicit_integer_graph_is_used(self):
+        prepared = _prepare(
+            graph_path=Path("routes/test_int.geojson"),
+            case_count=1,
+            route_seed=20260928,
+        )
+
+        self.assertEqual(prepared["graph_path"].name, "test_int.geojson")
+        self.assertEqual(
+            prepared["compact_graph"]["adjacency"]["0"],
+            [{"to": 1, "weight": 38}, {"to": 18, "weight": 43}],
+        )
+
+    # all-pairs는 12개 Node에서 도킹 0~6과 동일한 7쌍을 제외한 77쌍이다.
+    def test_all_pairs_generates_every_start_to_docking_pair(self):
+        prepared = _prepare(
+            graph_path=Path("routes/test_int.geojson"),
+            case_mode="all-pairs",
+        )
+
+        pairs = {(case["start"], case["target"]) for case in prepared["cases"]}
+        self.assertEqual(len(pairs), 77)
+        self.assertTrue(all(start != target for start, target in pairs))
+        self.assertTrue(all(target in range(7) for _start, target in pairs))
+        self.assertIsNone(prepared["route_seed"])
+
+    # 서버·checkpoint 사전 점검 실패는 trial이 아니라 benchmark 실패로 기록한다.
+    def test_preflight_failure_marks_manifest_failed(self):
+        class _UnavailableSelector:
+            name = "kev"
+            model = "kev-4b"
+
+            def _ensure_runtime(self):
+                raise RuntimeError("checkpoint mismatch")
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "result"
+            with self.assertRaisesRegex(RuntimeError, "checkpoint mismatch"):
+                run_benchmark(
+                    output,
+                    repeats=1,
+                    warmups=0,
+                    case_count=1,
+                    route_seed=20260928,
+                    graph_path=Path("routes/test_int.geojson"),
+                    selector=_UnavailableSelector(),
+                    progress=False,
+                )
+            manifest = json.loads((output / "manifest.json").read_text())
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["failure_stage"], "selector_preflight")
+            self.assertIn("checkpoint mismatch", manifest["failure"])
+            self.assertIn("instructions_sha256", manifest["settings"])
 
 
 if __name__ == "__main__":
