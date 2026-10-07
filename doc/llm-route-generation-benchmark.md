@@ -128,8 +128,8 @@ Jetson에서는 실행 중 다른 터미널에서 `sudo tegrastats`의 `GR3D_FRE
 | --- | --- |
 | 실행 커밋 | 실행 시 `manifest.json`의 `executed_commit`에 자동 기록 |
 | 그래프 | `routes/test_int.geojson` |
-| 그래프 크기 | 노드 12개, 유향 간선 38개 |
-| 그래프 SHA-256 | `f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193` |
+| 그래프 크기 | 노드 13개, 유향 간선 30개 |
+| 그래프 SHA-256 | `a2a02f6d97738997206ef7866e1e70e1e2c4c1ca0377fc6cd3675544abac92db` |
 | V1 Direct 프롬프트 SHA-256 | `f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72` |
 | V2 Direct 프롬프트 SHA-256 | `47e58ad5ebe0f5dede1985128bb3055c800ab785a87372ce80ddf2fb25c4660c` |
 | V2 CoT 프롬프트 SHA-256 | `b2592acb671b10b493325b9f432fc16ea293a596bd7ae8cd00a72e58cd9c9278` |
@@ -287,7 +287,7 @@ python -m simulation.evaluation.benchmark \
 
 `convaiinnovations/laya-multilingual`이 코드가 만든 후보 중 하나를 선택한다. Ollaya
 서버는 사용하지 않고 Hugging Face checkpoint를 PyTorch CUDA로 직접 실행한다.
-최단 경로 질문은 `routes/test.geojson`의 실제 좌표와 저장된 Edge `weight`를 사용하며,
+최단 경로 질문은 `routes/test_int.geojson`의 새 지도와 저장된 정수 Edge `weight`를 사용하며,
 V1과 같은 5개 Start/Target 각각에 대해 코드가 만든 유효 경로 후보 5개를 전달한다.
 정답 최단 경로는 선택지 1~5번에 한 번씩 배치한다.
 
@@ -358,13 +358,13 @@ V1 재측정 결과에서 제외한다.
 
 | Start → Target | 전체 단순 경로 수 |
 | --- | ---: |
-| 0 → 2 | 24 |
-| 3 → 15 | 25 |
-| 5 → 18 | 39 |
-| 1 → 4 | 63 |
-| 6 → 2 | 82 |
+| 2 → 11 | 6 |
+| 8 → 5 | 6 |
+| 3 → 1 | 6 |
+| 4 → 0 | 6 |
+| 12 → 0 | 6 |
 
-Laya는 그래프 입력과 최대 82개의 선택지를 모두 보존해야 하므로 AllRoutes 실행 전에
+Laya는 그래프 입력과 최대 6개의 선택지를 모두 보존해야 하므로 AllRoutes 실행 전에
 토큰 예산을 별도로 늘린다.
 
 ```bash
@@ -937,7 +937,7 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 - `--case-mode random`: 기본 5개 Start→Docking 경로를 만든다. Target은 도킹 Node
   `0~6`, Start는 Target 집합과 겹치지 않으며 유효한 방향성 경로만 사용한다.
 - `--case-mode all-pairs`: 전체 Node에서 도킹 Node `0~6`으로 갈 수 있는 모든 조합을
-  사용한다. 현재 12 Node 맵에서는 Start와 Target이 같은 7쌍을 제외한 77쌍이다.
+  사용한다. 현재 13 Node 맵에서는 Start와 Target이 같은 7쌍을 제외한 84쌍이다.
 - random 모드에서 `--route-seed`를 생략하면 실행마다 새 seed를 만들고 manifest에
   기록한다. 모델·Context 비교에는 반드시 첫 실행과 같은 seed를 재사용한다.
 
@@ -953,7 +953,7 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 - 직전 Node는 일반 후보에서 제외하지만 다른 후보가 하나도 없으면 아직 사용하지 않은
   역방향 Edge를 통한 한 단계 backtrack을 허용한다.
 - 후보가 하나면 모델을 호출하지 않고 강제 이동하며 `forced_step=true`로 기록한다.
-- 기본 최대 이동 횟수는 Node 수의 두 배다. 현재 맵에서는 24회다.
+- 기본 최대 이동 횟수는 Node 수의 두 배다. 현재 맵에서는 26회다.
 
 #### 동일 조건 예비 시험
 
