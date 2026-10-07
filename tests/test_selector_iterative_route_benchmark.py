@@ -4,12 +4,16 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from simulation.evaluation.selector_iterative_route_benchmark import (
     _prepare,
     _run_route,
+    _resolve_model_specs,
     _summarize,
+    load_iterative_config,
     run_benchmark,
+    run_configured_benchmarks,
 )
 
 
@@ -519,6 +523,107 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
             self.assertEqual(manifest["failure_stage"], "selector_preflight")
             self.assertIn("checkpoint mismatch", manifest["failure"])
             self.assertIn("instructions_sha256", manifest["settings"])
+
+
+    # JSON 설정은 Graph hash와 공통 옵션을 검증하고 모델별 최종 설정을 만든다.
+    def test_iterative_ollama_config_resolves_selected_models(self):
+        resolved = load_iterative_config(
+            Path("simulation/evaluation/selector_iterative_benchmark.json"),
+            ["qwen3:4b", "phi4:14b"],
+        )
+
+        self.assertEqual(resolved["graph_path"].name, "test_int.geojson")
+        self.assertEqual(
+            [model["name"] for model in resolved["models"]],
+            ["qwen3:4b", "phi4:14b"],
+        )
+        self.assertFalse(resolved["models"][0]["think"])
+        self.assertEqual(resolved["models"][0]["options"]["num_ctx"], 4096)
+        self.assertEqual(resolved["models"][1]["options"]["num_predict"], 512)
+
+    # JSON에 없는 모델명은 조용히 건너뛰지 않고 실행 전에 오류로 막는다.
+    def test_iterative_ollama_config_rejects_unknown_model(self):
+        with self.assertRaisesRegex(ValueError, "not present in config"):
+            load_iterative_config(
+                Path("simulation/evaluation/selector_iterative_benchmark.json"),
+                ["missing:model"],
+            )
+
+    # 다중 모델 실행기는 모델별 하위 결과와 상위 matrix manifest를 만든다.
+    def test_configured_runner_writes_matrix_and_model_results(self):
+        class _FirstCandidateSelector:
+            name = "ollama"
+            model = "fake:model"
+
+            def select_choice(
+                self, _state, candidates, _instructions, *, question_id
+            ):
+                return {"choice": next(iter(candidates)), "probabilities": {}}
+
+            def release(self):
+                pass
+
+        graph_path = Path("routes/test_int.geojson")
+        graph_hash = __import__("hashlib").sha256(graph_path.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            config_path = temporary / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "graph": {"path": str(graph_path), "sha256": graph_hash},
+                        "ollama_defaults": {
+                            "options": {"num_ctx": 4096, "num_predict": 512}
+                        },
+                        "models": [{"name": "fake:model"}],
+                        "settings": {
+                            "case_mode": "random",
+                            "case_count": 1,
+                            "route_seed": 20260928,
+                            "candidate_scope": "neighbors",
+                            "context_mode": "neighbor_context",
+                            "repeats": 1,
+                            "warmups": 0,
+                            "max_steps": 1,
+                            "deadline_seconds": 0.15,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = temporary / "output"
+            with patch(
+                "simulation.evaluation.selector_iterative_route_benchmark."
+                "_build_configured_ollama_selector",
+                return_value=_FirstCandidateSelector(),
+            ):
+                matrix = run_configured_benchmarks(
+                    config_path, output, progress=False
+                )
+
+            self.assertEqual(matrix["status"], "complete")
+            self.assertTrue(
+                (output / "selector_iterative_matrix_manifest.json").is_file()
+            )
+            self.assertTrue((output / "fake-model" / "manifest.json").is_file())
+
+    # 모델 항목의 options는 공통값 중 필요한 값만 안전하게 덮어쓴다.
+    def test_model_options_override_defaults(self):
+        models = _resolve_model_specs(
+            {
+                "ollama_defaults": {
+                    "timeout_seconds": 120,
+                    "options": {"num_ctx": 4096, "num_predict": 512},
+                },
+                "models": [
+                    {"name": "small", "options": {"num_ctx": 2048}},
+                ],
+            }
+        )
+
+        self.assertEqual(models[0]["options"], {"num_ctx": 2048, "num_predict": 512})
+        self.assertEqual(models[0]["timeout_seconds"], 120)
+
 
 
 if __name__ == "__main__":

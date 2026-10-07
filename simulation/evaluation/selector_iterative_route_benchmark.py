@@ -32,6 +32,7 @@ from simulation.services.route_service import (
 )
 
 CONFIG_PATH = ROOT / "simulation" / "evaluation" / "route_generation_benchmark.json"
+MATRIX_MANIFEST_FILENAME = "selector_iterative_matrix_manifest.json"
 TRIALS_FILENAME = "selector_iterative_route_trials.jsonl"
 SUMMARY_FILENAME = "selector_iterative_route_summary.json"
 CSV_FILENAME = "selector_iterative_route_samples.csv"
@@ -701,6 +702,160 @@ def default_output_path(selector: Any) -> Path:
     )
 
 
+def default_matrix_output_path() -> Path:
+    """Return one parent directory for a configured multi-model run."""
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return DEFAULT_RESULTS_DIR / f"ollama-iterative-matrix-{timestamp}"
+
+
+def _resolve_model_specs(
+    config: dict[str, Any], selected_models: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Merge common Ollama defaults with each enabled model entry."""
+    defaults = config.get("ollama_defaults", {})
+    if not isinstance(defaults, dict):
+        raise ValueError("ollama_defaults must be an object")
+    default_options = defaults.get("options", {})
+    if not isinstance(default_options, dict):
+        raise ValueError("ollama_defaults.options must be an object")
+
+    raw_models = config.get("models")
+    if not isinstance(raw_models, list) or not raw_models:
+        raise ValueError("models must be a non-empty array")
+    requested = set(selected_models or [])
+    seen: set[str] = set()
+    resolved: list[dict[str, Any]] = []
+    for raw in raw_models:
+        if not isinstance(raw, dict) or not str(raw.get("name", "")).strip():
+            raise ValueError("each model entry must contain a non-empty name")
+        name = str(raw["name"]).strip()
+        if name in seen:
+            raise ValueError(f"duplicate model name: {name}")
+        seen.add(name)
+        if raw.get("enabled", True) is not True:
+            continue
+        if requested and name not in requested:
+            continue
+        raw_options = raw.get("options", {})
+        if not isinstance(raw_options, dict):
+            raise ValueError(f"model options must be an object: {name}")
+        spec = {
+            key: value
+            for key, value in defaults.items()
+            if key != "options"
+        }
+        spec.update(
+            {
+                key: value
+                for key, value in raw.items()
+                if key not in {"enabled", "options"}
+            }
+        )
+        spec["name"] = name
+        spec["options"] = {**default_options, **raw_options}
+        resolved.append(spec)
+
+    unknown = requested - seen
+    if unknown:
+        raise ValueError(
+            "models not present in config: " + ", ".join(sorted(unknown))
+        )
+    disabled = requested - {spec["name"] for spec in resolved}
+    if disabled:
+        raise ValueError(
+            "requested models are disabled: " + ", ".join(sorted(disabled))
+        )
+    if not resolved:
+        raise ValueError("no enabled models selected")
+    return resolved
+
+
+def load_iterative_config(
+    config_path: Path,
+    selected_models: list[str] | None = None,
+) -> dict[str, Any]:
+    """Validate the JSON config without contacting Ollama."""
+    config_path = config_path.resolve()
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("benchmark config must be a JSON object")
+    graph = config.get("graph")
+    if not isinstance(graph, dict) or not graph.get("path"):
+        raise ValueError("graph.path is required")
+    graph_path = Path(str(graph["path"]))
+    if not graph_path.is_absolute():
+        graph_path = ROOT / graph_path
+    graph_path = graph_path.resolve()
+    if not graph_path.is_file():
+        raise FileNotFoundError(f"graph file not found: {graph_path}")
+    actual_sha256 = hashlib.sha256(graph_path.read_bytes()).hexdigest()
+    expected_sha256 = graph.get("sha256")
+    if expected_sha256 and str(expected_sha256) != actual_sha256:
+        raise ValueError(
+            f"graph SHA-256 mismatch: expected={expected_sha256}, "
+            f"actual={actual_sha256}"
+        )
+
+    settings = config.get("settings")
+    if not isinstance(settings, dict):
+        raise ValueError("settings must be an object")
+    required = {
+        "case_mode", "case_count", "repeats", "warmups", "route_seed",
+        "candidate_scope", "context_mode", "max_steps", "deadline_seconds",
+    }
+    missing = sorted(required - settings.keys())
+    if missing:
+        raise ValueError("missing settings: " + ", ".join(missing))
+    if settings["case_mode"] not in {"random", "all-pairs"}:
+        raise ValueError("settings.case_mode must be random or all-pairs")
+    if settings["candidate_scope"] not in {"neighbors", "all"}:
+        raise ValueError("settings.candidate_scope must be neighbors or all")
+    if settings["context_mode"] not in {"full_graph_only", "neighbor_context"}:
+        raise ValueError(
+            "settings.context_mode must be full_graph_only or neighbor_context"
+        )
+
+    models = _resolve_model_specs(config, selected_models)
+    return {
+        "config_path": config_path,
+        "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "graph_path": graph_path,
+        "graph_sha256": actual_sha256,
+        "settings": settings,
+        "models": models,
+    }
+
+
+def _build_configured_ollama_selector(spec: dict[str, Any]) -> Any:
+    """Create one Ollama selector from a resolved model configuration."""
+    from simulation.llm_providers.ollama_provider import OllamaPathProvider
+    from simulation.route_selector.ollama_selector import OllamaSelector
+
+    provider = OllamaPathProvider(
+        model=spec["name"],
+        host=spec.get("host"),
+        timeout_seconds=float(spec.get("timeout_seconds", 60)),
+        options=dict(spec["options"]),
+        keep_alive=str(spec.get("keep_alive", "5m")),
+        think=spec.get("think"),
+    )
+    return OllamaSelector(provider)
+
+
+def _selector_model_configuration(selector: Any) -> dict[str, Any] | None:
+    """Expose the resolved Ollama request options in each result manifest."""
+    provider = getattr(selector, "provider", None)
+    if provider is None or getattr(selector, "name", None) != "ollama":
+        return None
+    return {
+        "host": getattr(provider, "host", None),
+        "timeout_seconds": getattr(provider, "timeout_seconds", None),
+        "keep_alive": getattr(provider, "keep_alive", None),
+        "think": getattr(provider, "think", None),
+        "options": getattr(provider, "options", None),
+    }
+
+
 def _preflight_selector(selector: Any) -> None:
     """Fail before trials when a selector runtime or configured model is unavailable."""
     ensure_runtime = getattr(selector, "_ensure_runtime", None)
@@ -782,6 +937,7 @@ def run_benchmark(
         "source": git_metadata(ROOT),
         "selector_name": selector_name,
         "requested_model": getattr(selector, "model", None),
+        "model_configuration": _selector_model_configuration(selector),
         "graph": {
             "source": str(prepared["graph_path"].relative_to(ROOT)),
             "sha256": hashlib.sha256(prepared["graph_path"].read_bytes()).hexdigest(),
@@ -953,8 +1109,114 @@ def run_benchmark(
     return summary
 
 
+def run_configured_benchmarks(
+    config_path: Path,
+    output: Path,
+    *,
+    selected_models: list[str] | None = None,
+    progress: bool = True,
+) -> dict[str, Any]:
+    """Run the same iterative cases for selected Ollama models."""
+    resolved = load_iterative_config(config_path, selected_models)
+    settings = resolved["settings"]
+    output = output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    matrix_path = output / MATRIX_MANIFEST_FILENAME
+    if matrix_path.exists():
+        raise FileExistsError(
+            f"existing matrix manifest would be overwritten: {matrix_path}"
+        )
+    manifest: dict[str, Any] = {
+        "benchmark": "selector-iterative-ollama-matrix-v1",
+        "status": "running",
+        "started_at": _utc_now(),
+        "source": git_metadata(ROOT),
+        "config": {
+            "path": str(resolved["config_path"]),
+            "sha256": resolved["config_sha256"],
+        },
+        "graph": {
+            "path": str(resolved["graph_path"].relative_to(ROOT)),
+            "sha256": resolved["graph_sha256"],
+        },
+        "settings": settings,
+        "models": resolved["models"],
+        "results": [],
+    }
+    _json_dump(matrix_path, manifest)
+    try:
+        for spec in resolved["models"]:
+            model_name = spec["name"]
+            if progress:
+                print(f"=== Ollama model: {model_name} ===")
+            selector = _build_configured_ollama_selector(spec)
+            model_output = output / _safe_name(model_name)
+            summary = run_benchmark(
+                model_output,
+                repeats=int(settings["repeats"]),
+                warmups=int(settings["warmups"]),
+                case_count=int(settings["case_count"]),
+                route_seed=(
+                    int(settings["route_seed"])
+                    if settings["route_seed"] is not None else None
+                ),
+                graph_path=resolved["graph_path"],
+                case_mode=str(settings["case_mode"]),
+                candidate_scope=str(settings["candidate_scope"]),
+                context_mode=str(settings["context_mode"]),
+                max_steps=(
+                    int(settings["max_steps"])
+                    if settings["max_steps"] is not None else None
+                ),
+                deadline=float(settings["deadline_seconds"]),
+                selector=selector,
+                progress=progress,
+            )
+            manifest["results"].append(
+                {
+                    "model": model_name,
+                    "output": str(model_output.relative_to(output)),
+                    "status": "complete",
+                    "overall": summary["overall"],
+                }
+            )
+            _json_dump(matrix_path, manifest)
+    except Exception as exc:
+        manifest.update(
+            status="failed",
+            completed_at=_utc_now(),
+            failure_model=locals().get("model_name"),
+            failure=f"{type(exc).__name__}: {exc}",
+        )
+        _json_dump(matrix_path, manifest)
+        raise
+    manifest.update(status="complete", completed_at=_utc_now())
+    _json_dump(matrix_path, manifest)
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "Ollama 다중 모델 JSON 설정. 이 모드에서는 graph/case/repeat 옵션을 "
+            "JSON에서 읽습니다."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        help="JSON models 중 실행할 모델. 여러 번 지정 가능 (미지정 시 enabled 전체)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="JSON·Graph hash·모델 설정만 검증하고 Ollama에는 요청하지 않음",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -995,6 +1257,34 @@ def main() -> int:
     )
     parser.add_argument("--deadline", type=float, default=0.15)
     args = parser.parse_args()
+
+    if args.config is not None:
+        resolved = load_iterative_config(args.config, args.model)
+        if args.check:
+            printable = {
+                "status": "ok",
+                "config": str(resolved["config_path"]),
+                "config_sha256": resolved["config_sha256"],
+                "graph": str(resolved["graph_path"]),
+                "graph_sha256": resolved["graph_sha256"],
+                "settings": resolved["settings"],
+                "models": resolved["models"],
+            }
+            print(json.dumps(printable, ensure_ascii=False, indent=2))
+            return 0
+        output = args.output or default_matrix_output_path()
+        summary = run_configured_benchmarks(
+            args.config,
+            output,
+            selected_models=args.model,
+        )
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.model:
+        parser.error("--model requires --config")
+    if args.check:
+        parser.error("--check requires --config")
     selector = get_selector()
     output = args.output or default_output_path(selector)
     summary = run_benchmark(

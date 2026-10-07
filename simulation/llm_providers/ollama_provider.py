@@ -37,13 +37,15 @@ class OllamaPathProvider(LLMPathProvider):
         self.think = think
         self.instructions = instructions
         self.output_schema = output_schema or self.OUTPUT_SCHEMA
+        self.host = host or os.getenv("OLLAMA_HOST")
+        self.timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        )
         self.client = ollama.Client(
-            host=host or os.getenv("OLLAMA_HOST"),
-            timeout=(
-                timeout_seconds
-                if timeout_seconds is not None
-                else float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
-            ),
+            host=self.host,
+            timeout=self.timeout_seconds,
         )
         self.last_inference = None
 
