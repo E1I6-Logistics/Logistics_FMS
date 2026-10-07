@@ -1,0 +1,33 @@
+{
+  "base_url": "http://127.0.0.1:8000",
+  "timeout_seconds": 30,
+  "scenarios": [
+    {
+      "name": "bottleneck",
+      "description": "9→7 합류 구간의 예약 대기",
+      "robots": [
+        {"id": "robot1", "start": "0", "goal": "4"},
+        {"id": "robot2", "start": "1", "goal": "3"},
+        {"id": "robot3", "start": "2", "goal": "6"}
+      ]
+    },
+    {
+      "name": "head_on",
+      "description": "두 로봇의 자리 교환과 양보",
+      "robots": [
+        {"id": "robot1", "start": "0", "goal": null},
+        {"id": "robot2", "start": "1", "goal": "2"},
+        {"id": "robot3", "start": "2", "goal": "1"}
+      ]
+    },
+    {
+      "name": "cycle",
+      "description": "세 로봇의 순환 대기와 해소",
+      "robots": [
+        {"id": "robot1", "start": "0", "goal": "1"},
+        {"id": "robot2", "start": "1", "goal": "2"},
+        {"id": "robot3", "start": "2", "goal": "0"}
+      ]
+    }
+  ]
+}
