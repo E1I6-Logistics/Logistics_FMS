@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 from simulation.evaluation.device_metadata import (
     git_metadata, selector_device_metadata,
 )
+from simulation.evaluation.graph_path import resolve_graph_path
 from simulation.route_selector import get_selector
 from simulation.services.route_service import (
     build_compact_route_graph,
@@ -33,7 +34,7 @@ SUMMARY_FILENAME = "selector_latency_summary.json"
 CSV_FILENAME = "selector_latency_samples.csv"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
-ROUTE_GRAPH_PATH = ROOT / "routes" / "test.geojson"
+ROUTE_GRAPH_PATH = resolve_graph_path()
 ROUTE_CONFIG_PATH = ROOT / "simulation" / "evaluation" / "route_generation_benchmark.json"
 OPTION_IDS = ("option_a", "option_b", "option_c", "option_d", "option_e")
 Clock = Callable[[], float]

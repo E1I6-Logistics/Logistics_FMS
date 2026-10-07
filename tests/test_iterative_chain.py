@@ -71,13 +71,13 @@ class IterativeChainTest(unittest.TestCase):
         self.assertEqual(
             first["available_edges"],
             [
-                {"node": 2, "distance": 1.0},
-                {"node": 4, "distance": 5.0},
+                {"node": 2, "weight": 1},
+                {"node": 4, "weight": 5},
             ],
         )
         self.assertEqual(
             second["available_edges"],
-            [{"node": 3, "distance": 1.0}],
+            [{"node": 3, "weight": 1}],
         )
         self.assertNotIn("criteria", first)
 

@@ -2,9 +2,9 @@
   "matrix_id": "route-generation-v2-live-map",
   "description": "V2 direct, CoT, and iterative calls with and without graph retrieval",
   "graph": {
-    "path": "routes/test.geojson",
+    "path": "routes/test_int.geojson",
     "model_input_format": "CompactAdjacencyGraph",
-    "sha256": "9b0ca28cca7c3c55fc795a7a0f8145c3b7f781511567dc92bdb54c0e97d48d68",
+    "sha256": "f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193",
     "node_count": 12,
     "directed_edge_count": 38,
     "weight_property": "weight"
@@ -52,7 +52,7 @@
         1,
         2
       ],
-      "expected_distance": 0.7888975962857319
+      "expected_distance": 79.0
     },
     {
       "start": 3,
@@ -62,7 +62,7 @@
         19,
         15
       ],
-      "expected_distance": 0.9079639151037295
+      "expected_distance": 90.0
     },
     {
       "start": 5,
@@ -73,7 +73,7 @@
         16,
         18
       ],
-      "expected_distance": 1.1957974846863562
+      "expected_distance": 120.0
     },
     {
       "start": 1,
@@ -85,7 +85,7 @@
         19,
         4
       ],
-      "expected_distance": 1.9782743545908796
+      "expected_distance": 197.0
     },
     {
       "start": 6,
@@ -97,7 +97,7 @@
         17,
         2
       ],
-      "expected_distance": 2.0830581681796576
+      "expected_distance": 208.0
     }
   ],
   "settings": {

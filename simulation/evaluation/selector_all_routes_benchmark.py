@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from simulation.evaluation.device_metadata import git_metadata, selector_device_metadata
+from simulation.evaluation.graph_path import resolve_graph_path
 from simulation.route_selector import get_selector
 from simulation.services.route_service import (
     build_compact_route_graph,
@@ -27,7 +28,7 @@ from simulation.services.route_service import (
     validate_and_calculate_path_distance,
 )
 
-GRAPH_PATH = ROOT / "routes" / "test.geojson"
+GRAPH_PATH = resolve_graph_path()
 CONFIG_PATH = ROOT / "simulation" / "evaluation" / "route_generation_benchmark.json"
 RESULTS_ROOT = ROOT / "simulation" / "benchmark_results"
 MANIFEST_FILENAME = "manifest.json"

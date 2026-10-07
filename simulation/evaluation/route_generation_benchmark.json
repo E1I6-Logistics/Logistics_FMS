@@ -2,8 +2,8 @@
   "benchmark_id": "route-generation-direct-live-map",
   "description": "PC actual frontend map direct path generation",
   "graph": {
-    "path": "routes/test.geojson",
-    "sha256": "9b0ca28cca7c3c55fc795a7a0f8145c3b7f781511567dc92bdb54c0e97d48d68",
+    "path": "routes/test_int.geojson",
+    "sha256": "f7e394e8787ba5870491aaf8aa2c77e154607e211c40418fb4b8ca05bcc8e193",
     "node_count": 12,
     "directed_edge_count": 38,
     "weight_property": "weight"
@@ -51,7 +51,7 @@
         1,
         2
       ],
-      "expected_distance": 0.7888975962857319
+      "expected_distance": 79.0
     },
     {
       "start": 3,
@@ -61,7 +61,7 @@
         19,
         15
       ],
-      "expected_distance": 0.9079639151037295
+      "expected_distance": 90.0
     },
     {
       "start": 5,
@@ -72,7 +72,7 @@
         16,
         18
       ],
-      "expected_distance": 1.1957974846863562
+      "expected_distance": 120.0
     },
     {
       "start": 1,
@@ -84,7 +84,7 @@
         19,
         4
       ],
-      "expected_distance": 1.9782743545908796
+      "expected_distance": 197.0
     },
     {
       "start": 6,
@@ -96,7 +96,7 @@
         17,
         2
       ],
-      "expected_distance": 2.0830581681796576
+      "expected_distance": 208.0
     }
   ],
   "settings": {
@@ -116,7 +116,7 @@
   "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\n\nInput contains start_node, target_node, and the complete CompactRouteGraph.\nNodes are integer IDs. Edges are directed objects with from, to, and weight.\nTraverse only from from to to. Use every stored weight exactly as given and never\nrecalculate it from coordinates. Return the valid path with minimum total weight and\nthe sum of its edge weights. Return only JSON matching the schema.",
   "prompt_sha256": "f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72",
   "experiment_mode": "V1_DIRECT",
-  "comparison_condition_sha256": "5ac9ffdb2821b56a021460a4f2e3215a8aa12eaf55a34880abb26c528f1639a8",
+  "comparison_condition_sha256": "346f3eb4fe312d6407855470e55de58ba2a4df146db68f29ef7580c13313a25e",
   "retrieval": {
     "enabled": false,
     "policy": "full_graph"

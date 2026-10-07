@@ -67,7 +67,7 @@ class _SteppedClock:
 class SelectorLatencyBenchmarkTest(unittest.TestCase):
     # 지연시간 케이스를 변경했을 때 정답이 다섯 위치에 고르게 배치되는지 확인한다.
     def test_builds_five_options_and_moves_answer_through_every_position(self):
-        self.assertEqual(ROUTE_GRAPH_PATH.name, "test.geojson")
+        self.assertEqual(ROUTE_GRAPH_PATH.name, "test_int.geojson")
         self.assertEqual(len(ROUTE_CASES), 5)
         self.assertEqual(len(TEST_CASES), 70)
         for language in ("ko", "en"):
@@ -91,7 +91,7 @@ class SelectorLatencyBenchmarkTest(unittest.TestCase):
         )
         self.assertTrue(
             all(
-                case["state"]["route_graph"]["source_graph"] == "test.geojson"
+                case["state"]["route_graph"]["source_graph"] == "test_int.geojson"
                 and case["state"]["route_graph"]["node_coordinates"]
                 for case in route_cases
             )

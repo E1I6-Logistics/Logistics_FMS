@@ -77,7 +77,7 @@ class SelectorQuestionTypesTest(unittest.TestCase):
             self.assertIn(1, blocked_case["state"]["blocked_nodes"])
             self.assertEqual(
                 blocked_case["state"]["route_graph"]["source_graph"],
-                "test.geojson",
+                "test_int.geojson",
             )
             self.assertEqual(
                 len(blocked_case["state"]["route_graph"]["node_coordinates"]),

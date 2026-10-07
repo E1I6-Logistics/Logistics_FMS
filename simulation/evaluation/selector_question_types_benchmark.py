@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 from simulation.evaluation.device_metadata import (
     git_metadata, selector_device_metadata,
 )
+from simulation.evaluation.graph_path import resolve_graph_path
 from simulation.route_selector import get_selector
 from simulation.services.route_service import build_compact_route_graph, plan_route
 
@@ -32,7 +33,7 @@ Clock = Callable[[], float]
 
 def _blocked_route_state(language: str) -> dict[str, Any]:
     """Build the route-blocked question from the actual frontend map."""
-    graph_path = ROOT / "routes" / "test.geojson"
+    graph_path = resolve_graph_path()
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
     planned = plan_route("0", "2", graph, require_stored_weight=True)
     rule = (

@@ -189,6 +189,12 @@ def plan_route(
     }
 
 
+def _model_weight(value: int | float) -> int | float:
+    """Keep integral stored weights integral in model-facing JSON."""
+    numeric = float(value)
+    return int(numeric) if numeric.is_integer() else numeric
+
+
 def build_compact_route_graph(
     graph: dict,
     source_graph: str,
@@ -215,7 +221,7 @@ def build_compact_route_graph(
             for node in sorted(points)
         ],
         "edges": [
-            {"from": start, "to": end, "weight": weight}
+            {"from": start, "to": end, "weight": _model_weight(weight)}
             for (start, end), weight in sorted(edge_weights.items())
         ],
     }
@@ -236,7 +242,9 @@ def build_compact_adjacency_graph(
         str(node): [] for node in sorted(points)
     }
     for (start, end), weight in sorted(edge_weights.items()):
-        adjacency[str(start)].append({"to": end, "weight": weight})
+        adjacency[str(start)].append(
+            {"to": end, "weight": _model_weight(weight)}
+        )
     return {
         "type": "CompactAdjacencyGraph",
         "source_graph": source_graph,
@@ -297,7 +305,7 @@ def get_available_edges(
 
     Node/Edge IDs are structured data, so V2 iterative routing uses an exact
     adjacency lookup instead of vector-similarity retrieval.  The returned
-    distance is the stored directed edge weight; it is not recalculated.
+    weight is the stored directed edge weight; it is not recalculated.
     """
     nodes = {int(node) for node in graph.get("nodes", [])}
     current_node = int(current_node)
@@ -306,12 +314,12 @@ def get_available_edges(
 
     visited = {int(node) for node in (visited_nodes or [])}
     available = [
-        {"node": int(edge["to"]), "distance": float(edge["weight"])}
+        {"node": int(edge["to"]), "weight": _model_weight(edge["weight"])}
         for edge in compact_graph_edges(graph)
         if int(edge["from"]) == current_node
         and int(edge["to"]) not in visited
     ]
-    return sorted(available, key=lambda item: (item["node"], item["distance"]))
+    return sorted(available, key=lambda item: (item["node"], item["weight"]))
 
 
 def build_edge_weight_lookup(
