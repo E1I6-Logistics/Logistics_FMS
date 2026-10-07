@@ -155,10 +155,12 @@ def _prepare(
     print("=============\n")
     print(compact_graph)
 
+    # 시드를 지정하지 않으면 실행마다 새 경로 조합을 만든다. 실제 사용한
+    # 시드는 manifest에 기록하므로 다른 모델 비교 시 그대로 재사용할 수 있다.
     effective_seed = (
         int(route_seed)
         if route_seed is not None
-        else int(config.get("settings", {}).get("seed", 20260928))
+        else random.SystemRandom().randrange(1, 2**63)
     )
     nodes = sorted(points)
     cases = _generate_random_cases(
@@ -745,7 +747,7 @@ def main() -> int:
         "--route-seed",
         type=int,
         default=None,
-        help="랜덤 경로 생성 시드 (기본: benchmark config의 seed)",
+        help="랜덤 경로 생성 시드 (미지정 시 실행마다 새 시드 생성)",
     )
     parser.add_argument(
         "--candidate-scope", choices=("neighbors", "all"), default="neighbors"

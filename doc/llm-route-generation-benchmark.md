@@ -935,9 +935,9 @@ API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
 - Target은 도킹 Node `0~6` 중 중복 없이 선택한다.
 - Start도 전체 맵 Node 중 중복 없이 선택하며, 이번 실행에서 뽑힌 Target 집합과 겹치지 않는다.
 - Start에서 Target까지 유효한 방향성 경로가 있는 조합만 사용한다.
-- 기본 `route_seed`는 benchmark config의 `20260928`이다. 같은 seed는 모든 모델에 같은 경로를 제공한다.
+- `--route-seed`를 생략하면 실행마다 새 랜덤 seed와 경로 조합을 만든다.
 - 생성된 seed와 Start·Target 목록은 `manifest.json`의 `settings`에 기록한다.
-- 새 랜덤 조합이 필요하면 `--route-seed`를 바꾸되, 모델 비교에서는 같은 seed를 사용한다.
+- 모델 비교에서는 첫 실행의 manifest에 기록된 `route_seed`를 나머지 모델에 지정한다.
 
 - 기본값은 `--candidate-scope neighbors --context-mode neighbor_context`다.
 - `neighbors`에서는 `available_edges`를 정확 조회하고, 그 안의 Node만 Laya·Kev·Ollama의 `criteria`로 제공한다.
@@ -960,7 +960,7 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
   --context-mode full_graph_only \
   --output simulation/benchmark_results/<환경>-laya-full-graph-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15 \
-  --case-count 5 --route-seed 20260928
+  --case-count 5
 
 # 정확 인접 Context 적용: 위 실행과 criteria는 동일
 ROUTE_SELECTOR=laya \
@@ -969,7 +969,19 @@ python -m simulation.evaluation.selector_iterative_route_benchmark \
   --context-mode neighbor_context \
   --output simulation/benchmark_results/<환경>-laya-neighbor-context-$(date +%Y%m%d-%H%M%S) \
   --repeats 5 --warmups 1 --deadline 0.15 \
-  --case-count 5 --route-seed 20260928
+  --case-count 5
+```
+
+첫 실행의 결과 폴더에서 비교용 seed를 확인한다.
+
+```bash
+python -c 'import json; print(json.load(open("<첫-결과폴더>/manifest.json"))["settings"]["route_seed"])'
+```
+
+다른 모델을 같은 경로로 비교할 때만 출력된 값을 지정한다.
+
+```bash
+--route-seed <첫-실행에서-확인한-seed>
 ```
 
 `ROUTE_SELECTOR`를 `kev` 또는 `ollama`로 바꾸면 같은 입력과 검증 규칙으로 실행한다.
