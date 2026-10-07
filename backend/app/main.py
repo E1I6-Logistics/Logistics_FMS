@@ -39,7 +39,7 @@ from .services.mqtt_manager import mqtt_manager
 for logger_name in ("uvicorn.error", "uvicorn.access"):
     for handler in logging.getLogger(logger_name).handlers:
         handler.setFormatter(logging.Formatter(
-            "[%(asctime)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
+            "[%(asctime)s] [UVICORN] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
 
 
 @asynccontextmanager
@@ -176,6 +176,6 @@ async def run_real_navigation() -> None:
         await asyncio.sleep(REAL_NAVIGATION_INTERVAL_S)
         try:
             ros_gateway.advance_navigation()
-        except (ValueError, RuntimeError):
-            logging.getLogger(__name__).exception(
-                "[%s] 실제 로봇 내비게이션 갱신 실패", strftime("%H:%M:%S"))
+        except (ValueError, RuntimeError) as exc:
+            print(f"[{strftime('%H:%M:%S')}] [MAIN REAL NAV ERROR] "
+                  f"navigation tick failed: {exc!r}", flush=True)

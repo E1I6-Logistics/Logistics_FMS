@@ -377,6 +377,65 @@ class RealNavigationTest(unittest.TestCase):
             self.assertEqual(self.robot.state, RobotState.PAUSED)
             self.assertTrue(self.table.snapshot())
 
+    def test_real_map_route_edge_wins_only_when_it_is_uniquely_closest(self):
+        real_graph = load_route_graph()
+        nodes = DistanceAStar(real_graph).nodes
+        with (patch("backend.app.services.real_navigation.load_route_graph", return_value=real_graph),
+              patch("backend.app.services.real_navigation.REAL_OCCUPANCY_TOLERANCE_M", .2)):
+            self.pose(self.robot, *nodes["1"])
+            self.request("5")
+            self.assertEqual(self.nav._robots["robot1"]["route"]["node_ids"][:2], ["1", "9"])
+            self.assertEqual(len(self.sent), 1)
+            x = nodes["1"][0] + .54 * (nodes["9"][0] - nodes["1"][0])
+            y = nodes["1"][1]
+            with self.assertRaises(ValueError):
+                locate_occupancy(real_graph, nodes, x, y, tolerance_m=.2)
+            self.pose(self.robot, x, y)
+            self.tick()
+            self.assertNotIn("robot1", self.cancels)
+            self.assertEqual(self.robot.state, RobotState.MOVING)
+            self.assertEqual(self.robot.occupied_edge, self.nav._robots["robot1"]["route"]["edge_ids"][0])
+
+    def test_real_map_wrong_edge_still_pauses(self):
+        real_graph = load_route_graph()
+        nodes = DistanceAStar(real_graph).nodes
+        with patch("backend.app.services.real_navigation.load_route_graph", return_value=real_graph):
+            self.pose(self.robot, *nodes["0"])
+            self.request("3")
+            self.pose(self.robot, .762, .255)
+            self.tick()
+            self.assertIn("robot1", self.cancels)
+            self.assertEqual(self.robot.state, RobotState.PAUSED)
+
+    def test_previous_edge_near_shared_node_does_not_cancel_after_pose_advance(self):
+        real_graph = load_route_graph()
+        nodes = DistanceAStar(real_graph).nodes
+        with (patch("backend.app.services.real_navigation.load_route_graph", return_value=real_graph),
+              patch("backend.app.services.real_navigation.REAL_OCCUPANCY_TOLERANCE_M", .2)):
+            self.pose(self.robot, *nodes["0"])
+            self.request("3")
+            route = self.nav._robots["robot1"]["route"]
+            self.assertEqual(route["node_ids"], ["0", "10", "8", "12", "11", "3"])
+            route["segment_index"] = 3
+            self.pose(self.robot, 1.417, .328)
+            self.tick()
+            self.assertEqual(self.robot.occupied_edge, "36")
+            self.assertEqual(self.robot.state, RobotState.MOVING)
+            self.assertNotIn("robot1", self.cancels)
+
+    def test_previous_edge_far_from_shared_node_still_cancels(self):
+        real_graph = load_route_graph()
+        nodes = DistanceAStar(real_graph).nodes
+        with (patch("backend.app.services.real_navigation.load_route_graph", return_value=real_graph),
+              patch("backend.app.services.real_navigation.REAL_OCCUPANCY_TOLERANCE_M", .2)):
+            self.pose(self.robot, *nodes["0"])
+            self.request("3")
+            self.nav._robots["robot1"]["route"]["segment_index"] = 3
+            self.pose(self.robot, 1.1, nodes["12"][1])
+            self.tick()
+            self.assertEqual(self.robot.state, RobotState.PAUSED)
+            self.assertIn("robot1", self.cancels)
+
     def test_cancel_timeout_does_not_release_reservations_or_run_callback(self):
         self.request("1")
         callback = unittest.mock.Mock()
@@ -457,6 +516,19 @@ class RealNavigationTest(unittest.TestCase):
         self.assertEqual(self.sent, [])
         self.assertEqual(self.robot.state, RobotState.WAITING)
         self.assertNotIn("robot2", self.nav._traffic._concession)
+
+    def test_stale_idle_robot_keeps_last_occupancy_without_canceling_other_route(self):
+        other = self.fleet.register_robot("robot2")
+        self.pose(other, 1., 1.)
+        self.nav._sync(graph(), DistanceAStar(graph()), self.now)
+        self.request("2")
+        other.pose_received_at = self.now - 10.
+        self.now += .1
+        self.robot.pose_received_at = self.now
+        self.nav.tick()
+        self.assertNotIn("robot1", self.cancels)
+        self.assertEqual(self.robot.state, RobotState.MOVING)
+        self.assertEqual(self.nav._robots["robot2"]["occupied_node"], "3")
 
     def test_offline_moving_robot_still_blocks_new_navigation(self):
         other = self.fleet.register_robot("robot2")

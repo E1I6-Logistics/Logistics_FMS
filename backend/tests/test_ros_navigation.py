@@ -56,6 +56,8 @@ class RosCancellationTest(unittest.TestCase):
         self.node._follow_waypoints_pending = set()
         self.node._follow_waypoints_cancel_callbacks = {}
         self.node._follow_waypoints_feedback_tokens = {}
+        self.node._follow_waypoints_feedback_last = {}
+        self.node._auxiliary_goals = {}
         self.node._follow_waypoints_clients = {}
         self.node.get_logger = Mock(return_value=Mock())
         self.node.navigation_result_callback = Mock()
@@ -207,6 +209,45 @@ class RosCancellationTest(unittest.TestCase):
             [call.args[1] for call in self.node.navigation_feedback_callback.call_args_list],
             [0, 1, 2, 2])
 
+    def test_auxiliary_cancel_waits_for_terminal_result(self):
+        handle = Mock()
+        entry = {"kind": "ArUco", "handle": handle,
+                 "cancel_callback": None, "cancel_sent": False}
+        self.node._auxiliary_goals["robot1"] = entry
+        callback, result_callback = Mock(), Mock()
+
+        self.node.cancel_auxiliary("robot1", callback)
+        handle.cancel_goal_async.assert_called_once()
+        callback.assert_not_called()
+        response = Mock()
+        response.result.return_value = SimpleNamespace(goals_canceling=[1])
+        self.node._on_auxiliary_cancel("robot1", entry, response)
+        callback.assert_not_called()
+
+        self.node._finish_auxiliary("robot1", entry, 5, result_callback)
+        callback.assert_called_once()
+        result_callback.assert_not_called()
+        self.assertFalse(self.node.has_active_auxiliary("robot1"))
+
+    def test_auxiliary_cancel_pending_goal_after_acceptance(self):
+        entry = {"kind": "PrecisionDock", "handle": None,
+                 "cancel_callback": None, "cancel_sent": False}
+        self.node._auxiliary_goals["robot1"] = entry
+        self.node.precision_dock_result_callback = Mock()
+        callback = Mock()
+        self.node.cancel_auxiliary("robot1", callback)
+        handle = Mock(accepted=True)
+        response = Mock()
+        response.result.return_value = handle
+        self.node._on_precision_dock_goal_response("robot1", response, entry)
+        handle.cancel_goal_async.assert_called_once()
+        callback.assert_not_called()
+        terminal = Mock()
+        terminal.result.return_value = SimpleNamespace(status=5)
+        self.node._on_precision_dock_result("robot1", terminal, entry)
+        callback.assert_called_once()
+        self.node.precision_dock_result_callback.assert_not_called()
+
 
 class GatewaySequenceTest(unittest.TestCase):
     def setUp(self):
@@ -220,11 +261,51 @@ class GatewaySequenceTest(unittest.TestCase):
         self.addCleanup(self.patch.stop)
         self.gateway = gateway_module.RosGateway()
         self.node = Mock()
+        self.node.has_active_auxiliary.return_value = False
         self.gateway.set_ros_node(self.node)
         self.get_node = patch.object(gateway_module, "get_node", return_value={"id": "2", "x": 2., "y": 0.})
         self.get_node.start()
         self.addCleanup(self.get_node.stop)
-        gateway_module.mqtt_manager.reset_mock()
+        gateway_module.mqtt_manager.reset_mock(return_value=True, side_effect=True)
+
+    def test_new_goal_waits_for_aruco_terminal_result(self):
+        self.robot.set_state(RobotState.DOCKING)
+        self.node.has_active_auxiliary.return_value = True
+        self.gateway._navigation.stop = Mock()
+
+        self.gateway.navigate_to_node("robot1", "2")
+        self.node.cancel_auxiliary.assert_called_once()
+        self.gateway._navigation.stop.assert_not_called()
+        self.node.cancel_auxiliary.call_args.kwargs["callback"]()
+        self.gateway._navigation.stop.assert_called_once()
+
+    def test_new_goal_waits_for_omx_terminal_result(self):
+        self.robot.order_id = "old-order"
+        self.robot.set_state(RobotState.WAITING)
+        self.gateway._navigation.stop = Mock()
+        gateway_module.mqtt_manager.cancel_job.return_value = False
+
+        self.gateway.navigate_to_node("robot1", "2")
+        self.assertIsNone(self.robot.order_id)
+        self.gateway._navigation.stop.assert_not_called()
+        self.gateway._on_omx_terminal("robot1", "old-order")
+        self.gateway._navigation.stop.assert_called_once()
+
+    def test_emergency_stop_discards_goal_queued_behind_omx(self):
+        self.robot.order_id = "old-order"
+        self.robot.set_state(RobotState.WAITING)
+        self.gateway._navigation.stop = Mock()
+        gateway_module.mqtt_manager.cancel_job.return_value = False
+
+        self.gateway.navigate_to_node("robot1", "2")
+        self.gateway.emergency_stop("robot1")
+        self.gateway._on_omx_terminal("robot1", "old-order")
+
+        self.assertEqual(self.robot.state, RobotState.EMERGENCY_STOP)
+        self.gateway._navigation.stop.assert_called_once()
+        self.assertEqual(self.gateway._navigation.stop.call_args.kwargs["reason"],
+                         "emergency_stop")
+        self.assertNotIn("robot1", self.gateway._waiting_omx)
 
     def test_charging_runs_precision_dock_only(self):
         self.robot.navigation_type = NavigationType.CHARGING

@@ -18,6 +18,11 @@ class MQTTManager:
 
         # 작업 결과 Callback
         self.result_callback = None
+        # (OMX, 주문 ID)별 미완료 명령. 같은 Result로 다음 단계를 두 번 실행하지 않는다.
+        self._pending_jobs = set()
+        self._pending_lock = threading.Lock()
+        self._canceled_jobs = set()
+        self._cancel_callbacks = {}
 
         # MQTT Client
         self.client = mqtt.Client()
@@ -108,8 +113,8 @@ class MQTTManager:
 
             self.omx_devices[omx_id] = OMX(omx_id=omx_id, mqtt_client=self.client)
 
-            print()
-            print(f"[{time.strftime('%H:%M:%S')}] [MQTT] New OMX discovered: " f"{omx_id}")
+            print(f"[{time.strftime('%H:%M:%S')}] [MQTT] New OMX discovered: "
+                  f"{omx_id}", flush=True)
 
         omx = self.omx_devices[omx_id]
 
@@ -130,6 +135,21 @@ class MQTTManager:
         elif message_type == "ack":
             omx.update_ack(data)
             print(f"[{time.strftime('%H:%M:%S')}] [MQTT] ACK: " f"{omx_id} / {data}")
+            if data.get("accepted") is False:
+                key = (omx_id, data.get("job_id"))
+                with self._pending_lock:
+                    pending = key in self._pending_jobs
+                    self._pending_jobs.discard(key)
+                    canceled = key in self._canceled_jobs
+                    self._canceled_jobs.discard(key)
+                    callback = (self._cancel_callbacks.pop(key[1], None)
+                                if canceled and not any(row[1] == key[1]
+                                                        for row in self._pending_jobs) else None)
+                if callback is not None:
+                    callback()
+                if pending and not canceled and self.result_callback is not None:
+                    self.result_callback(omx, {"job_id": key[1], "success": False,
+                                               "message": "OMX ACK rejected"})
 
         elif message_type == "progress":
             omx.update_progress(data)
@@ -138,9 +158,22 @@ class MQTTManager:
         elif message_type == "result":
             omx.update_result(data)
             print(f"[{time.strftime('%H:%M:%S')}] [MQTT] RESULT: " f"{omx_id} / {data}")
-
-            if self.result_callback is not None:
+            key = (omx_id, data.get("job_id"))
+            with self._pending_lock:
+                pending = key in self._pending_jobs
+                self._pending_jobs.discard(key)
+                canceled = key in self._canceled_jobs
+                self._canceled_jobs.discard(key)
+                callback = (self._cancel_callbacks.pop(key[1], None)
+                            if canceled and not any(row[1] == key[1]
+                                                    for row in self._pending_jobs) else None)
+            if callback is not None:
+                callback()
+            if pending and not canceled and self.result_callback is not None:
                 self.result_callback(omx, data)
+            elif not pending or canceled:
+                print(f"[{time.strftime('%H:%M:%S')}] [MQTT] ignored duplicate/stale Result: "
+                      f"omx={omx_id} job_id={key[1]}", flush=True)
 
     # =========================================================
     # OMX 작업 명령
@@ -155,7 +188,34 @@ class MQTTManager:
         if not omx.connected:
             raise RuntimeError(f"OMX is offline: {omx_id}")
 
-        omx.send_command(job_id=job_id, items=items)
+        key = (omx_id, job_id)
+        with self._pending_lock:
+            if key in self._pending_jobs:
+                raise RuntimeError(f"OMX 작업 명령이 이미 진행 중입니다: {omx_id}/{job_id}")
+            self._pending_jobs.add(key)
+        try:
+            omx.send_command(job_id=job_id, items=items)
+        except Exception:
+            with self._pending_lock:
+                self._pending_jobs.discard(key)
+            raise
+
+    def cancel_job(self, job_id, callback=None):
+        """기존 Result를 무효화하고 OMX 종료 메시지를 기다린다. 물리 동작 취소는 아니다."""
+        with self._pending_lock:
+            active = [key for key in self._pending_jobs if key[1] == job_id]
+            self._canceled_jobs.update(active)
+            if active and callback is not None:
+                self._cancel_callbacks[job_id] = callback
+        if active:
+            print(f"[{time.strftime('%H:%M:%S')}] [MQTT] FMS job invalidated "
+                  f"job_id={job_id} omx={[key[0] for key in active]} "
+                  "waiting for OMX terminal message", flush=True)
+        return not active
+
+    def has_active_job(self, job_id):
+        with self._pending_lock:
+            return any(key[1] == job_id for key in self._pending_jobs)
 
     # =========================================================
     # OMX 조회

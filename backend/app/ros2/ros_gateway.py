@@ -4,6 +4,7 @@ from typing import Any
 from copy import deepcopy
 from functools import wraps
 from ..services.real_navigation import RealNavigation, measured_distance
+from ..config import REAL_ARRIVAL_DISTANCE_M
 from time import monotonic, strftime
 
 
@@ -27,7 +28,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .fms_ros_node import FmsRosNode
 
-ARRIVAL_DISTANCE_THRESHOLD = 0.15  # 15cm
+ARRIVAL_DISTANCE_THRESHOLD = REAL_ARRIVAL_DISTANCE_M
 
 GOAL_YAWS = {
     "0": 0.0,
@@ -127,6 +128,7 @@ def _navigation_locked(method):
 class RosGateway:
     def __init__(self) -> None:
         self._ros_node: FmsRosNode | None = None
+        self._waiting_omx = {}
         self._navigation = RealNavigation(
             fleet_manager,
             lambda **kwargs: self._ros_node.send_follow_waypoints_goal(**kwargs),
@@ -201,10 +203,58 @@ class RosGateway:
             raise ValueError(f"Robot이 연결되어 있지 않습니다: {robot_id}")
         if robot.state == RobotState.EMERGENCY_STOP:
             raise ValueError(f"비상정지 상태입니다: {robot_id}")
-        if robot.state == RobotState.DOCKING:
-            raise ValueError(f"정렬 또는 도킹 진행 중입니다: {robot_id}")
         target = get_node(node_id)
         measured_distance(robot, (target["x"], target["y"]), monotonic())
+
+    def _on_omx_terminal(self, robot_id, job_id):
+        with self._navigation.lock:
+            waiting = self._waiting_omx.get(robot_id)
+            if waiting is None or waiting[0] != job_id:
+                return
+            _, callback, reason = self._waiting_omx.pop(robot_id)
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY OMX] robot={robot_id} "
+                  f"job_id={job_id} terminal confirmed", flush=True)
+            robot = fleet_manager.get_robot(robot_id)
+            if callback is not None and robot is not None and robot.state != RobotState.EMERGENCY_STOP:
+                try:
+                    self._stop_before_navigation(robot_id, callback, reason, cancel_order=False)
+                except (ValueError, RuntimeError) as exc:
+                    robot.set_state(RobotState.PAUSED)
+                    print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY OMX ERROR] robot={robot_id} "
+                          f"next_request_failed={exc!r}", flush=True)
+
+    def _stop_before_navigation(self, robot_id, callback, reason, *, cancel_order=True):
+        """OMX·도킹·정렬·Nav2의 기존 작업 종료를 순서대로 확인한 뒤 다음 작업을 실행한다."""
+        if robot_id in self._waiting_omx:
+            job_id = self._waiting_omx[robot_id][0]
+            self._waiting_omx[robot_id] = (job_id, callback, reason)
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY OMX] robot={robot_id} "
+                  f"new request queued until job_id={job_id} finishes", flush=True)
+            return
+        robot = fleet_manager.get_robot(robot_id)
+        if cancel_order and robot is not None and robot.order_id is not None:
+            job_id = robot.order_id
+            robot.clear_order()
+            self._waiting_omx[robot_id] = (job_id, callback, reason)
+            if not mqtt_manager.cancel_job(
+                    job_id, callback=lambda rid=robot_id, job=job_id: self._on_omx_terminal(rid, job)):
+                robot.set_state(RobotState.WAITING)
+                return
+            self._waiting_omx.pop(robot_id, None)
+        if self._ros_node.has_active_auxiliary(robot_id):
+            self._ros_node.cancel_auxiliary(
+                robot_id,
+                callback=lambda: self._navigation.stop(robot_id, callback, reason=reason))
+        else:
+            self._navigation.stop(robot_id, callback, reason=reason)
+
+    @_navigation_locked
+    def cancel_current_work(self, robot_id, callback):
+        robot_id = self._resolve_robot_id(robot_id)
+        robot = fleet_manager.get_robot(robot_id)
+        if robot is None or not robot.connected or robot.state == RobotState.EMERGENCY_STOP:
+            raise ValueError(f"새 작업을 받을 수 없는 Robot입니다: {robot_id}")
+        self._stop_before_navigation(robot_id, callback, "new_order_request")
 
     # ROS 노드에 cmd_vel 명령을 발행하고, 응답을 반환
     @_navigation_locked
@@ -265,6 +315,17 @@ class RosGateway:
 
         # 취소/전송 중 예외가 나도 비상정지 상태를 잃지 않는다.
         robot.set_state(RobotState.EMERGENCY_STOP)
+        if robot_id in self._waiting_omx:
+            job_id, _, _ = self._waiting_omx[robot_id]
+            self._waiting_omx[robot_id] = (job_id, None, "emergency_stop")
+        if robot.order_id is not None:
+            job_id = robot.order_id
+            self._waiting_omx[robot_id] = (job_id, None, "emergency_stop")
+            if mqtt_manager.cancel_job(
+                    job_id, callback=lambda rid=robot_id, job=job_id: self._on_omx_terminal(rid, job)):
+                self._waiting_omx.pop(robot_id, None)
+            robot.clear_order()
+        self._ros_node.cancel_auxiliary(robot_id)
         # 실행 중인 Nav2 주행 취소
         self._navigation.stop(
             robot_id, callback=lambda: self._navigation.cancel_after_stop(robot_id),
@@ -276,11 +337,17 @@ class RosGateway:
         robot.goal_node = None
         robot.navigation_type = None
         robot.set_state(RobotState.EMERGENCY_STOP)
+        confirmed = (robot_id not in self._navigation._stopping
+                     and not self._ros_node.has_active_auxiliary(robot_id)
+                     and robot_id not in self._waiting_omx)
+        print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY STOP] robot={robot_id} "
+              f"cancel_confirmed={confirmed}", flush=True)
 
         return {
             "success": True,
             "robot_id": robot_id,
             "command": "emergency-stop",
+            "cancel_confirmed": confirmed,
             "source": "ros2",
         }
 
@@ -288,18 +355,24 @@ class RosGateway:
         robots = fleet_manager.get_all_robots()
 
         stopped_robots = []
+        confirmations = {}
+        skipped_offline = []
 
         for robot in robots:
             if not robot.connected:
+                skipped_offline.append(robot.robot_id)
                 continue
 
-            self.emergency_stop(robot.robot_id)
+            result = self.emergency_stop(robot.robot_id)
             stopped_robots.append(robot.robot_id)
+            confirmations[robot.robot_id] = result["cancel_confirmed"]
 
         return {
             "success": True,
             "command": "emergency-stop-all",
             "robots": stopped_robots,
+            "cancel_confirmed": confirmations,
+            "skipped_offline": skipped_offline,
             "source": "ros2",
         }
 
@@ -319,6 +392,10 @@ class RosGateway:
 
         if robot_id in self._navigation._stopping:
             raise ValueError(f"주행 취소 종료를 기다리고 있습니다: {robot_id}")
+        if self._ros_node.has_active_auxiliary(robot_id):
+            raise ValueError(f"도킹 또는 ArUco Action 종료를 기다리고 있습니다: {robot_id}")
+        if robot_id in self._waiting_omx:
+            raise ValueError(f"OMX 작업 종료를 기다리고 있습니다: {robot_id}")
         robot.set_state(RobotState.IDLE)
 
         return {
@@ -353,7 +430,7 @@ class RosGateway:
 
     # 실제 로봇을 Route Graph의 목적지 Node로 이동
     @_navigation_locked
-    def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict:
+    def navigate_to_node(self, robot_id: str, node_id: str | int, *, _order_step=False) -> dict:
         # Robot ID 정규화 및 ROS 등록 여부 확인
         robot_id = self._resolve_robot_id(robot_id)
         robot = fleet_manager.get_robot(robot_id)
@@ -367,16 +444,16 @@ class RosGateway:
         self._validate_navigation_request(robot_id, node_id)
         same_active_goal = (
             robot.goal_node == str(node_id)
+            and (_order_step or robot.order_id is None)
             and robot.state in (RobotState.MOVING, RobotState.WAITING)
             and robot_id not in self._navigation._stopping
             and (robot_id in self._navigation._requests
                  or robot_id in self._navigation._executing)
         )
         if not same_active_goal:
-            self._navigation.stop(
-                robot_id, callback=lambda: self._start_navigation(robot_id, node_id),
-                reason="new_goal_request",
-            )
+            self._stop_before_navigation(
+                robot_id, lambda: self._start_navigation(robot_id, node_id),
+                "new_goal_request", cancel_order=not _order_step)
 
         return {
             "success": True,
@@ -404,13 +481,10 @@ class RosGateway:
             raise ValueError(f"충전 스테이션이 지정되지 않은 Robot입니다: {robot_id}")
 
         self._validate_navigation_request(robot_id, charging_node)
-        self._navigation.stop(
+        self._stop_before_navigation(
             robot_id,
-            callback=lambda: self._start_navigation(
-                robot_id, charging_node, NavigationType.CHARGING
-            ),
-            reason="charging_request",
-        )
+            lambda: self._start_navigation(robot_id, charging_node, NavigationType.CHARGING),
+            "charging_request")
 
         return {
             "success": True,
@@ -454,8 +528,9 @@ class RosGateway:
                     raise ValueError("최종 목적지가 없습니다.")
                 goal = get_node(robot.goal_node)
                 distance = measured_distance(robot, (goal["x"], goal["y"]), monotonic())
-                print(f"[{strftime('%H:%M:%S')}] [{robot_id}] 도착 거리 확인: goal={robot.goal_node}, "
-                      f"distance={distance:.3f}m, tolerance={ARRIVAL_DISTANCE_THRESHOLD:.3f}m")
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARRIVAL] robot={robot_id} "
+                      f"goal={robot.goal_node} distance={distance:.3f}m "
+                      f"tolerance={ARRIVAL_DISTANCE_THRESHOLD:.3f}m", flush=True)
                 if distance > ARRIVAL_DISTANCE_THRESHOLD:
                     raise ValueError(f"도착 위치 불일치: {distance:.3f}m")
             except (OSError, KeyError, ValueError) as exc:
@@ -468,18 +543,26 @@ class RosGateway:
                 robot.navigation_type = None
                 robot.route = None
                 robot.set_state(RobotState.IDLE)
-                print(f"[{strftime('%H:%M:%S')}] [{robot_id}] 가장 가까운 노드 복귀 완료: " f"{robot.current_node}")
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY RETURN] robot={robot_id} "
+                      f"node={robot.current_node}", flush=True)
                 return
 
             if robot.navigation_type == NavigationType.CHARGING:
-                print(f"[{strftime('%H:%M:%S')}] [{robot_id}] 충전 스테이션 도착: {robot.goal_node}")
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY CHARGING] robot={robot_id} "
+                      f"station={robot.goal_node}", flush=True)
 
                 robot.set_state(RobotState.DOCKING)
-                self._ros_node.send_precision_dock(robot_id)
+                try:
+                    self._ros_node.send_precision_dock(robot_id)
+                except (ValueError, RuntimeError) as exc:
+                    robot.set_state(RobotState.PAUSED)
+                    print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY DOCK ERROR] "
+                          f"robot={robot_id} goal_send_failed={exc!r}", flush=True)
                 return
 
             # 일반 목적지 이동 완료
-            print(f"[{strftime('%H:%M:%S')}] [{robot_id}] 목적지 도착: {robot.goal_node}")
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARRIVAL] robot={robot_id} "
+                  f"goal={robot.goal_node}", flush=True)
 
             robot.current_node = robot.goal_node
             robot.navigation_type = None
@@ -491,13 +574,16 @@ class RosGateway:
             if marker_id is not None:
                 robot.set_state(RobotState.DOCKING)
 
-                print(
-                    f"[{strftime('%H:%M:%S')}] [{robot_id}] Node {robot.current_node} 도착 "
-                    f"→ ArUco 정렬 시작 "
-                    f"(marker_id={marker_id})"
-                )
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO] robot={robot_id} "
+                      f"node={robot.current_node} alignment starting marker_id={marker_id}",
+                      flush=True)
 
-                self._ros_node.send_aruco_align(robot_id=robot_id, marker_id=marker_id)
+                try:
+                    self._ros_node.send_aruco_align(robot_id=robot_id, marker_id=marker_id)
+                except (ValueError, RuntimeError) as exc:
+                    robot.set_state(RobotState.PAUSED)
+                    print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO ERROR] "
+                          f"robot={robot_id} goal_send_failed={exc!r}", flush=True)
                 return
 
             # ArUco 정렬 대상이 아닌 일반 Node
@@ -542,11 +628,10 @@ class RosGateway:
 
         # 기존 복귀 목적과 yaw는 유지하며 동일한 예약 실행부를 통과한다.
         self._validate_navigation_request(robot_id, nearest_node)
-        self._navigation.stop(
+        self._stop_before_navigation(
             robot_id,
-            callback=lambda: self._start_navigation(robot_id, nearest_node, NavigationType.RETURN),
-            reason="return_request",
-        )
+            lambda: self._start_navigation(robot_id, nearest_node, NavigationType.RETURN),
+            "return_request")
 
         return {
             "success": True,
@@ -569,7 +654,7 @@ class RosGateway:
         if robot is None:
             return
 
-        if not robot.connected or robot.state == RobotState.EMERGENCY_STOP:
+        if not robot.connected or robot.state != RobotState.DOCKING:
             return
 
         if status == GoalStatus.STATUS_SUCCEEDED:
@@ -577,10 +662,10 @@ class RosGateway:
             robot.set_state(RobotState.IDLE)
             robot.navigation_type = None
             robot.route = None
-            print(f"[{strftime('%H:%M:%S')}] [{robot_id}] PrecisionDock 완료")
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY DOCK] robot={robot_id} completed", flush=True)
         else:
             robot.set_state(RobotState.PAUSED)
-            print(f"[{strftime('%H:%M:%S')}] [{robot_id}] PrecisionDock 실패")
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY DOCK] robot={robot_id} failed", flush=True)
 
     @_navigation_locked
     def on_aruco_align_result(self, robot_id: str, status: int) -> None:
@@ -589,17 +674,26 @@ class RosGateway:
         if robot is None:
             return
 
-        if not robot.connected or robot.state == RobotState.EMERGENCY_STOP:
+        if not robot.connected or robot.state != RobotState.DOCKING:
             return
 
         if status == GoalStatus.STATUS_SUCCEEDED:
-            print(f"[{strftime('%H:%M:%S')}] [{robot_id}] ArUco 정렬 성공: " f"Node {robot.current_node}")
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO] robot={robot_id} "
+                  f"aligned node={robot.current_node}", flush=True)
+
+            if robot.order_id is None:
+                # 일반 Node 이동은 정렬만 완료한다. 주문 없는 OMX 명령은 보내지 않는다.
+                robot.set_state(RobotState.IDLE)
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO] robot={robot_id} "
+                      "no order, OMX skipped", flush=True)
+                return
 
             # 현재 Node에 연결된 OMX 조회
             omx_id = NODE_OMX_MAP.get(robot.current_node)
 
             if omx_id is None:
-                print(f"[{strftime('%H:%M:%S')}] [{robot_id}] 연결된 OMX가 없습니다: " f"Node {robot.current_node}")
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO] robot={robot_id} "
+                      f"no OMX for node={robot.current_node}", flush=True)
                 robot.set_state(RobotState.IDLE)
                 return
 
@@ -612,18 +706,28 @@ class RosGateway:
                 if quantity > 0:
                     items[key] = quantity
 
-            print(f"[{strftime('%H:%M:%S')}] [{robot_id}] MQTT 작업 요청: " f"{omx_id}, items={items}")
+            if not items:
+                robot.set_state(RobotState.PAUSED)
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO] robot={robot_id} "
+                      f"order={robot.order_id} has no items for node={robot.current_node}", flush=True)
+                return
 
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY MQTT] robot={robot_id} "
+                  f"omx={omx_id} items={items}", flush=True)
+
+            # 빠른 MQTT Result가 publish 직후 도착해도 현재 단계의 결과로 처리한다.
+            robot.set_state(RobotState.WAITING)
             try:
                 mqtt_manager.send_job(omx_id=omx_id, job_id=robot.order_id, items=items)
             except (ValueError, RuntimeError) as e:
-                print(f"[{strftime('%H:%M:%S')}] [{robot_id}] MQTT 작업 요청 실패: " f"{e}")
+                print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY MQTT ERROR] "
+                      f"robot={robot_id} error={e!r}", flush=True)
                 robot.set_state(RobotState.PAUSED)
                 return
-            robot.set_state(RobotState.WAITING)
 
         else:
-            print(f"[{strftime('%H:%M:%S')}] [{robot_id}] ArUco 정렬 실패: " f"status={status}")
+            print(f"[{strftime('%H:%M:%S')}] [ROS GATEWAY ARUCO] robot={robot_id} "
+                  f"failed status={status}", flush=True)
             robot.set_state(RobotState.PAUSED)
 
 
