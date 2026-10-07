@@ -64,20 +64,20 @@ MQTT_BROKER_PORT = int(os.getenv("FMS_MQTT_BROKER_PORT", "1883"))
 
 # real_navigation의 TrafficManager 예약 시간 계산용 예상 속도(m/s).
 # 기본값은 0.01이며 Nav2 주행 속도를 직접 변경하지 않는다.
-REAL_NAVIGATION_SPEED_MPS = float(os.getenv("FMS_REAL_NAVIGATION_SPEED_MPS", "0.01"))
+REAL_NAVIGATION_SPEED_MPS = float(os.getenv("FMS_REAL_NAVIGATION_SPEED_MPS", "0.12"))
 
 # 실제용 TrafficManager가 노드/통로 예약 앞뒤에 적용하는 여유 시간(초).
-REAL_RESERVATION_MARGIN_S = float(os.getenv("FMS_REAL_RESERVATION_MARGIN_S", "0.4"))
+REAL_RESERVATION_MARGIN_S = float(os.getenv("FMS_REAL_RESERVATION_MARGIN_S", "1.5"))
 
 # real_navigation에서 실제 Pose를 Route Graph의 Node/Edge에 대응시킬 때의 허용 거리(m).
 # 기본값 0.5는 최종 목적지 도착 허용 거리 0.15m와 다르며, 원본 Pose는 변경하지 않는다.
-REAL_OCCUPANCY_TOLERANCE_M = float(os.getenv("FMS_REAL_OCCUPANCY_TOLERANCE_M", "0.5"))
+REAL_OCCUPANCY_TOLERANCE_M = float(os.getenv("FMS_REAL_OCCUPANCY_TOLERANCE_M", "0.20"))
 
 # 실제 실행부가 Robot.pose_received_at의 최신성을 확인하는 최대 경과 시간(초).
 REAL_POSE_TIMEOUT_S = float(os.getenv("FMS_REAL_POSE_TIMEOUT_S", "2.0"))
 
-# main.run_real_navigation에서 예약 재시도/구간 실행 상태를 확인하는 주기(초).
-REAL_NAVIGATION_INTERVAL_S = float(os.getenv("FMS_REAL_NAVIGATION_INTERVAL_S", "0.1"))
+# main.run_real_navigation에서 예약 재시도/구간 실행 상태를 확인하는 주기(초). 0.1 -> 0.2
+REAL_NAVIGATION_INTERVAL_S = float(os.getenv("FMS_REAL_NAVIGATION_INTERVAL_S", "0.2"))
 
 # real_navigation: Nav2 성공 직후 늦게 수신되는 위치를 확인하는 최대 대기 시간(초).
 # 도착 허용 거리(기존 0.15m)를 넓히는 값은 아니다.

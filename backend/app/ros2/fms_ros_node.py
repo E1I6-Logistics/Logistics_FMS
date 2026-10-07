@@ -265,7 +265,8 @@ class FmsRosNode(Node):
             status = result.status
             # FollowWaypoints가 완료되어도 건너뛴 waypoint가 있으면 도착 성공이 아니다.
             if status == GoalStatus.STATUS_SUCCEEDED and getattr(
-                    getattr(result, "result", None), "missed_waypoints", []):
+                getattr(result, "result", None), "missed_waypoints", []
+            ):
                 status = GoalStatus.STATUS_ABORTED
             self.navigation_result_callback(robot_id, status)
 
