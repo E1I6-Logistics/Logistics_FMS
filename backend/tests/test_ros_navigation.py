@@ -21,7 +21,8 @@ def load_ros_modules():
         "rclpy.action": {"ActionClient": object},
         "geometry_msgs.msg": {name: object for name in (
             "Quaternion", "TwistStamped", "PoseStamped", "PoseWithCovarianceStamped")},
-        "nav2_msgs.action": {"FollowWaypoints": object},
+        "nav2_msgs.action": {"NavigateThroughPoses": SimpleNamespace(
+            Goal=lambda: SimpleNamespace())},
         "action_msgs.msg": {"GoalStatus": SimpleNamespace(
             STATUS_SUCCEEDED=4, STATUS_CANCELED=5, STATUS_ABORTED=6)},
         "sensor_msgs.msg": {"BatteryState": object},
@@ -55,8 +56,42 @@ class RosCancellationTest(unittest.TestCase):
         self.node._follow_waypoints_pending = set()
         self.node._follow_waypoints_cancel_callbacks = {}
         self.node._follow_waypoints_feedback_tokens = {}
+        self.node._follow_waypoints_clients = {}
         self.node.get_logger = Mock(return_value=Mock())
         self.node.navigation_result_callback = Mock()
+
+    def test_registers_navigate_through_poses_action(self):
+        self.node._registered_robots = set()
+        self.node._cmd_vel_publishers = {}
+        self.node._pose_subscribers = {}
+        self.node._battery_subscribers = {}
+        self.node._precision_dock_clients = {}
+        self.node._aruco_align_clients = {}
+        self.node.create_publisher = Mock()
+        self.node.create_subscription = Mock()
+        with patch.object(node_module, "ActionClient") as action_client:
+            self.node.register_robot("robot1")
+        action_client.assert_any_call(
+            self.node, node_module.NavigateThroughPoses, "/robot1/navigate_through_poses")
+
+    def test_sends_all_route_poses_in_one_goal(self):
+        client = Mock()
+        self.node._follow_waypoints_clients["robot1"] = client
+        self.node.get_clock = Mock(return_value=SimpleNamespace(
+            now=lambda: SimpleNamespace(to_msg=lambda: "stamp")))
+        def pose_stamped():
+            return SimpleNamespace(
+                header=SimpleNamespace(),
+                pose=SimpleNamespace(position=SimpleNamespace(), orientation=SimpleNamespace()))
+        with patch.object(node_module, "PoseStamped", side_effect=pose_stamped):
+            self.node.send_follow_waypoints_goal(
+                "robot1", [(1., 0., 0.), (2., 0., .5), (3., 0., 1.)])
+        goal = client.send_goal_async.call_args.args[0]
+        self.assertEqual(len(goal.poses), 3)
+        self.assertEqual([pose.pose.position.x for pose in goal.poses], [1., 2., 3.])
+        self.assertEqual([pose.header.frame_id for pose in goal.poses], ["map"] * 3)
+        self.assertEqual(self.node._follow_waypoints_feedback_tokens["robot1"][1], 3)
+        client.send_goal_async.assert_called_once()
 
     def test_cancel_ack_does_not_start_next_request(self):
         callback = Mock()
@@ -135,23 +170,42 @@ class RosCancellationTest(unittest.TestCase):
         self.node.navigation_error_callback.assert_called_once_with("robot1", "cancel_rejected")
         self.assertIs(self.node._follow_waypoints_goal_handles["robot1"], handle)
 
-    def test_success_with_missed_waypoints_is_failure(self):
+    def test_success_result_reaches_existing_navigation_callback(self):
         handle, future = Mock(), Mock()
         self.node._follow_waypoints_goal_handles["robot1"] = handle
         future.result.return_value = SimpleNamespace(
-            status=4, result=SimpleNamespace(missed_waypoints=[0]))
+            status=4, result=SimpleNamespace(error_code=0, error_msg=""))
+        self.node._on_follow_waypoints_result("robot1", handle, future)
+        self.node.navigation_result_callback.assert_called_once_with("robot1", 4)
+
+    def test_abort_result_reaches_existing_navigation_callback(self):
+        handle, future = Mock(), Mock()
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        future.result.return_value = SimpleNamespace(status=6)
         self.node._on_follow_waypoints_result("robot1", handle, future)
         self.node.navigation_result_callback.assert_called_once_with("robot1", 6)
 
     def test_old_goal_feedback_does_not_update_new_goal(self):
-        current = object()
+        current = (object(), 3)
         self.node._follow_waypoints_feedback_tokens["robot1"] = current
         self.node.navigation_feedback_callback = Mock()
-        feedback = SimpleNamespace(feedback=SimpleNamespace(current_waypoint=1))
+        feedback = SimpleNamespace(feedback=SimpleNamespace(number_of_poses_remaining=2))
         self.node._on_follow_waypoints_feedback("robot1", feedback, object())
         self.node.navigation_feedback_callback.assert_not_called()
         self.node._on_follow_waypoints_feedback("robot1", feedback, current)
         self.node.navigation_feedback_callback.assert_called_once_with("robot1", 1)
+
+    def test_remaining_poses_are_clamped_to_route_indices(self):
+        token = (object(), 3)
+        self.node._follow_waypoints_feedback_tokens["robot1"] = token
+        self.node.navigation_feedback_callback = Mock()
+        for remaining in (3, 2, 1, 0):
+            feedback = SimpleNamespace(feedback=SimpleNamespace(
+                number_of_poses_remaining=remaining))
+            self.node._on_follow_waypoints_feedback("robot1", feedback, token)
+        self.assertEqual(
+            [call.args[1] for call in self.node.navigation_feedback_callback.call_args_list],
+            [0, 1, 2, 2])
 
 
 class GatewaySequenceTest(unittest.TestCase):
@@ -235,6 +289,25 @@ class GatewaySequenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.gateway.navigate_to_node("robot1", "2")
         self.node.cancel_follow_waypoints.assert_not_called()
+
+    def test_repeating_active_goal_does_not_cancel_it(self):
+        self.robot.set_state(RobotState.MOVING)
+        self.gateway._navigation._requests["robot1"] = ("2", NavigationType.GOAL)
+
+        self.gateway.navigate_to_node("robot1", "2")
+        self.gateway.navigate_to_node("robot1", "2")
+
+        self.node.cancel_follow_waypoints.assert_not_called()
+        self.assertNotIn("robot1", self.gateway._navigation._stopping)
+
+    def test_emergency_stop_still_sends_zero_after_cancel_timeout(self):
+        self.gateway._navigation._stopping["robot1"] = None
+
+        self.gateway.emergency_stop("robot1")
+
+        self.node.publish_cmd_vel.assert_called_once_with(
+            robot_id="robot1", linear_x=0.0, angular_z=0.0)
+        self.assertEqual(self.robot.state, RobotState.EMERGENCY_STOP)
 
     def test_late_docking_result_keeps_emergency_state(self):
         self.robot.state = RobotState.EMERGENCY_STOP

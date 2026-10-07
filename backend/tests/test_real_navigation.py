@@ -4,7 +4,10 @@ from unittest.mock import patch
 from backend.app.models.robot import RobotState, NavigationType
 from backend.app.services.fleet_manager import FleetManager
 from backend.app.services.real_navigation import RealNavigation
+from backend.app.services.pathfinding import DistanceAStar
+from backend.app.services.occupancy import locate_occupancy
 from backend.app.services.reservation import ReservationTable
+from backend.app.services.route_graph import load_route_graph
 
 
 def graph():
@@ -386,6 +389,23 @@ class RealNavigationTest(unittest.TestCase):
         self.cancels.pop("robot1")()
         callback.assert_not_called()
 
+    def test_repeated_new_request_does_not_extend_cancel_deadline(self):
+        self.request("1")
+        self.nav.stop("robot1", unittest.mock.Mock(), reason="new_goal_request")
+        deadline = self.nav._stop_deadlines["robot1"]
+        self.now += 4.
+        self.nav.stop("robot1", unittest.mock.Mock(), reason="new_goal_request")
+        self.assertEqual(self.nav._stop_deadlines["robot1"], deadline)
+
+        self.tick(1.1)
+
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        with self.assertRaisesRegex(RuntimeError, "이전 Nav2 Goal의 종료"):
+            self.nav.stop("robot1", unittest.mock.Mock(), reason="new_goal_request")
+        emergency_callback = unittest.mock.Mock()
+        self.nav.stop("robot1", emergency_callback, reason="emergency_stop")
+        self.assertIs(self.nav._stopping["robot1"], emergency_callback)
+
     def test_arrival_outside_tolerance_pauses_after_confirmation_window(self):
         self.request("1")
         self.pose(self.robot, .7, 0.)
@@ -410,6 +430,115 @@ class RealNavigationTest(unittest.TestCase):
         self.assertEqual(self.robot.state, RobotState.OFFLINE)
         self.robot.set_connected(True)
         self.assertEqual(self.robot.state, RobotState.PAUSED)
+
+    def test_offline_idle_robot_does_not_pause_disjoint_navigation(self):
+        other = self.fleet.register_robot("robot2")
+        self.pose(other, 1., 1.)
+        self.assertTrue(self.nav._sync(graph(), DistanceAStar(graph()), self.now))
+        other.set_connected(False)
+
+        self.request()
+        self.tick()
+
+        self.assertEqual(self.robot.state, RobotState.MOVING)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.cancels, {})
+        self.assertEqual(self.nav._robots["robot2"]["occupied_node"], "3")
+        self.assertEqual(self.nav._robots["robot2"]["status"], "OFFLINE")
+
+    def test_offline_idle_robot_still_blocks_its_last_occupied_node(self):
+        other = self.fleet.register_robot("robot2")
+        self.pose(other, 1., 0.)
+        self.assertTrue(self.nav._sync(graph(), DistanceAStar(graph()), self.now))
+        other.set_connected(False)
+
+        self.request()
+
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.robot.state, RobotState.WAITING)
+        self.assertNotIn("robot2", self.nav._traffic._concession)
+
+    def test_offline_moving_robot_still_blocks_new_navigation(self):
+        other = self.fleet.register_robot("robot2")
+        self.pose(other, 1., 1.)
+        self.nav.request("robot2", "1", NavigationType.GOAL)
+        self.tick()
+        other.set_connected(False)
+
+        with self.assertRaisesRegex(ValueError, "robot_offline"):
+            self.nav.request("robot1", "2", NavigationType.GOAL)
+        self.assertFalse(any(command["robot_id"] == "robot1" for command in self.sent))
+
+    def test_new_robot_waiting_for_first_pose_protects_station_without_cancel(self):
+        self.nav._station_nodes = {"robot2": "3"}
+        self.request()
+        other = self.fleet.register_robot("robot2")
+        self.assertEqual(other.state, RobotState.INITIALIZING)
+
+        self.now += .1
+        self.robot.pose_received_at = self.now
+        self.nav.tick()
+
+        self.assertEqual(self.robot.state, RobotState.MOVING)
+        self.assertEqual(self.cancels, {})
+        self.assertEqual(self.nav._robots["robot2"]["occupied_node"], "3")
+        self.assertIsNone(other.x)
+        self.pose(other, 1., 1.)
+        self.tick()
+        self.assertEqual(other.state, RobotState.IDLE)
+
+    def test_first_pose_sets_idle_without_a_navigation_request(self):
+        self.assertEqual(self.robot.state, RobotState.INITIALIZING)
+        self.nav.tick()
+        self.assertEqual(self.robot.state, RobotState.IDLE)
+
+    def test_new_robot_without_pose_blocks_its_assigned_station(self):
+        self.nav._station_nodes = {"robot2": "1"}
+        self.request()
+        self.fleet.register_robot("robot2")
+        self.now += .1
+        self.robot.pose_received_at = self.now
+
+        self.nav.tick()
+
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        self.assertIn("robot1", self.cancels)
+        self.assertEqual(self.nav._robots["robot2"]["occupied_node"], "1")
+
+    def test_first_pose_timeout_restores_unknown_occupancy_stop(self):
+        self.nav._station_nodes = {"robot2": "3"}
+        self.request()
+        self.fleet.register_robot("robot2")
+        self.now += .1
+        self.robot.pose_received_at = self.now
+        self.nav.tick()
+
+        self.now += 3.1
+        self.robot.pose_received_at = self.now
+        self.nav.tick()
+
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        self.assertIn("robot1", self.cancels)
+
+    def test_dock_side_pose_maps_to_assigned_station_without_widening_graph_tolerance(self):
+        real_graph = load_route_graph()
+        real_nodes = DistanceAStar(real_graph).nodes
+        with self.assertRaises(ValueError):
+            locate_occupancy(real_graph, real_nodes, -.343, .061, tolerance_m=.20)
+        fleet = FleetManager()
+        other = fleet.register_robot("robot2")
+        self.pose(other, -.343, .061)
+        nav = RealNavigation(
+            fleet, lambda **kw: None, lambda *args, **kw: None,
+            lambda rid: None, {}, .15, reservations=ReservationTable(),
+            clock=lambda: self.now, station_nodes={"robot2": "1"})
+
+        self.assertTrue(nav._sync(real_graph, DistanceAStar(real_graph), self.now))
+        self.assertEqual(other.state, RobotState.IDLE)
+        self.assertEqual(other.occupied_node, "1")
+        self.assertEqual((other.x, other.y), (-.343, .061))
+        self.pose(other, -.5, .061)
+        self.assertFalse(nav._sync(real_graph, DistanceAStar(real_graph), self.now))
 
     def test_disconnect_does_not_clear_emergency_latch(self):
         self.robot.state = RobotState.EMERGENCY_STOP

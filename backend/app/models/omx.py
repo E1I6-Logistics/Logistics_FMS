@@ -109,4 +109,4 @@ class OMX:
         message = json.dumps(payload)
         self.mqtt_client.publish(topic, message)
 
-        print(f"[OMX:{self.omx_id}] " f"Published {topic}: {payload}")
+        print(f"[{time.strftime('%H:%M:%S')}] [OMX:{self.omx_id}] " f"Published {topic}: {payload}")

@@ -30,10 +30,16 @@ from .ros2.ros_gateway import ros_gateway
 
 import asyncio
 from contextlib import suppress
-from time import monotonic
+from time import monotonic, strftime
 
 from .services.websocket_manager import manager
 from .services.mqtt_manager import mqtt_manager
+
+# Uvicorn의 INFO/ERROR 및 HTTP 접속 로그도 주행 로그와 같은 짧은 시각으로 표시한다.
+for logger_name in ("uvicorn.error", "uvicorn.access"):
+    for handler in logging.getLogger(logger_name).handlers:
+        handler.setFormatter(logging.Formatter(
+            "[%(asctime)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
 
 
 @asynccontextmanager
@@ -171,4 +177,5 @@ async def run_real_navigation() -> None:
         try:
             ros_gateway.advance_navigation()
         except (ValueError, RuntimeError):
-            logging.getLogger(__name__).exception("실제 로봇 내비게이션 갱신 실패")
+            logging.getLogger(__name__).exception(
+                "[%s] 실제 로봇 내비게이션 갱신 실패", strftime("%H:%M:%S"))

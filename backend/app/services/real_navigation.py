@@ -6,11 +6,12 @@
 from copy import deepcopy
 import math
 import logging
-from time import monotonic
+from time import monotonic, strftime
 
 from ..config import (
     REAL_NAVIGATION_SPEED_MPS, REAL_RESERVATION_MARGIN_S,
-    REAL_OCCUPANCY_TOLERANCE_M, REAL_POSE_TIMEOUT_S,
+    REAL_OCCUPANCY_TOLERANCE_M, REAL_DOCK_OCCUPANCY_TOLERANCE_M,
+    REAL_POSE_TIMEOUT_S, REAL_INITIAL_POSE_TIMEOUT_S,
     REAL_ARRIVAL_CONFIRM_TIMEOUT_S, REAL_CANCEL_TIMEOUT_S,
 )
 from ..models.robot import RobotState, NavigationType
@@ -36,13 +37,14 @@ def measured_distance(robot, target, now):
 
 class RealNavigation:
     def __init__(self, fleet, send_goal, cancel_goal, on_complete, goal_yaws,
-                 arrival_distance, *, reservations=None, clock=monotonic):
+                 arrival_distance, *, reservations=None, clock=monotonic, station_nodes=None):
         self._fleet = fleet
         self._send_goal = send_goal
         self._cancel_goal = cancel_goal
         self._on_complete = on_complete
         self._goal_yaws = goal_yaws
         self._arrival_distance = arrival_distance
+        self._station_nodes = station_nodes or {}
         self._clock = clock
         self._robots = {}
         self._traffic = TrafficManager(
@@ -67,6 +69,36 @@ class RealNavigation:
         self._lookahead_decisions = {}
         self._resume_pending = set()
         self._deferred_requests = {}
+        self._initializing_since = {}
+
+    def _docked_station(self, robot_id, graph, nodes, x, y):
+        """담당 충전 Node의 통로 반대쪽 도킹 공간에 있는 Pose만 해당 Node로 대응한다."""
+        station = self._station_nodes.get(robot_id)
+        if station not in nodes:
+            return None
+        sx, sy = nodes[station]
+        if math.dist((x, y), (sx, sy)) > REAL_DOCK_OCCUPANCY_TOLERANCE_M:
+            return None
+        nearest = min(nodes, key=lambda node: math.dist((x, y), nodes[node]))
+        if nearest != station:
+            return None
+        neighbors = set()
+        for feature in graph["features"]:
+            props = feature.get("properties") or {}
+            if "startid" not in props or "endid" not in props:
+                continue
+            start, end = str(props["startid"]), str(props["endid"])
+            if start == station and end in nodes:
+                neighbors.add(end)
+            elif end == station and start in nodes:
+                neighbors.add(start)
+        if not neighbors:
+            return None
+        # 그래프 통로 쪽 Pose를 도킹 위치로 오인하지 않는다.
+        if any((x - sx) * (nodes[node][0] - sx) + (y - sy) * (nodes[node][1] - sy) > 0
+               for node in neighbors):
+            return None
+        return station
 
     def _sync(self, graph, planner, now):
         """측정 좌표는 보존하고 공통 알고리즘 입력용 위치만 노드에 대응시킨다."""
@@ -82,12 +114,42 @@ class RealNavigation:
                      and all(v is not None and math.isfinite(v) for v in (x, y, yaw)))
             row = self._robots.get(rid)
             if not fresh:
+                # 새 Robot의 구독이 첫 Pose를 받을 때까지 담당 충전 Node를 보호한다.
+                if robot.connected and received is None and robot.state == RobotState.INITIALIZING:
+                    station = self._station_nodes.get(rid)
+                    since = self._initializing_since.setdefault(rid, now)
+                    if (station in planner.nodes and now - since <= REAL_INITIAL_POSE_TIMEOUT_S):
+                        if row is None:
+                            sx, sy = planner.nodes[station]
+                            self._robots[rid] = dict(
+                                robot_id=rid, goal_node=None, navigation_id=None, route=None,
+                                request_order=None, stop_requested=True, status="INITIALIZING",
+                                x=sx, y=sy, yaw=0.0, current_node=station,
+                                occupied_node=station, occupied_edge=None)
+                        continue
+                self._initializing_since.pop(rid, None)
+                # FMS에서 마지막으로 IDLE을 확인한 다른 로봇의 연결 해제는
+                # 온라인 로봇의 경로 계산을 막지 않는다. 마지막 점유는 남겨
+                # TrafficManager가 해당 Node/Edge를 계속 피하도록 한다.
+                if (not robot.connected and row is not None
+                        and row["status"] in ("IDLE", "OFFLINE")
+                        and row["goal_node"] is None and row["route"] is None
+                        and robot.navigation_type is None and robot.order_id is None
+                        and robot.goal_node is None and robot.route is None
+                        and rid not in self._requests and rid not in self._executing
+                        and rid not in self._stopping and rid not in self._arrivals
+                        and rid not in self._traffic._pending
+                        and rid not in self._traffic._concession):
+                    row["status"] = "OFFLINE"
+                    continue
                 # 연결 해제 후에도 마지막 점유를 지우지 않는다. 알 수 없는 점유로 새 실행 금지.
                 if robot.connected or row is not None:
                     valid = False
                     self._sync_errors[rid] = "robot_offline" if not robot.connected else "pose_stale_or_invalid"
                 continue
+            self._initializing_since.pop(rid, None)
             edge = None
+            docked = False
             try:
                 try:
                     # 큰 점유 허용 거리에서 Edge 중간을 인접 Node로 먼저 오인하지 않는다.
@@ -95,8 +157,15 @@ class RealNavigation:
                         graph, planner.nodes, x, y,
                         tolerance_m=min(REAL_OCCUPANCY_TOLERANCE_M, self._arrival_distance))
                 except ValueError:
-                    node, edge = locate_occupancy(
-                        graph, planner.nodes, x, y, tolerance_m=REAL_OCCUPANCY_TOLERANCE_M)
+                    try:
+                        node, edge = locate_occupancy(
+                            graph, planner.nodes, x, y, tolerance_m=REAL_OCCUPANCY_TOLERANCE_M)
+                    except ValueError:
+                        station = self._docked_station(rid, graph, planner.nodes, x, y)
+                        if station is None or (row is not None
+                                               and row["occupied_node"] != station):
+                            raise
+                        node, edge, docked = station, None, True
                 execution = self._executing.get(rid)
                 if execution is not None and execution[2] is not None:
                     route = row["route"]
@@ -118,15 +187,19 @@ class RealNavigation:
                 self._sync_errors[rid] = f"occupancy_or_route_mismatch:{exc}"
                 if previous_errors.get(rid) != self._sync_errors[rid]:
                     logging.getLogger(__name__).warning(
-                        "[NAV OCCUPANCY] robot=%s actual=(%.3f, %.3f) edge=%s error=%s",
-                        rid, x, y, edge, exc)
+                        "[%s] [NAV OCCUPANCY] robot=%s actual=(%.3f, %.3f) edge=%s error=%s",
+                        strftime("%H:%M:%S"), rid, x, y, edge, exc)
                 continue
             if row is None:
                 row = self._robots[rid] = dict(
                     robot_id=rid, goal_node=None, navigation_id=None, route=None,
                     request_order=None, stop_requested=False, status=robot.state.value)
+            if robot.state == RobotState.INITIALIZING:
+                robot.set_state(RobotState.IDLE)
             row.update(x=x, y=y, yaw=yaw, current_node=node,
                        occupied_node=node, occupied_edge=edge)
+            if docked and rid not in self._requests and rid not in self._executing:
+                row["stop_requested"] = True
             if node is not None:
                 row["x"], row["y"] = planner.nodes[node]
             if rid not in self._requests and rid not in self._executing and rid not in self._traffic._concession:
@@ -145,14 +218,23 @@ class RealNavigation:
         if robot.state != RobotState.EMERGENCY_STOP:
             robot.set_state(RobotState.PAUSED if robot.connected else RobotState.OFFLINE)
         logging.getLogger(__name__).warning(
-            "[NAV] robot=%s state=%s reason=%s", robot_id, robot.state.value, reason)
+            "[%s] [NAV] robot=%s state=%s reason=%s",
+            strftime("%H:%M:%S"), robot_id, robot.state.value, reason)
 
     def stop(self, robot_id, callback=None, *, reason="request_replaced"):
         """Nav2 종료 전에는 계획/예약을 해제하지 않는다. 마지막 요청만 실행한다."""
         with self.lock:
             already_stopping = robot_id in self._stopping
+            if already_stopping and robot_id not in self._stop_deadlines:
+                # 시간초과 후에도 Nav2 종료 증거가 없으면 새 Goal을 접수하지 않는다.
+                if reason in ("new_goal_request", "charging_request", "return_request"):
+                    raise RuntimeError(f"이전 Nav2 Goal의 종료를 확인할 수 없습니다: {robot_id}")
+                if reason == "emergency_stop":
+                    self._stopping[robot_id] = callback
+                return
             self._stopping[robot_id] = callback
-            self._stop_deadlines[robot_id] = self._clock() + REAL_CANCEL_TIMEOUT_S
+            if not already_stopping:
+                self._stop_deadlines[robot_id] = self._clock() + REAL_CANCEL_TIMEOUT_S
             self._arrivals.pop(robot_id, None)
             self._resume_pending.discard(robot_id)
             robot = self._fleet.get_robot(robot_id)
@@ -160,8 +242,9 @@ class RealNavigation:
                     RobotState.EMERGENCY_STOP, RobotState.PAUSED):
                 robot.set_state(RobotState.WAITING)
             logging.getLogger(__name__).warning(
-                "[NAV cancel] robot=%s reason=%s navigation_id=%s",
-                robot_id, reason, robot.navigation_id if robot else None)
+                "[%s] [NAV cancel] robot=%s reason=%s navigation_id=%s",
+                strftime("%H:%M:%S"), robot_id, reason,
+                robot.navigation_id if robot else None)
             if already_stopping:
                 return
 
@@ -179,13 +262,16 @@ class RealNavigation:
                             next_step()
                         except (OSError, KeyError, ValueError, RuntimeError):
                             self._pause(robot_id, "after_stop_failed")
-                            logging.getLogger(__name__).exception("정지 후 내비게이션 처리 실패: %s", robot_id)
+                            logging.getLogger(__name__).exception(
+                                "[%s] 정지 후 내비게이션 처리 실패: %s",
+                                strftime("%H:%M:%S"), robot_id)
             try:
                 self._cancel_goal(robot_id, callback=stopped)
             except Exception:
                 # 전송 실패는 정지 완료가 아니다. 예약과 취소 대기 상태를 남긴다.
                 self._pause(robot_id, "cancel_send_failed")
-                logging.getLogger(__name__).exception("[NAV] 취소 전송 실패: %s", robot_id)
+                logging.getLogger(__name__).exception(
+                    "[%s] [NAV] 취소 전송 실패: %s", strftime("%H:%M:%S"), robot_id)
 
     def cancel_after_stop(self, robot_id):
         with self.lock:
@@ -314,8 +400,8 @@ class RealNavigation:
                 if route:
                     index = execution[2] + current_waypoint
                     logging.getLogger(__name__).info(
-                        "[NAV FEEDBACK] robot=%s current_waypoint=%s segment=%s->%s",
-                        robot_id, current_waypoint, route["node_ids"][index],
+                        "[%s] [NAV FEEDBACK] robot=%s current_waypoint=%s segment=%s->%s",
+                        strftime("%H:%M:%S"), robot_id, current_waypoint, route["node_ids"][index],
                         route["node_ids"][index + 1])
 
     def _next_segment_reason(self, rid, route, planner, graph, now):
@@ -399,7 +485,8 @@ class RealNavigation:
             return  # 정지를 확인하지 못했으므로 예약은 유지한다.
         self._traffic.wait_for_reservation_after_stop(rid)
         self._resume_pending.add(rid)
-        logging.getLogger(__name__).info("[NAV WAITING] robot=%s node=%s", rid, node)
+        logging.getLogger(__name__).info(
+            "[%s] [NAV WAITING] robot=%s node=%s", strftime("%H:%M:%S"), rid, node)
         self._publish()
 
     def tick(self):
@@ -407,7 +494,8 @@ class RealNavigation:
             try:
                 self._tick()
             except (OSError, ValueError, KeyError, IndexError, RuntimeError):
-                logging.getLogger(__name__).exception("[NAV] 주행 상태 갱신 실패")
+                logging.getLogger(__name__).exception(
+                    "[%s] [NAV] 주행 상태 갱신 실패", strftime("%H:%M:%S"))
                 for rid in set(self._requests) | set(self._executing) | set(self._arrivals):
                     self._pause(rid, "navigation_update_failed")
                     if rid in self._executing and rid not in self._stopping:
@@ -424,7 +512,11 @@ class RealNavigation:
                     self._stop_deadlines.pop(rid, None)
             for rid in list(self._arrivals):
                 self._check_arrival(rid)
-            if not self._cancelled and not self._requests and not self._traffic.has_active_requests():
+            initializing = any(robot.connected and robot.state == RobotState.INITIALIZING
+                               for robot in self._fleet.get_all_robots())
+            if (not initializing and not self._initializing_since
+                    and not self._cancelled and not self._requests
+                    and not self._traffic.has_active_requests()):
                 return
             graph = load_route_graph()
             planner = DistanceAStar(graph)
@@ -480,13 +572,15 @@ class RealNavigation:
                         self._lookahead_decisions[rid] = (route["segment_index"], decision)
                         if route["segment_index"] + 2 < len(route["node_ids"]):
                             logging.getLogger(__name__).info(
-                                "[NAV LOOKAHEAD] robot=%s current=%s->%s next=%s->%s decision=%s",
-                                rid, route["node_ids"][route["segment_index"]], target,
+                                "[%s] [NAV LOOKAHEAD] robot=%s current=%s->%s next=%s->%s decision=%s",
+                                strftime("%H:%M:%S"), rid,
+                                route["node_ids"][route["segment_index"]], target,
                                 target, route["node_ids"][route["segment_index"] + 2], decision)
                     if reason and rid not in self._hold:
                         self._hold[rid] = (target, reason)
                         logging.getLogger(__name__).warning(
-                            "[NAV HOLD] robot=%s hold_node=%s reason=%s", rid, target, reason)
+                            "[%s] [NAV HOLD] robot=%s hold_node=%s reason=%s",
+                            strftime("%H:%M:%S"), rid, target, reason)
                     elif reason is None and rid in self._hold:
                         self._hold.pop(rid)
                     self._advance_pose(rid, graph, planner)
@@ -519,7 +613,8 @@ class RealNavigation:
                     if reason and rid in self._executing:
                         self._hold[rid] = (target, reason)
                         logging.getLogger(__name__).warning(
-                            "[NAV HOLD] robot=%s hold_node=%s reason=%s", rid, target, reason)
+                            "[%s] [NAV HOLD] robot=%s hold_node=%s reason=%s",
+                            strftime("%H:%M:%S"), rid, target, reason)
             self._publish()
 
     def _send(self, rid, target, segment_index, planner):
@@ -554,13 +649,14 @@ class RealNavigation:
         try:
             self._send_goal(robot_id=rid, waypoints=waypoints)
             logging.getLogger(__name__).info(
-                "[NAV ROUTE SEND] robot=%s route=%s waypoints=%s",
-                rid, "->".join(state["route"]["node_ids"]) if state["route"] else target,
+                "[%s] [NAV ROUTE SEND] robot=%s route=%s waypoints=%s",
+                strftime("%H:%M:%S"), rid,
+                "->".join(state["route"]["node_ids"]) if state["route"] else target,
                 ",".join(state["route"]["node_ids"][segment_index + 1:])
                 if segment_index is not None else target)
             if rid in self._resume_pending:
                 logging.getLogger(__name__).info(
-                    "[NAV RESUME] robot=%s route=%s", rid,
+                    "[%s] [NAV RESUME] robot=%s route=%s", strftime("%H:%M:%S"), rid,
                     "->".join(state["route"]["node_ids"]) if state["route"] else target)
                 self._resume_pending.discard(rid)
         except (ValueError, RuntimeError):
@@ -639,8 +735,9 @@ class RealNavigation:
             return
         self._arrivals.pop(robot_id, None)
         logging.getLogger(__name__).info(
-            "[NAV arrival] robot=%s target=%s actual=(%.3f, %.3f) goal=(%.3f, %.3f) distance=%.3f tolerance=%.3f",
-            robot_id, target, robot.x, robot.y, *target_position, distance, self._arrival_distance)
+            "[%s] [NAV arrival] robot=%s target=%s actual=(%.3f, %.3f) goal=(%.3f, %.3f) distance=%.3f tolerance=%.3f",
+            strftime("%H:%M:%S"), robot_id, target, robot.x, robot.y,
+            *target_position, distance, self._arrival_distance)
         # 도착 검증에는 위의 원본 좌표만 사용한다. 계획용 좌표 보정은 검증 뒤 수행.
         state["x"], state["y"] = target_position
         state["current_node"] = state["occupied_node"] = target

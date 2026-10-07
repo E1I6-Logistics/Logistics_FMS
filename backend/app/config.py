@@ -70,8 +70,16 @@ REAL_NAVIGATION_SPEED_MPS = float(os.getenv("FMS_REAL_NAVIGATION_SPEED_MPS", "0.
 REAL_RESERVATION_MARGIN_S = float(os.getenv("FMS_REAL_RESERVATION_MARGIN_S", "1.5"))
 
 # real_navigation에서 실제 Pose를 Route Graph의 Node/Edge에 대응시킬 때의 허용 거리(m).
-# 기본값 0.5는 최종 목적지 도착 허용 거리 0.15m와 다르며, 원본 Pose는 변경하지 않는다.
+# 기본값 0.20은 최종 목적지 도착 허용 거리 0.15m와 다르며, 원본 Pose는 변경하지 않는다.
 REAL_OCCUPANCY_TOLERANCE_M = float(os.getenv("FMS_REAL_OCCUPANCY_TOLERANCE_M", "0.20"))
+
+# real_navigation에서 담당 충전 Node의 바깥쪽 도킹 위치를 해당 Node 점유로 보는 최대 거리(m).
+# 일반 Node/Edge 점유 허용 거리는 바꾸지 않으며, 등록 직후 Pose가 없는 동안에는 담당 충전 Node를 보호한다.
+REAL_DOCK_OCCUPANCY_TOLERANCE_M = float(os.getenv("FMS_REAL_DOCK_OCCUPANCY_TOLERANCE_M", "0.25"))
+
+# real_navigation에서 새로 연결된 Robot의 첫 Pose를 기다리며 담당 충전 Node를 임시 점유하는 최대 시간(초).
+# 이 시간이 지나도 Pose가 없으면 위치 미확인으로 기존 주행 안전 정지 정책을 적용한다.
+REAL_INITIAL_POSE_TIMEOUT_S = float(os.getenv("FMS_REAL_INITIAL_POSE_TIMEOUT_S", "3.0"))
 
 # 실제 실행부가 Robot.pose_received_at의 최신성을 확인하는 최대 경과 시간(초).
 REAL_POSE_TIMEOUT_S = float(os.getenv("FMS_REAL_POSE_TIMEOUT_S", "2.0"))
@@ -94,6 +102,8 @@ for _name in (
     "REAL_NAVIGATION_SPEED_MPS",
     "REAL_RESERVATION_MARGIN_S",
     "REAL_OCCUPANCY_TOLERANCE_M",
+    "REAL_DOCK_OCCUPANCY_TOLERANCE_M",
+    "REAL_INITIAL_POSE_TIMEOUT_S",
     "REAL_POSE_TIMEOUT_S",
     "REAL_NAVIGATION_INTERVAL_S",
     "REAL_ARRIVAL_CONFIRM_TIMEOUT_S",

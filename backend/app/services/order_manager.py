@@ -1,4 +1,5 @@
 from uuid import uuid4
+from time import strftime
 
 from .fleet_manager import fleet_manager
 from ..models.robot import RobotState
@@ -86,12 +87,12 @@ class OrderManager:
         # 첫 번째 Pickup Node로 이동
         first_pickup_node = pickup_nodes[0]
 
-        print(f"[ORDER] {robot_id} 첫 Pickup 이동: " f"Node {first_pickup_node}")
+        print(f"[{strftime('%H:%M:%S')}] [ORDER] {robot_id} 첫 Pickup 이동: " f"Node {first_pickup_node}")
         ros_gateway.navigate_to_node(robot_id=robot_id, node_id=first_pickup_node)
 
         print()
         print("==============================")
-        print("[ORDER] New order")
+        print(f"[{strftime('%H:%M:%S')}] [ORDER] New order")
         print("==============================")
         print("robot_id =", robot_id)
         print("order_id =", order_id)
@@ -124,7 +125,7 @@ class OrderManager:
         # 아직 방문할 Pickup이 남아 있음
         if robot.order_pickup_index < len(robot.order_pickup_nodes):
             next_node = robot.order_pickup_nodes[robot.order_pickup_index]
-            print(f"[ORDER] {robot_id} 다음 Pickup 이동: " f"Node {next_node}")
+            print(f"[{strftime('%H:%M:%S')}] [ORDER] {robot_id} 다음 Pickup 이동: " f"Node {next_node}")
             ros_gateway.navigate_to_node(robot_id=robot_id, node_id=next_node)
 
             return
@@ -135,7 +136,7 @@ class OrderManager:
         if workstation_node is None:
             raise ValueError("작업대 Node가 지정되어 있지 않습니다.")
 
-        print(f"[ORDER] {robot_id} Pickup 완료 → " f"작업대 Node {workstation_node} 이동")
+        print(f"[{strftime('%H:%M:%S')}] [ORDER] {robot_id} Pickup 완료 → " f"작업대 Node {workstation_node} 이동")
         ros_gateway.navigate_to_node(robot_id=robot_id, node_id=workstation_node)
 
     def on_mqtt_result(self, omx, data) -> None:
@@ -143,7 +144,7 @@ class OrderManager:
         success = data.get("success", False)
 
         print(
-            f"[ORDER] MQTT Result: " f"omx={omx.omx_id}, " f"job_id={job_id}, " f"success={success}"
+            f"[{strftime('%H:%M:%S')}] [ORDER] MQTT Result: " f"omx={omx.omx_id}, " f"job_id={job_id}, " f"success={success}"
         )
 
         # 해당 주문을 수행 중인 Robot 찾기
@@ -155,7 +156,7 @@ class OrderManager:
                 break
 
         if target_robot is None:
-            print(f"[ORDER] MQTT Result에 해당하는 " f"Robot을 찾을 수 없습니다: {job_id}")
+            print(f"[{strftime('%H:%M:%S')}] [ORDER] MQTT Result에 해당하는 " f"Robot을 찾을 수 없습니다: {job_id}")
             return
 
         # OMX 작업 실패
@@ -165,7 +166,7 @@ class OrderManager:
 
         # 작업대 OMX 작업까지 완료
         if target_robot.current_node == target_robot.order_workstation_node:
-            print(f"[ORDER] 작업대 작업 완료: " f"{target_robot.robot_id}")
+            print(f"[{strftime('%H:%M:%S')}] [ORDER] 작업대 작업 완료: " f"{target_robot.robot_id}")
 
             # 아직 주문정보는 지우지 않음
             # 이후 복귀 로직 연결 예정
