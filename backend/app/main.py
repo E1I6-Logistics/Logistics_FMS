@@ -5,17 +5,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import CORS_ORIGINS
+from .config import CORS_ORIGINS, REAL_NAVIGATION_INTERVAL_S
+import logging
+
 from .routers.commands import router as commands_router
 from .routers.connections import router as connections_router
 from .routers.map import router as map_router
 from .routers.mode import router as mode_router
 from .routers.robots import router as robots_router
 from .routers.websocket import router as websocket_router
+from .routers.orders import router as orders_router
+from .routers.omx import router as omx_router
+
 from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
 from .services.route_graph import load_route_graph
-
 import threading
 
 import rclpy
@@ -26,10 +30,16 @@ from .ros2.ros_gateway import ros_gateway
 
 import asyncio
 from contextlib import suppress
-from time import monotonic
+from time import monotonic, strftime
 
-from .services.mock_data import mock_fms
 from .services.websocket_manager import manager
+from .services.mqtt_manager import mqtt_manager
+
+# Uvicorn의 INFO/ERROR 및 HTTP 접속 로그도 주행 로그와 같은 짧은 시각으로 표시한다.
+for logger_name in ("uvicorn.error", "uvicorn.access"):
+    for handler in logging.getLogger(logger_name).handlers:
+        handler.setFormatter(logging.Formatter(
+            "[%(asctime)s] [UVICORN] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
 
 
 @asynccontextmanager
@@ -37,6 +47,7 @@ async def lifespan(app: FastAPI):
 
     load_map_metadata()
     load_route_graph()
+    mqtt_manager.start()
 
     # ROS2 초기화
     rclpy.init()
@@ -50,10 +61,7 @@ async def lifespan(app: FastAPI):
     ros_gateway.set_ros_node(ros_node)
 
     # FastAPI와 별도 Thread에서 ROS2 spin
-    ros_thread = threading.Thread(
-        target=executor.spin,
-        daemon=True,
-    )
+    ros_thread = threading.Thread(target=executor.spin, daemon=True)
 
     ros_thread.start()
 
@@ -62,10 +70,15 @@ async def lifespan(app: FastAPI):
         name="mock-simulation",
     )
 
+    navigation_task = asyncio.create_task(run_real_navigation(), name="real-navigation")
+
     try:
         yield
 
     finally:
+        navigation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await navigation_task
         simulation_task.cancel()
 
         try:
@@ -79,6 +92,9 @@ async def lifespan(app: FastAPI):
                 rclpy.shutdown()
 
             ros_thread.join(timeout=2.0)
+
+            # MQTT 종료
+            mqtt_manager.stop()
 
 
 app = FastAPI(
@@ -101,6 +117,8 @@ app.include_router(robots_router)
 app.include_router(commands_router)
 app.include_router(connections_router)
 app.include_router(websocket_router)
+app.include_router(orders_router)
+app.include_router(omx_router)
 
 
 @app.get("/")
@@ -122,6 +140,7 @@ async def health():
         "data_source": "mock",
     }
 
+
 async def run_mock_simulation() -> None:
     interval = 0.1  # 약 10Hz
     previous_time = monotonic()
@@ -137,17 +156,26 @@ async def run_mock_simulation() -> None:
         if mode != "simulation":
             continue
 
-        # 먼저 전체 로봇의 위치를 갱신
-        for state in mock_fms.robot_snapshots(mode):
-            mock_fms.advance_mock_robot(
-                robot_id=state["robot_id"],
-                dt=dt,
-                speed_mps=0.5,
-            )
+        # 실제 모드 시작/실행에는 시뮬레이션 모듈이 필요하지 않다.
+        from .services.mock_data import mock_fms
+        mock_fms.advance_simulation(dt, now)
 
         # 갱신 후의 상태를 웹에 전송
         for state in mock_fms.robot_snapshots(mode):
-            await manager.broadcast({
-                "type": "telemetry",
-                "data": state,
-            })
+            await manager.broadcast(
+                {
+                    "type": "telemetry",
+                    "data": state,
+                }
+            )
+
+
+async def run_real_navigation() -> None:
+    # 화면 모드가 바뀌어도 이미 접수한 실제 ROS 요청의 관리를 계속한다.
+    while True:
+        await asyncio.sleep(REAL_NAVIGATION_INTERVAL_S)
+        try:
+            ros_gateway.advance_navigation()
+        except (ValueError, RuntimeError) as exc:
+            print(f"[{strftime('%H:%M:%S')}] [MAIN REAL NAV ERROR] "
+                  f"navigation tick failed: {exc!r}", flush=True)

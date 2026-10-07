@@ -17,6 +17,13 @@ class RobotState(str, Enum):
     WAITING = "WAITING"
     PAUSED = "PAUSED"
     DOCKING = "DOCKING"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
+
+
+class NavigationType(str, Enum):
+    GOAL = "goal"
+    RETURN = "return"
+    CHARGING = "charging"
 
 
 class Robot:
@@ -26,7 +33,7 @@ class Robot:
         self._lock = RLock()
 
         # 현재 로봇이 수행 중인 navigation type. None이면 navigation 중 아님
-        self.navigation_type = None
+        self.navigation_type: NavigationType | None = None
 
         # 로봇 식별자
         self.robot_id = robot_id
@@ -54,26 +61,51 @@ class Robot:
 
         # 현재 요청된 최종 목적지
         self.goal_node: str | None = None
-        # 현재 위치한 Route Graph Node. 구간 사이에서는 None
-        self.current_node = None
         # 현재 계획된 경로
         self.route = None
 
-        # 점유 상태
+        # 현재 위치한 Route Graph Node. 구간 사이에서는 None
+        self.current_node = None
+
+        # 현재 점유 중인 Node (ex. "3")
         self.occupied_node: str | None = None
+        # 현재 이동 중인 Edge의 도착 Node (ex. "4")
+        self.next_node: str | None = None
+        # 현재 점유 중인 Edge (ex. "edge_3_4")
         self.occupied_edge: str | None = None
+        # 현재 occupied_edge 주행 완료 후 다음으로 점유할 Edge (ex. "edge_4_5")
+        self.next_edge: str | None = None
 
         # 예약 상태
         self.reserved_nodes: list[str] = []
         self.reserved_edges: list[str] = []
+
+        # 현재 배정된 주문
+        self.order_id: str | None = None
+        self.order_items: dict[str, int] = {}
+        self.order_total_quantity: int = 0
+        self.order_workstation_node: str | None = None
+        self.order_pickup_nodes: list[str] = []
+
+        # 현재 진행 중인 Pickup 순서
+        self.order_pickup_index: int = 0
 
     def set_connected(self, connected: bool) -> None:
         self.connected = connected
 
         if connected:
             if self.state == RobotState.OFFLINE:
-                self.state = RobotState.IDLE
-        else:
+                # 진행 중이던 이동/주문은 연결 복구만으로 IDLE 또는 자동 재출발시키지 않는다.
+                active = (self.route is not None or self.navigation_type is not None
+                          or self.order_id is not None)
+                if active:
+                    self.state = RobotState.PAUSED
+                elif self.pose_received_at is None:
+                    self.state = RobotState.INITIALIZING
+                else:
+                    self.state = RobotState.IDLE
+        elif self.state != RobotState.EMERGENCY_STOP:
+            # 연결 여부는 connected에 남기고 비상정지는 명시적 해제 전까지 유지한다.
             self.state = RobotState.OFFLINE
 
     def set_state(self, state: RobotState) -> None:
@@ -87,6 +119,32 @@ class Robot:
             self.pose_received_at = (
                 monotonic()
             )  # FMS가 위치를 저장한 시각. AMCL 메시지의 측정 시간이나 웹 전송 시각과는 별개
+
+    def assign_order(
+        self,
+        order_id: str,
+        items: dict[str, int],
+        total_quantity: int,
+        pickup_nodes: list[str],
+        workstation_node: str,
+    ) -> None:
+
+        self.order_id = order_id
+        self.order_items = items
+        self.order_total_quantity = total_quantity
+        self.order_pickup_nodes = pickup_nodes
+        self.order_workstation_node = workstation_node
+        self.order_pickup_index = 0  # 첫 번째 Pickup부터 시작
+
+        self.state = RobotState.TASK_ASSIGNED
+
+    def clear_order(self) -> None:
+        self.order_id = None
+        self.order_items = {}
+        self.order_total_quantity = 0
+        self.order_pickup_nodes = []
+        self.order_workstation_node = None
+        self.order_pickup_index = 0
 
     def update_battery(self, percentage: float) -> None:
         self.battery = float(percentage)

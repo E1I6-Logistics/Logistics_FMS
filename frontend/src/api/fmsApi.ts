@@ -92,6 +92,14 @@ export function sendGoalNode(robotId: string, nodeId: string | number) {
   })
 }
 
+export function sendCharging(robotId: string) {
+  return request<Record<string, unknown>>('/api/command/charging', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robot_id: robotId }),
+  })
+}
+
 export function sendGoalCoordinate(robotId: string, targetX: number, targetY: number) {
   return request<Record<string, unknown>>('/api/command/goal', {
     method: 'POST',
@@ -100,11 +108,42 @@ export function sendGoalCoordinate(robotId: string, targetX: number, targetY: nu
   })
 }
 
+export function returnNearestNode(robotId: string) {
+  return request<Record<string, unknown>>(
+    '/api/command/return-nearest-node',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ robot_id: robotId }),
+    },
+  )
+}
+
 export function stopRobot(robotId: string) {
   return request<Record<string, unknown>>('/api/command/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ robot_id: robotId }),
+  })
+}
+
+export function emergencyReleaseRobot(robotId: string) {
+  return request<Record<string, unknown>>('/api/command/emergency-release', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robot_id: robotId }),
+  })
+}
+
+export function stopAllRobots() {
+  return request<Record<string, unknown>>('/api/command/stop-all', {
+    method: 'POST',
+  })
+}
+
+export function emergencyReleaseAll() {
+  return request<Record<string, unknown>>('/api/command/emergency-release-all', {
+    method: 'POST',
   })
 }
 
@@ -145,6 +184,15 @@ export type RobotStateDto = {
   connection_state: string
 }
 
+export type OmxDeviceDto = {
+  omx_id: string
+  connected: boolean
+  x: number
+  y: number
+  pixel_x: number
+  pixel_y: number
+}
+
 export function getConnections() {
   return request<{ devices: ConnectionDeviceDto[] }>('/api/connections')
 }
@@ -155,4 +203,8 @@ export function getRobots() {
 
 export function dashboardWsUrl() {
   return `${WS_BASE}/ws/dashboard`
+}
+
+export function getOmxDevices() {
+  return request<OmxDeviceDto[]>('/api/omx')
 }

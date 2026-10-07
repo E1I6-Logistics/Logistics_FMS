@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from time import strftime
 
 from ..ros2.ros_gateway import ros_gateway
-from ..services.mock_data import mock_fms
 from ..services.mode_service import mode_manager
 from ..services.websocket_manager import manager
 from ..services.fleet_manager import fleet_manager
@@ -16,21 +16,26 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await manager.connect(websocket)
-    print("[WS DASHBOARD] mode =", mode_manager.mode)
+    print(f"[{strftime('%H:%M:%S')}] [WS DASHBOARD] mode =", mode_manager.mode)
     try:
         if mode_manager.mode == "simulation":
+            from ..services.mock_data import mock_fms
             await websocket.send_json(
                 {"type": "system", "data": {"mode": mode_manager.mode, "source": "mock"}}
             )
             for state in mock_fms.robot_snapshots(mode_manager.mode):
                 await websocket.send_json({"type": "telemetry", "data": state})
         else:
-            print("[REAL WS] Sending telemetry for all robots")
+            print(f"[{strftime('%H:%M:%S')}] [REAL WS] Sending telemetry for all robots")
             await websocket.send_json(
                 {"type": "system", "data": {"mode": mode_manager.mode, "source": "ros2"}}
             )
             for robot in fleet_manager.get_all_robots():
-                pixel_x, pixel_y = world_to_pixel(robot.x, robot.y)
+                pixel_x = None
+                pixel_y = None
+
+                if robot.x is not None and robot.y is not None:
+                    pixel_x, pixel_y = world_to_pixel(robot.x, robot.y)
 
                 state = {
                     "robot_id": robot.robot_id,
@@ -50,7 +55,7 @@ async def dashboard_websocket(websocket: WebSocket):
                     "source": "ros2",
                     "pose_source": "AMCL",
                 }
-                print("[REAL WS]", robot.robot_id, "route=", robot.route)
+                print(f"[{strftime('%H:%M:%S')}] [REAL WS]", robot.robot_id, "route=", robot.route)
                 await websocket.send_json({"type": "telemetry", "data": state})
 
         while True:
@@ -73,6 +78,7 @@ async def cmd_vel_websocket(websocket: WebSocket):
                 continue
             try:
                 if mode_manager.mode == "simulation":
+                    from ..services.mock_data import mock_fms
                     acknowledgement = mock_fms.cmd_vel(
                         robot_id,
                         float(data.get("linear_x", 0.0)),

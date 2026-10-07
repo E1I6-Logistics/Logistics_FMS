@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import WarehouseMap from './WarehouseMap'
-import { sendGoalCoordinate, sendGoalNode, stopRobot } from './api/fmsApi'
+import RobotOrderForm from './components/RobotOrderForm'
+import {
+  sendGoalNode,
+  stopRobot,
+  sendCharging,
+  stopAllRobots,
+  emergencyReleaseRobot,
+  returnNearestNode,
+  getOmxDevices,
+  type OmxDeviceDto,
+} from './api/fmsApi'
 import { useCmdVel } from './hooks/useCmdVel'
 import { useRobotFleet } from './hooks/useRobotFleet'
 import { useRouteGraph } from './hooks/useRouteGraph'
@@ -17,6 +27,7 @@ export default function FmsControlApp() {
   const [targetNode, setTargetNode] = useState<string | null>(null)
   const [commandState, setCommandState] = useState<CommandState>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [omxDevices, setOmxDevices] = useState<OmxDeviceDto[]>([])
 
   const {
     managedIds,
@@ -32,10 +43,15 @@ export default function FmsControlApp() {
   const selectedLiveRobot = managedRobots.find(robot => robot.id === selectedRobot)
   const connectedRobotCount = managedRobots.filter(robot => robot.connected).length
   const connected = Boolean(selectedLiveRobot?.connected)
+  const emergencyStopped = selectedLiveRobot?.status === 'EMERGENCY_STOP'
 
   const remote = useCmdVel({
     robotId: selectedRobot,
-    enabled: Boolean(selectedRobot && connected),
+    enabled: Boolean(
+      selectedRobot &&
+      connected &&
+      !emergencyStopped
+    ),
   })
 
   useEffect(() => {
@@ -54,11 +70,26 @@ export default function FmsControlApp() {
     }
   }, [managedIds, selectedRobot])
 
-  const chargingNode = useMemo(() => {
-    const explicit = nodeItems.find(item => /charge|charging|ch[-_ ]?\d|충전/i.test(`${item.id} ${item.label} ${item.mapNodeId}`))
-    if (explicit) return explicit.mapNodeId
-    return Object.keys(nodes).find(id => /charge|charging|ch[-_ ]?\d|충전/i.test(id)) ?? null
-  }, [nodeItems, nodes])
+  useEffect(() => {
+    const refreshOmx = async () => {
+      try {
+        const devices = await getOmxDevices()
+
+        console.log('OMX:', devices)
+
+        setOmxDevices(devices)
+      } catch (error) {
+        console.warn('OMX 상태 조회 실패:', error)
+      }
+    }
+
+    void refreshOmx()
+
+    const timer = window.setInterval(refreshOmx, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+  
 
   const nearestNode = useMemo(() => {
     if (!selectedLiveRobot?.hasPose) return null
@@ -110,16 +141,25 @@ export default function FmsControlApp() {
 
   const returnToNearestNode = () => {
     if (!selectedRobot || !nearestNode) return
-    void runCommand('returnToRoute', () => sendGoalCoordinate(selectedRobot, nearestNode.x, nearestNode.y))
+
+    if (robotMode !== 'real') {
+      setCommandState({
+        tone: 'danger',
+        message: '최근접 노드 복귀는 실제 로봇 모드에서만 사용할 수 있습니다.',
+      })
+      return
+    }
+
+    void runCommand('returnToRoute', () => returnNearestNode(selectedRobot))
   }
 
   const moveToCharge = () => {
     if (!selectedRobot) return
-    if (!chargingNode) {
-      setCommandState({ tone: 'danger', message: '경로 그래프에 충전 스테이션 노드가 등록되어 있지 않습니다.' })
-      return
-    }
-    void runCommand('charge', () => sendGoalNode(selectedRobot, chargingNode))
+
+    void runCommand(
+      'charge',
+      () => sendCharging(selectedRobot)
+    )
   }
 
   const stopSelectedRobot = () => {
@@ -129,15 +169,30 @@ export default function FmsControlApp() {
     void runCommand('stop', () => stopRobot(selectedRobot))
   }
 
+  const releaseSelectedRobot = () => {
+    if (!selectedRobot) return
+
+    if (!window.confirm(`${selectedRobot} 로봇의 비상정지를 해제하시겠습니까?`)) return
+    
+
+    void runCommand(
+      'release',
+      () => emergencyReleaseRobot(selectedRobot)
+    )
+  }
+
   const emergencyStopAll = () => {
     const robotIds = managedIds as RobotId[]
+
     if (robotIds.length === 0) {
       setCommandState({ tone: 'danger', message: '정지할 로봇이 없습니다.' })
       return
     }
     if (!window.confirm(`연결된 로봇 ${robotIds.length}대를 모두 비상정지하시겠습니까?`)) return
+    
     remote.stop()
-    void runCommand('emergency', () => Promise.all(robotIds.map(id => stopRobot(id))))
+
+    void runCommand( 'emergency', () => stopAllRobots())
   }
 
   const handleModeChange = (mode: 'real' | 'simulation') => {
@@ -229,6 +284,23 @@ export default function FmsControlApp() {
             {commandState && (
               <CommandToast state={commandState} onClose={() => setCommandState(null)} />
             )}
+            {selectedRobot && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 14,
+                  right: 14,
+                  zIndex: 20,
+                  width: 300,
+                  maxWidth: 'calc(100% - 28px)',
+                }}
+              >
+                <RobotOrderForm
+                  robotId={selectedRobot}
+                  disabled={!connected || emergencyStopped}
+                />
+              </div>
+            )}
             <WarehouseMap
               nodes={nodes}
               edges={edges}
@@ -242,6 +314,7 @@ export default function FmsControlApp() {
               graphError={graphError}
               visibleRobotIds={mapRobotIds as RobotId[]}
               robotStates={managedRobots}
+              omxDevices={omxDevices}
             />
             <button
               onClick={emergencyStopAll}
@@ -258,7 +331,8 @@ export default function FmsControlApp() {
             liveRobot={selectedLiveRobot}
             targetNode={targetNode}
             nearestNode={nearestNode}
-            chargingNode={chargingNode}
+            realMode={robotMode === 'real'}
+            emergencyStopped={emergencyStopped}
             remoteStatus={remote.status}
             remoteKeys={remote.activeKeys}
             busy={busy}
@@ -269,6 +343,7 @@ export default function FmsControlApp() {
             onReturnToRoute={returnToNearestNode}
             onCharge={moveToCharge}
             onStop={stopSelectedRobot}
+            onRelease={releaseSelectedRobot}
           />
         </div>
       </main>
@@ -302,12 +377,13 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop }: {
+function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
-  chargingNode: string | null
+  realMode: boolean
+  emergencyStopped: boolean
   remoteStatus: 'off' | 'connecting' | 'ready'
   remoteKeys: Set<string>
   busy: string | null
@@ -318,6 +394,7 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode,
   onReturnToRoute: () => void
   onCharge: () => void
   onStop: () => void
+  onRelease: () => void
 }) {
   if (!robotId) {
     return (
@@ -338,7 +415,7 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode,
   const statusColor = !connected ? C.danger : /MOV|RUN|이동|작업/i.test(status) ? C.success : C.warning
   const batteryColor = battery < 30 ? C.danger : battery < 50 ? C.warning : C.success
   const route = liveRobot?.route?.node_ids?.length ? liveRobot.route.node_ids.map(id => `N${id}`).join(' → ') : '—'
-  const controlsEnabled = connected && remoteStatus === 'ready'
+  const controlsEnabled = connected && !emergencyStopped && remoteStatus === 'ready'
 
   return (
     <aside style={{ width: 390, flexShrink: 0, borderLeft: `1px solid ${C.line}`, background: C.surface, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '-2px 0 8px rgba(0,0,0,.05)' }} aria-label={`${robotId} 정보 및 제어`}>
@@ -388,16 +465,30 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode,
           <div style={{ marginBottom: 9, color: targetNode ? C.primary : C.muted, fontSize: 10, fontWeight: 700 }}>
             {targetNode ? `선택 노드: N${targetNode}` : '맵에서 이동할 노드를 선택하세요.'}
           </div>
-          <button onClick={onMove} disabled={!targetNode || !connected || busy !== null} style={primaryButton(Boolean(targetNode && connected && busy === null))}>
+          <button 
+            onClick={onMove} 
+            disabled={ !targetNode || !connected || emergencyStopped || busy !== null }
+            style={primaryButton(
+              Boolean(targetNode && connected && !emergencyStopped && busy === null),
+            )}
+          >
             {busy === 'nodeMove' ? '이동 명령 전송 중' : '선택 노드로 이동'}
           </button>
           <div style={{ margin: '10px 0 7px', borderTop: `1px solid ${C.line}` }} />
           <div style={{ marginBottom: 7, color: nearestNode ? C.muted : C.danger, fontSize: 9, lineHeight: 1.5 }}>
-            {nearestNode
-              ? `가장 가까운 경로 노드: N${nearestNode.id} · 약 ${nearestNode.distance.toFixed(2)}m`
-              : '현재 위치 또는 경로 노드 정보를 확인할 수 없습니다.'}
+            {!realMode
+              ? '최근접 노드 복귀는 실제 로봇 모드에서만 사용할 수 있습니다.'
+              : nearestNode
+                ? `가장 가까운 경로 노드: N${nearestNode.id} · 약 ${nearestNode.distance.toFixed(2)}m`
+                : '현재 위치 또는 경로 노드 정보를 확인할 수 없습니다.'}
           </div>
-          <button onClick={onReturnToRoute} disabled={!nearestNode || !connected || busy !== null} style={secondaryButton(Boolean(nearestNode && connected && busy === null))}>
+          <button
+            onClick={onReturnToRoute}
+            disabled={ !realMode || !nearestNode || !connected || emergencyStopped || busy !== null }
+            style={secondaryButton(
+              Boolean(realMode && nearestNode && connected && !emergencyStopped && busy === null),
+            )}
+          >
             {busy === 'returnToRoute' ? '경로 복귀 명령 전송 중' : '가장 가까운 노드로 복귀'}
           </button>
         </div>
@@ -422,13 +513,47 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, chargingNode,
         </div>
 
         <SectionTitle>직접 제어</SectionTitle>
-        <button onClick={onCharge} disabled={!connected || busy !== null} style={secondaryButton(connected && busy === null)} title={chargingNode ? `충전 노드 ${chargingNode}` : '충전 노드 등록 필요'}>
+        <button
+          onClick={onCharge}
+          disabled={!connected || emergencyStopped || busy !== null}
+          style={secondaryButton(connected && !emergencyStopped && busy === null)}
+          title="충전 스테이션으로 이동"
+        >
           {busy === 'charge' ? '충전 이동 명령 전송 중' : '충전 스테이션으로 이동'}
         </button>
-        <button onClick={onStop} disabled={!connected || busy !== null} style={dangerButton(connected && busy === null)}>
-          {busy === 'stop' ? '정지 명령 전송 중' : '정지'}
-          <span style={{ display: 'block', marginTop: 2, fontSize: 8, fontWeight: 500 }}>현재 선택된 로봇만 정지</span>
-        </button>
+
+        {emergencyStopped ? (
+          <button
+            onClick={onRelease}
+            disabled={!connected || busy !== null}
+            style={secondaryButton(connected && busy === null)}
+          >
+            {busy === 'release'
+              ? '비상정지 해제 중'
+              : '소프트웨어 비상정지 해제'}
+          </button>
+        ) : (
+          <button
+            onClick={onStop}
+            disabled={!connected || busy !== null}
+            style={dangerButton(connected && busy === null)}
+          >
+            {busy === 'stop'
+              ? '비상정지 명령 전송 중'
+              : '소프트웨어 비상정지'}
+
+            <span
+              style={{
+                display: 'block',
+                marginTop: 2,
+                fontSize: 8,
+                fontWeight: 500,
+              }}
+            >
+              현재 선택된 로봇의 모든 이동 잠금
+            </span>
+          </button>
+        )}
       </div>
     </aside>
   )

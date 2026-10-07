@@ -165,3 +165,7 @@ simulation/benchmark_results/
 
 # Logistics_AMR file
 robots_ws/
+
+# Mosquitto runtime data
+infra/mosquitto/data/
+infra/mosquitto/log/

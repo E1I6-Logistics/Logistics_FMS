@@ -3,29 +3,41 @@ from __future__ import annotations
 import rclpy as rp
 from rclpy.node import Node
 import math
+from functools import wraps
+from threading import RLock
+from time import strftime
 
 from rclpy.publisher import Publisher
 from rclpy.subscription import Subscription
 from rclpy.action import ActionClient
 
-
 from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import TwistStamped
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from nav2_msgs.action import FollowWaypoints, Spin
+from nav2_msgs.action import NavigateThroughPoses
 
 from ..services.fleet_manager import fleet_manager
 
 from action_msgs.msg import GoalStatus
 from sensor_msgs.msg import BatteryState
 from turtlebot3_my_msg.action import PrecisionDock
+from logitle_aruco_msgs.action import AlignAndCorrectWithAruco
+
+
+def _navigation_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.navigation_lock:
+            return method(self, *args, **kwargs)
+
+    return locked
 
 
 class FmsRosNode(Node):
     def __init__(self):
         super().__init__("fms_node")
-        self.get_logger().info("FMS Node initialized")
+        print(f"[{strftime('%H:%M:%S')}] [ROS NODE] FMS Node initialized", flush=True)
 
         self._registered_robots: set[str] = set()
 
@@ -36,14 +48,24 @@ class FmsRosNode(Node):
         self._pose_subscribers: dict[str, Subscription] = {}
 
         self._follow_waypoints_clients: dict[str, ActionClient] = {}
-        self._spin_clients: dict[str, ActionClient] = {}
         self._precision_dock_clients: dict[str, ActionClient] = {}
+        self._aruco_align_clients: dict[str, ActionClient] = {}
 
-        # 현재 실행 중인 FollowWaypoints Goal 관리
+        # 현재 실행 중인 NavigateThroughPoses Goal 관리
         self._follow_waypoints_goal_handles = {}
+        # Goal 수락 대기 중에도 취소 요청을 기억한다. 콜백은 terminal result 뒤 실행
+        self._follow_waypoints_pending = set()
+        self._follow_waypoints_cancel_callbacks = {}
+        self._follow_waypoints_feedback_tokens = {}
+        self._follow_waypoints_feedback_last = {}
+        # 도킹/ArUco도 종료 Result를 확인할 때까지 새 작업을 시작하지 않는다.
+        self._auxiliary_goals = {}
+        self.navigation_lock = RLock()
 
         self.navigation_result_callback = None
-        self.spin_result_callback = None
+        self.navigation_error_callback = None
+        self.precision_dock_result_callback = None
+        self.aruco_align_result_callback = None
 
     def register_robot(self, robot_id: str) -> None:
 
@@ -56,28 +78,33 @@ class FmsRosNode(Node):
 
         # 구독
         subscription_pose = self.create_subscription(
-            PoseWithCovarianceStamped,
-            f"/{robot_id}/amcl_pose",
+            PoseStamped,
+            f"/{robot_id}/logitle_pose",
             # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
             lambda msg, rid=robot_id: self._on_amcl_pose(rid, msg),
             10,
         )
+
         subscription_battery = self.create_subscription(
             BatteryState,
             f"/{robot_id}/battery_state",
-            # "ROS 메시지 msg가 들어오면, 이 Subscriber를 만들 당시의 robot_id와 함께 함수 호출
             lambda msg, rid=robot_id: self._on_battery_state(rid, msg),
             10,
         )
 
         # 액션 클라이언트
         action_follow_waypoints_client = ActionClient(
-            self, FollowWaypoints, f"/{robot_id}/follow_waypoints"
+            self, NavigateThroughPoses, f"/{robot_id}/navigate_through_poses"
         )
 
-        action_spin_client = ActionClient(self, Spin, f"/{robot_id}/spin")
         action_precision_dock_client = ActionClient(
             self, PrecisionDock, f"/{robot_id}/precision_dock"
+        )
+
+        action_aruco_align_client = ActionClient(
+            self,
+            AlignAndCorrectWithAruco,
+            f"/{robot_id}/aruco_align_and_correct",
         )
 
         # 딕셔너리에서 관리
@@ -85,26 +112,27 @@ class FmsRosNode(Node):
         self._pose_subscribers[robot_id] = subscription_pose
         self._battery_subscribers[robot_id] = subscription_battery
         self._follow_waypoints_clients[robot_id] = action_follow_waypoints_client
-        self._spin_clients[robot_id] = action_spin_client
         self._precision_dock_clients[robot_id] = action_precision_dock_client
-
+        self._aruco_align_clients[robot_id] = action_aruco_align_client
+        print(
+            f"[ROS ACTION READY] robot={robot_id} "
+            f"navigate_through_poses={action_follow_waypoints_client.server_is_ready()}",
+            flush=True,
+        )
         # 모든 인터페이스 생성이 끝난 후 등록 처리
         self._registered_robots.add(robot_id)
-
-        self.get_logger().info(f"Robot registered: {robot_id}")
+        print(f"[{strftime('%H:%M:%S')}] [ROS NODE] Robot registered: {robot_id}", flush=True)
 
     def is_registered(self, robot_id: str) -> bool:
         return robot_id in self._registered_robots
 
     def _quaternion_to_yaw(self, q: Quaternion) -> float:
-
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
 
         return math.atan2(siny_cosp, cosy_cosp)
 
     def publish_cmd_vel(self, robot_id: str, linear_x: float, angular_z: float) -> None:
-
         publisher = self._cmd_vel_publishers.get(robot_id)
         if publisher is None:
             raise ValueError(f"Robot is not registered: {robot_id}")
@@ -116,6 +144,7 @@ class FmsRosNode(Node):
 
         publisher.publish(message)
 
+    @_navigation_locked
     def send_follow_waypoints_goal(
         self, robot_id: str, waypoints: list[tuple[float, float, float]]
     ) -> None:
@@ -123,13 +152,22 @@ class FmsRosNode(Node):
         if client is None:
             raise ValueError(f"Robot is not registered: {robot_id}")
 
-        # Nav2 FollowWaypoints Action Server 연결 확인
-        if not client.wait_for_server(timeout_sec=2.0):
-            raise RuntimeError(f"FollowWaypoints Action Server를 찾을 수 없습니다: {robot_id}")
+        if (
+            robot_id in self._follow_waypoints_pending
+            or robot_id in self._follow_waypoints_goal_handles
+        ):
+            raise RuntimeError(f"이전 NavigateThroughPoses 실행이 종료되지 않았습니다: {robot_id}")
+        print(
+            f"[ROS NAV CHECK] robot={robot_id} "
+            f"ready={client.server_is_ready()}",
+            flush=True,
+        )
+        # Nav2 NavigateThroughPoses Action Server 연결 확인
+        if not client.wait_for_server(timeout_sec=5.0):
+            raise RuntimeError(f"NavigateThroughPoses Action Server를 찾을 수 없습니다: {robot_id}")
 
-        # FollowWaypoints Goal 생성
-        goal = FollowWaypoints.Goal()
-
+        # NavigateThroughPoses Goal 생성
+        goal = NavigateThroughPoses.Goal()
         poses = []
 
         for x, y, yaw in waypoints:
@@ -152,143 +190,242 @@ class FmsRosNode(Node):
         goal.poses = poses
 
         # 비동기로 Goal 전송
-        future = client.send_goal_async(
-            goal,
-            feedback_callback=lambda feedback, rid=robot_id: self._on_follow_waypoints_feedback(
-                rid, feedback
-            ),
-        )
+        token = (object(), len(poses))
+        self._follow_waypoints_feedback_tokens[robot_id] = token
+        self._follow_waypoints_feedback_last.pop(robot_id, None)
+        self._follow_waypoints_pending.add(robot_id)
+        try:
+            future = client.send_goal_async(
+                goal,
+                feedback_callback=lambda feedback, rid=robot_id, expected=token: self._on_follow_waypoints_feedback(
+                    rid, feedback, expected
+                ),
+            )
+        except Exception:
+            self._follow_waypoints_pending.discard(robot_id)
+            self._follow_waypoints_feedback_tokens.pop(robot_id, None)
+            raise
 
         future.add_done_callback(
             lambda future, rid=robot_id: self._on_follow_waypoints_goal_response(rid, future)
         )
 
+    def _navigation_error(self, robot_id: str, reason: str) -> None:
+        print(f"[{strftime('%H:%M:%S')}] [ROS NAV ERROR] robot={robot_id} reason={reason}", flush=True)
+        if getattr(self, "navigation_error_callback", None):
+            self.navigation_error_callback(robot_id, reason)
+
+    @_navigation_locked
     def _on_follow_waypoints_goal_response(self, robot_id: str, future) -> None:
-        goal_handle = future.result()
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            # 서버가 수락했는지 알 수 없으므로 pending을 지우고 새 Goal을 보내면 안 된다.
+            self._navigation_error(robot_id, f"goal_response_error:{exc}")
+            return
+        self._follow_waypoints_pending.discard(robot_id)
 
         if not goal_handle.accepted:
-            self.get_logger().warning(f"FollowWaypoints goal rejected: {robot_id}")
+            self._follow_waypoints_feedback_tokens.pop(robot_id, None)
+            self._follow_waypoints_feedback_last.pop(robot_id, None)
+            callback = self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
+            if callback is not None:
+                callback()
+                return
+            print(f"[{strftime('%H:%M:%S')}] [ROS NAV] goal rejected: robot={robot_id}", flush=True)
+            if self.navigation_result_callback:
+                self.navigation_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
             return
+
         # 현재 실행 중인 Goal 저장
         self._follow_waypoints_goal_handles[robot_id] = goal_handle
 
-        self.get_logger().info(f"FollowWaypoints goal accepted: {robot_id}")
+        print(f"[{strftime('%H:%M:%S')}] [ROS NAV] goal accepted: robot={robot_id}", flush=True)
 
-        result_future = goal_handle.get_result_async()
-
-        result_future.add_done_callback(
-            lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_result(
-                rid, handle, future
+        try:
+            result_future = goal_handle.get_result_async()
+            result_future.add_done_callback(
+                lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_result(
+                    rid, handle, future
+                )
             )
-        )
+        except Exception as exc:
+            self._navigation_error(robot_id, f"result_subscription_error:{exc}")
+            return
+        if robot_id in self._follow_waypoints_cancel_callbacks:
+            self.cancel_follow_waypoints(
+                robot_id, self._follow_waypoints_cancel_callbacks[robot_id]
+            )
 
+    @_navigation_locked
     def _on_follow_waypoints_result(self, robot_id: str, goal_handle, future) -> None:
-        result = future.result()
+        # 이전 Goal의 Future가 실패했어도 현재 Goal에는 영향을 주지 않는다.
+        if self._follow_waypoints_goal_handles.get(robot_id) is not goal_handle:
+            return
+        try:
+            result = future.result()
+        except Exception as exc:
+            self._navigation_error(robot_id, f"result_error:{exc}")
+            return
+        self._follow_waypoints_goal_handles.pop(robot_id, None)
+        self._follow_waypoints_feedback_tokens.pop(robot_id, None)
+        self._follow_waypoints_feedback_last.pop(robot_id, None)
 
-        # 종료된 Goal이 현재 실행 중인 Goal일 때만 삭제
-        current_handle = self._follow_waypoints_goal_handles.get(robot_id)
+        print(f"[{strftime('%H:%M:%S')}] [ROS NAV] finished: robot={robot_id} "
+              f"status={result.status}", flush=True)
 
-        if current_handle is goal_handle:
-            self._follow_waypoints_goal_handles.pop(robot_id, None)
-
-        self.get_logger().info(f"FollowWaypoints finished: {robot_id}, " f"status={result.status}")
-
-        if self.navigation_result_callback:
+        callback = self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
+        if callback is not None:
+            callback()
+        elif self.navigation_result_callback:
             self.navigation_result_callback(robot_id, result.status)
 
-    def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg) -> None:
+    @_navigation_locked
+    def _on_follow_waypoints_feedback(self, robot_id: str, feedback_msg, token=None) -> None:
+        current_token = self._follow_waypoints_feedback_tokens.get(robot_id)
+        if token is not None and current_token is not token:
+            return  # 이전 Goal의 늦은 Feedback은 새 경로 인덱스를 바꾸지 않는다.
+        if current_token is None:
+            return
         feedback = feedback_msg.feedback
+        count = current_token[1]
+        current_waypoint = max(0, min(count - 1, count - feedback.number_of_poses_remaining))
 
-        self.get_logger().info(
-            f"FollowWaypoints feedback: {robot_id}, "
-            f"current_waypoint={feedback.current_waypoint}"
-        )
+        reported = (count, feedback.number_of_poses_remaining)
+        if self._follow_waypoints_feedback_last.get(robot_id) != reported:
+            self._follow_waypoints_feedback_last[robot_id] = reported
+            print(f"[{strftime('%H:%M:%S')}] [ROS NAV FEEDBACK] robot={robot_id} "
+                  f"current_waypoint={current_waypoint} sent={count} "
+                  f"remaining={feedback.number_of_poses_remaining}", flush=True)
+        # 점유 확정은 Pose에서만 한다. Feedback은 현재 Goal의 진행 순서만 전달한다.
+        if getattr(self, "navigation_feedback_callback", None):
+            self.navigation_feedback_callback(robot_id, current_waypoint)
 
+    @_navigation_locked
     def cancel_follow_waypoints(self, robot_id: str, callback=None) -> None:
+        callback = callback or (lambda: None)
+        self._follow_waypoints_cancel_callbacks[robot_id] = callback
+        if robot_id in self._follow_waypoints_pending:
+            print(f"[{strftime('%H:%M:%S')}] [ROS NAV CANCEL] waiting for goal response: "
+                  f"robot={robot_id}", flush=True)
+            return
         goal_handle = self._follow_waypoints_goal_handles.get(robot_id)
 
         # 실행 중인 Goal이 없으면 바로 다음 작업
         if goal_handle is None:
-            if callback:
-                callback()
+            self._follow_waypoints_cancel_callbacks.pop(robot_id, None)
+            callback()
             return
 
-        self.get_logger().info(f"FollowWaypoints cancel requested: {robot_id}")
+        print(f"[{strftime('%H:%M:%S')}] [ROS NAV CANCEL] requested: robot={robot_id}", flush=True)
 
-        future = goal_handle.cancel_goal_async()
-
-        future.add_done_callback(
-            lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_cancel(
-                rid, handle, future, callback
+        try:
+            future = goal_handle.cancel_goal_async()
+            future.add_done_callback(
+                lambda future, rid=robot_id, handle=goal_handle: self._on_follow_waypoints_cancel(
+                    rid, handle, future, callback
+                )
             )
-        )
+        except Exception as exc:
+            self._navigation_error(robot_id, f"cancel_send_error:{exc}")
 
+    @_navigation_locked
     def _on_follow_waypoints_cancel(
         self, robot_id: str, goal_handle, future, callback=None
     ) -> None:
-
-        response = future.result()
-
+        if self._follow_waypoints_goal_handles.get(robot_id) is not goal_handle:
+            return
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._navigation_error(robot_id, f"cancel_response_error:{exc}")
+            return
         if not response.goals_canceling:
-            self.get_logger().warning(f"FollowWaypoints cancel failed: {robot_id}")
+            self._navigation_error(robot_id, "cancel_rejected")
             return
 
-        self.get_logger().info(f"FollowWaypoints cancel accepted: {robot_id}")
+        print(f"[{strftime('%H:%M:%S')}] [ROS NAV CANCEL] accepted: robot={robot_id}", flush=True)
 
-        current_handle = self._follow_waypoints_goal_handles.get(robot_id)
+        # 취소 수락은 실행 종료가 아니다. handle과 예약은 result 수신까지 유지한다.
 
-        if current_handle is goal_handle:
-            self._follow_waypoints_goal_handles.pop(robot_id, None)
+    @_navigation_locked
+    def has_active_auxiliary(self, robot_id: str) -> bool:
+        return robot_id in self._auxiliary_goals
 
-        if callback:
+    @_navigation_locked
+    def cancel_auxiliary(self, robot_id: str, callback=None) -> None:
+        callback = callback or (lambda: None)
+        entry = self._auxiliary_goals.get(robot_id)
+        if entry is None:
             callback()
-
-    def send_spin(self, robot_id: str, spin_yaw: float) -> None:
-        client = self._spin_clients.get(robot_id)
-
-        if client is None:
-            raise ValueError(f"Robot is not registered: {robot_id}")
-
-        if not client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().error(f"[{robot_id}] Spin action server not available")
             return
+        entry["cancel_callback"] = callback
+        if entry["handle"] is not None and not entry["cancel_sent"]:
+            self._send_auxiliary_cancel(robot_id, entry)
 
-        goal = Spin.Goal()
-        goal.target_yaw = spin_yaw
+    def _send_auxiliary_cancel(self, robot_id, entry):
+        entry["cancel_sent"] = True
+        try:
+            future = entry["handle"].cancel_goal_async()
+            future.add_done_callback(
+                lambda future, rid=robot_id, expected=entry: self._on_auxiliary_cancel(
+                    rid, expected, future))
+            print(f"[{strftime('%H:%M:%S')}] [ROS AUX CANCEL] robot={robot_id} "
+                  f"action={entry['kind']} requested", flush=True)
+        except Exception as exc:
+            entry["cancel_sent"] = False
+            print(f"[{strftime('%H:%M:%S')}] [ROS AUX ERROR] robot={robot_id} "
+                  f"action={entry['kind']} cancel_send_failed={exc!r}", flush=True)
 
-        future = client.send_goal_async(goal)
-
-        future.add_done_callback(lambda future: self._on_spin_goal_response(robot_id, future))
-
-    def _on_spin_goal_response(self, robot_id: str, future) -> None:
-        goal_handle = future.result()
-
-        if not goal_handle.accepted:
-            self.get_logger().warning(f"Spin goal rejected: {robot_id}")
+    @_navigation_locked
+    def _on_auxiliary_cancel(self, robot_id, entry, future):
+        if self._auxiliary_goals.get(robot_id) is not entry:
             return
+        try:
+            accepted = bool(future.result().goals_canceling)
+        except Exception as exc:
+            accepted = False
+            print(f"[{strftime('%H:%M:%S')}] [ROS AUX ERROR] robot={robot_id} "
+                  f"action={entry['kind']} cancel_response_failed={exc!r}", flush=True)
+        if not accepted:
+            print(f"[{strftime('%H:%M:%S')}] [ROS AUX ERROR] robot={robot_id} "
+                  f"action={entry['kind']} cancel rejected", flush=True)
+            return
+        print(f"[{strftime('%H:%M:%S')}] [ROS AUX CANCEL] robot={robot_id} "
+              f"action={entry['kind']} accepted; waiting for terminal result", flush=True)
 
-        self.get_logger().info(f"Spin goal accepted: {robot_id}")
+    def _finish_auxiliary(self, robot_id, entry, status, result_callback):
+        if self._auxiliary_goals.get(robot_id) is not entry:
+            return
+        self._auxiliary_goals.pop(robot_id, None)
+        callback = entry["cancel_callback"]
+        if callback is not None:
+            print(f"[{strftime('%H:%M:%S')}] [ROS AUX CANCEL] robot={robot_id} "
+                  f"action={entry['kind']} confirmed terminal status={status}", flush=True)
+            callback()
+        elif result_callback:
+            result_callback(robot_id, status)
 
-        result_future = goal_handle.get_result_async()
-
-        result_future.add_done_callback(
-            lambda future, rid=robot_id: self._on_spin_result(rid, future)
-        )
-
-    def _on_spin_result(self, robot_id: str, future) -> None:
-        result = future.result()
-        self.get_logger().info(f"Spin finished: {robot_id}, status={result.status}")
-        if self.spin_result_callback:
-            self.spin_result_callback(robot_id, result.status)
-
+    @_navigation_locked
     def send_precision_dock(self, robot_id):
+        if robot_id in self._auxiliary_goals:
+            raise RuntimeError(f"이전 보조 Action이 종료되지 않았습니다: {robot_id}")
         client = self._precision_dock_clients.get(robot_id)
 
         if client is None:
+            print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} client not available", flush=True)
             raise ValueError(f"PrecisionDock client not found: {robot_id}")
 
-        if not client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().error(f"PrecisionDock server not available: {robot_id}")
+        print(
+            f"[ROS NAV CHECK] robot={robot_id} "
+            f"ready={client.server_is_ready()}",
+            flush=True,
+        )      
+        if not client.wait_for_server(timeout_sec=5.0):
+            print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} server not available", flush=True)
+            if self.precision_dock_result_callback:
+                self.precision_dock_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
             return
 
         goal = PrecisionDock.Goal()
@@ -299,45 +436,190 @@ class FmsRosNode(Node):
         goal.target_pose.pose.position.z = 0.0
         goal.target_pose.pose.orientation.w = 1.0
 
-        future = client.send_goal_async(goal)
+        entry = {"kind": "PrecisionDock", "handle": None,
+                 "cancel_callback": None, "cancel_sent": False}
+        self._auxiliary_goals[robot_id] = entry
+        try:
+            future = client.send_goal_async(goal)
+        except Exception:
+            self._auxiliary_goals.pop(robot_id, None)
+            raise
         future.add_done_callback(
-            lambda future: self._on_precision_dock_goal_response(robot_id, future)
+            lambda future, expected=entry: self._on_precision_dock_goal_response(robot_id, future, expected)
         )
 
-    def _on_precision_dock_goal_response(self, robot_id: str, future) -> None:
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().warning(f"PrecisionDock goal rejected: {robot_id}")
+    @_navigation_locked
+    def _on_precision_dock_goal_response(self, robot_id: str, future, entry=None) -> None:
+        entry = entry or self._auxiliary_goals.get(robot_id)
+        if self._auxiliary_goals.get(robot_id) is not entry:
+            return
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} "
+                  f"goal response failed={exc!r}", flush=True)
+            self._finish_auxiliary(robot_id, entry, GoalStatus.STATUS_ABORTED,
+                                   self.precision_dock_result_callback)
             return
 
-        self.get_logger().info(f"PrecisionDock goal accepted: {robot_id}")
+        if not goal_handle.accepted:
+            print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} goal rejected", flush=True)
 
-        result_future = goal_handle.get_result_async()
+            self._finish_auxiliary(robot_id, entry, GoalStatus.STATUS_ABORTED,
+                                   self.precision_dock_result_callback)
+            return
+
+        entry["handle"] = goal_handle
+        print(f"[{strftime('%H:%M:%S')}] [ROS DOCK] robot={robot_id} goal accepted", flush=True)
+
+        try:
+            result_future = goal_handle.get_result_async()
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} "
+                  f"result subscription failed={exc!r}", flush=True)
+            return
 
         result_future.add_done_callback(
-            lambda future, rid=robot_id: self._on_precision_dock_result(rid, future)
+            lambda future, rid=robot_id, expected=entry: self._on_precision_dock_result(rid, future, expected)
+        )
+        if entry["cancel_callback"] is not None:
+            self._send_auxiliary_cancel(robot_id, entry)
+
+    @_navigation_locked
+    def _on_precision_dock_result(self, robot_id: str, future, entry=None) -> None:
+        entry = entry or self._auxiliary_goals.get(robot_id)
+        if self._auxiliary_goals.get(robot_id) is not entry:
+            return
+        try:
+            result = future.result()
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} "
+                  f"result failed={exc!r}", flush=True)
+            return
+
+        print(f"[{strftime('%H:%M:%S')}] [ROS DOCK] robot={robot_id} "
+              f"finished status={result.status}", flush=True)
+
+        self._finish_auxiliary(robot_id, entry, result.status,
+                               self.precision_dock_result_callback)
+
+    @_navigation_locked
+    def send_aruco_align(self, robot_id: str, marker_id: int) -> None:
+        if robot_id in self._auxiliary_goals:
+            raise RuntimeError(f"이전 보조 Action이 종료되지 않았습니다: {robot_id}")
+        client = self._aruco_align_clients.get(robot_id)
+
+        if client is None:
+            raise ValueError(f"Aruco Align Action client를 찾을 수 없습니다: {robot_id}")
+        print(
+            f"[ROS NAV CHECK] robot={robot_id} "
+            f"ready={client.server_is_ready()}",
+            flush=True,
+        )
+        # Action Server 연결 확인
+        if not client.wait_for_server(timeout_sec=5.0):
+            print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO ERROR] robot={robot_id} "
+                  "Action Server를 찾을 수 없습니다.", flush=True)
+
+            if self.aruco_align_result_callback:
+                self.aruco_align_result_callback(robot_id, GoalStatus.STATUS_ABORTED)
+
+            return
+
+        # Goal 생성
+        goal = AlignAndCorrectWithAruco.Goal()
+        goal.marker_id = int(marker_id)
+        goal.apply_correction = True
+
+        print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO] Goal 전송: "
+              f"robot={robot_id}, marker_id={marker_id}", flush=True)
+
+        # Feedback callback은 사용하지 않음
+        entry = {"kind": "ArUco", "handle": None,
+                 "cancel_callback": None, "cancel_sent": False}
+        self._auxiliary_goals[robot_id] = entry
+        try:
+            future = client.send_goal_async(goal)
+        except Exception:
+            self._auxiliary_goals.pop(robot_id, None)
+            raise
+        future.add_done_callback(
+            lambda future, rid=robot_id, expected=entry: self._on_aruco_align_goal_response(rid, future, expected)
         )
 
-    def _on_precision_dock_result(self, robot_id: str, future) -> None:
-        result = future.result()
-        self.get_logger().info(f"PrecisionDock finished: {robot_id}, status={result.status}")
+    @_navigation_locked
+    def _on_aruco_align_goal_response(self, robot_id: str, future, entry=None) -> None:
+        entry = entry or self._auxiliary_goals.get(robot_id)
+        if self._auxiliary_goals.get(robot_id) is not entry:
+            return
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO ERROR] robot={robot_id} "
+                  f"goal response failed={exc!r}", flush=True)
+            self._finish_auxiliary(robot_id, entry, GoalStatus.STATUS_ABORTED,
+                                   self.aruco_align_result_callback)
+            return
 
-    def _on_amcl_pose(self, robot_id: str, msg: PoseWithCovarianceStamped) -> None:
+        if not goal_handle.accepted:
+            print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO] Goal 거부: {robot_id}", flush=True)
+
+            self._finish_auxiliary(robot_id, entry, GoalStatus.STATUS_ABORTED,
+                                   self.aruco_align_result_callback)
+
+            return
+
+        entry["handle"] = goal_handle
+        print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO] Goal 수락: {robot_id}", flush=True)
+
+        try:
+            result_future = goal_handle.get_result_async()
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO ERROR] robot={robot_id} "
+                  f"result subscription failed={exc!r}", flush=True)
+            return
+
+        result_future.add_done_callback(
+            lambda future, rid=robot_id, expected=entry: self._on_aruco_align_result(rid, future, expected)
+        )
+        if entry["cancel_callback"] is not None:
+            self._send_auxiliary_cancel(robot_id, entry)
+
+    @_navigation_locked
+    def _on_aruco_align_result(self, robot_id: str, future, entry=None) -> None:
+        entry = entry or self._auxiliary_goals.get(robot_id)
+        if self._auxiliary_goals.get(robot_id) is not entry:
+            return
+        try:
+            result = future.result()
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO ERROR] robot={robot_id} "
+                  f"result failed={exc!r}", flush=True)
+            return
+        print(f"[{strftime('%H:%M:%S')}] [ROS ARUCO] 완료: "
+              f"robot={robot_id}, status={result.status}", flush=True)
+
+        self._finish_auxiliary(robot_id, entry, result.status,
+                               self.aruco_align_result_callback)
+
+    @_navigation_locked
+    def _on_amcl_pose(self, robot_id: str, msg: PoseStamped) -> None:
         robot = fleet_manager.get_robot(robot_id)
         if robot is None:
             return
 
-        robot.update_pose(
-            x=msg.pose.pose.position.x,
-            y=msg.pose.pose.position.y,
-            yaw=self._quaternion_to_yaw(msg.pose.pose.orientation),
-        )
+        x, y = msg.pose.position.x, msg.pose.position.y
+        yaw = self._quaternion_to_yaw(msg.pose.orientation)
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            # 잘못된 메시지로 정상 위치와 pose_received_at을 덮어쓰지 않는다.
+            self._navigation_error(robot_id, "invalid_pose_message")
+            return
+        robot.update_pose(x=x, y=y, yaw=yaw)
 
     def _on_battery_state(self, robot_id: str, msg: BatteryState) -> None:
         robot = fleet_manager.get_robot(robot_id)
         if robot is None:
             return
-
         robot.update_battery(percentage=msg.percentage)
 
 

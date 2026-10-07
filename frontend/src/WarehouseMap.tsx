@@ -1,11 +1,16 @@
-// import { useEffect, useId, useRef, useState } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { getMapInfo, MAP_IMAGE_URL, type MapInfoDto } from './api/fmsApi'
+import {
+  getMapInfo,
+  MAP_IMAGE_URL,
+  type MapInfoDto,
+  type OmxDeviceDto,
+} from './api/fmsApi'
 
 import type { MapEdge, MapPoint } from './hooks/useRouteGraph'
 import type { ManagedRobot } from './hooks/useRobotFleet'
 import './warehouse-map.css'
+
 
 type RobotId = 'R-01' | 'R-02' | 'R-03'
 type Point = { x: number; y: number }
@@ -23,6 +28,7 @@ type Props = {
   graphError?: string | null
   visibleRobotIds?: RobotId[]
   robotStates?: ManagedRobot[]
+  omxDevices?: OmxDeviceDto[]
 }
 
 const ROBOT_COLORS: Record<RobotId, string> = {
@@ -30,23 +36,6 @@ const ROBOT_COLORS: Record<RobotId, string> = {
   'R-02': '#E5A53A',
   'R-03': '#36BD8A',
 }
-
-const robotColors: Record<RobotId, string> = {
-  'R-01': '#F52525',
-  'R-02': '#E5A53A',
-  'R-03': '#36BD8A',
-}
-
-// 로봇 위치는 아직 telemetry 연동 전이므로 기존 UI 위치를 임시 유지한다.
-// 노드/엣지는 아래에서 backend GeoJSON 기반 props만 사용한다.
-// const DEMO_ROBOTS: { id: RobotId; x: number; y: number; color: string; heading: number }[] = [
-//   { id: 'R-01', x: 116.210, y: 58.449, color: '#F52525', heading: 270 },
-//   { id: 'R-02', x: 115.052, y: 87.312, color: '#E5A53A', heading: 270 },
-//   { id: 'R-03', x: 115.548, y: 112.893, color: '#36BD8A', heading: 270 },
-// ]
-
-
-
 
 export default function WarehouseMap({
   nodes,
@@ -61,6 +50,7 @@ export default function WarehouseMap({
   graphError = null,
   visibleRobotIds = [],
   robotStates = [],
+  omxDevices = [],
 }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const drag = useRef<{ id: number; x: number; y: number; pan: Point } | null>(null)
@@ -115,7 +105,7 @@ export default function WarehouseMap({
     id: robot.id,
     x: robot.pixelX as number,
     y: robot.pixelY as number,
-    color: robotColors[robot.id],
+    color: ROBOT_COLORS[robot.id],
     heading: 90 - robot.yaw * 180 / Math.PI,
     // 시뮬레이션 로봇은 가상 Fleet 자체가 연결 주체이므로 항상 활성 표시한다.
     stale: robot.mode === 'real' && !robot.connected,
@@ -246,6 +236,56 @@ export default function WarehouseMap({
                 })}
               </g>
             ))}
+          </g>
+        )}
+
+        {/* OMX 장치 */}
+        {!raw && (
+          <g data-testid="omx-markers" pointerEvents="none">
+            {omxDevices.map(omx => {
+              const color = omx.connected ? '#2589F5' : '#9AA4B0'
+
+              return (
+                <g
+                  key={omx.omx_id}
+                  transform={`translate(${omx.pixel_x} ${omx.pixel_y})`}
+                >
+                  <circle
+                    cx={0}
+                    cy={0}
+                    r={px(8)}
+                    fill={color}
+                    stroke="#FFFFFF"
+                    strokeWidth={px(1.5)}
+                  />
+
+                  <text
+                    x={0}
+                    y={px(0.5)}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={px(6)}
+                    fontWeight="800"
+                    fill="#FFFFFF"
+                  >
+                    OMX
+                  </text>
+
+                  <text
+                    x={px(12)}
+                    y={px(3)}
+                    fontSize={px(8)}
+                    fontWeight="800"
+                    fill={color}
+                    paintOrder="stroke"
+                    stroke="#FFFFFF"
+                    strokeWidth={px(2)}
+                  >
+                    {omx.omx_id.toUpperCase()}
+                  </text>
+                </g>
+              )
+            })}
           </g>
         )}
 

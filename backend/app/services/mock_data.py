@@ -1,22 +1,24 @@
-"""Deterministic, in-memory frontend contract data.
 
-No database, path planning, robot communication, or equipment control belongs
-in this module. Replace each command TODO with project-specific control logic.
-"""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-from threading import RLock
+from time import monotonic
 from typing import Any
 
 from ..schemas.robot import normalize_robot_id, to_ui_robot_id
 from .map_service import world_to_pixel
-from .route_graph import get_node, load_route_graph, find_edge_ids, locate_current_node
+from .route_graph import get_node, load_route_graph
 from .pathfinding import DistanceAStar
+from .reservation import reservation_tables
+from .occupancy import locate_occupancy, occupied_resource
+from .traffic_manager import TrafficManager
 
 import math
+
+SIMULATION_SPEED_MPS = 0.2
+RESERVATION_MARGIN_S = 0.2
 
 _MOCK_ROBOT_DEFINITIONS = {
     "robot1": {"node_id": "0", "status": "IDLE", "battery": 92.0},
@@ -35,15 +37,22 @@ class MockFmsStore:
     """Volatile state used only to keep the frontend contract operational."""
 
     # MockFmsStore - FMS 상태를 유지하는 임시 저장소
-    def __init__(self) -> None:
-        self._lock = RLock()
+    def __init__(self, reservations=None) -> None:
         self._robots: dict[str, dict[str, Any]] = {}
+        self._traffic = TrafficManager(
+            self._robots, reservations, speed_mps=SIMULATION_SPEED_MPS,
+            safety_margin=RESERVATION_MARGIN_S,
+        )
+        self._lock = self._traffic.lock
+        self._last_tick = monotonic()
         self._blocked_ips: set[str] = set()
         self.reset()
 
     def reset(self) -> None:
         with self._lock:
-            self._robots = {}
+            self._traffic.reset_after_stop()
+            self._last_tick = monotonic()
+            self._robots.clear()
             self._blocked_ips.clear()
             for robot_id, definition in _MOCK_ROBOT_DEFINITIONS.items():
                 node = get_node(definition["node_id"])
@@ -56,7 +65,13 @@ class MockFmsStore:
                     "y": node["y"],
                     "yaw": 0.0,
                     "current_node": str(node["id"]),
+                    "occupied_node": str(node["id"]),
+                    "occupied_edge": None,
                     "route": None,
+                    "goal_node": None,
+                    "navigation_id": None,
+                    "request_order": None,
+                    "stop_requested": False,
                     "map_pose_received": True,
                     "connection_state": "ONLINE",
                 }
@@ -68,6 +83,27 @@ class MockFmsStore:
         if robot is None:
             raise ValueError(f"Unknown robot: {backend_id}")
         return robot
+
+    def advance_simulation(self, dt: float, now: float | None = None):
+        """한 tick의 재예약·진입·이동을 같은 잠금과 시각으로 처리한다."""
+        if not math.isfinite(dt) or dt <= 0:
+            return
+        now = monotonic() if now is None else now
+        if not math.isfinite(now):
+            return
+        with self._lock:
+            if now <= self._last_tick:
+                return
+            elapsed = min(dt, now - self._last_tick)
+            self._last_tick = now
+            if not self._traffic.has_active_requests():
+                return
+            graph = load_route_graph()
+            planner = DistanceAStar(graph)
+            self._traffic.retry_waiting(now, graph, planner)
+            for robot_id in self._robots:
+                self.advance_mock_robot(robot_id, elapsed, now=now, graph=graph, nodes=planner.nodes)
+            self._traffic.retry_waiting(now, graph, planner)
 
     # 프론트에 보낼 Robot 상태 Snapshot 생성 기능
     @staticmethod
@@ -128,88 +164,21 @@ class MockFmsStore:
             "mock": True,
         }
 
-    # 노드 경로 - 기본으로 시작지점과 목적지점만 존재
+    
     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict[str, Any]:
-        """TODO: Replace with user-defined path planning and node movement."""
+        """가상 로봇의 이동 요청을 공통 교통 제어 서비스에 전달한다."""
         with self._lock:
             robot = self._get_robot(robot_id)
-            active_route = robot["route"]
-            if active_route is not None:
-                self.stop_robot(robot_id)
             target = get_node(node_id)
 
             graph = load_route_graph()
-            path_plan = DistanceAStar(graph)
-            between_nodes = active_route is not None and robot["current_node"] is None
-            current_node = robot["current_node"] if active_route else locate_current_node(
-                nodes=path_plan.nodes,
-                x=robot["x"],
-                y=robot["y"],
-                tolerance_m=0.2,  # 예시: 노드 중심에서 20cm 이내
+            # 시뮬레이션은 이 잠금 안에서 즉시 정지할 수 있다.
+            self._traffic.request_navigation_after_stop(
+                robot["robot_id"], target["id"], now=monotonic(), graph=graph,
             )
-            if between_nodes:
-                index = active_route["segment_index"]
-                if not 0 <= index < len(active_route["node_ids"]) - 1:
-                    raise ValueError("경로 진행 인덱스가 올바르지 않습니다.")
-                start, end = active_route["node_ids"][index:index + 2]
-                candidates = []
-                # 현재 pose에서 각 끝점까지의 거리 + 끝점부터의 A* 비용.
-                # 임시 pose 노드를 연결한 탐색과 같으며, 실제 그래프 ID만 유지합니다.
-                for previous, endpoint in ((start, end), (end, start)):
-                    if not any(node == endpoint for node, _ in path_plan.edges[previous]):
-                        continue
-                    try:
-                        path = path_plan.plan(endpoint, target["id"], speed_mps=0.025)
-                    except ValueError:
-                        continue  # 이 방향으로는 목적지에 도달할 수 없음
-                    distance = math.dist(
-                        (robot["x"], robot["y"]), path_plan.nodes[endpoint]
-                    ) + path.total_distance_m
-                    candidates.append((distance, [previous, *path.route]))
-                if not candidates:
-                    raise ValueError("방향성 그래프에서 도달 가능한 경로가 없습니다.")
-                node_ids = min(candidates, key=lambda candidate: candidate[0])[1]
-            else:
-                if current_node is None:
-                    raise ValueError("로봇의 현재 노드를 알 수 없습니다.")
-                path = path_plan.plan(current_node, target["id"], speed_mps=0.025)
-                node_ids = list(path.route)
-            edge_ids = find_edge_ids(graph, node_ids)
-            # 첫 yaw는 현재 로봇 방향으로 초기화하고, 이후 yaw는 구간 방향으로 계산
-            waypoint_yaws = [float(robot["yaw"])]
-
-            for previous_id, current_id in zip(node_ids, node_ids[1:]):
-                previous = get_node(previous_id)
-                current = get_node(current_id)
-
-                dx = current["x"] - previous["x"]
-                dy = current["y"] - previous["y"]
-
-                # 동일 좌표의 노드는 직전 방향 유지
-                if math.hypot(dx, dy) > 1e-9:
-                    yaw = math.atan2(dy, dx)
-                else:
-                    yaw = waypoint_yaws[-1]
-
-                waypoint_yaws.append(yaw)
-
-            already_arrived = len(node_ids) == 1
-
-            # 계산과 검증이 모두 성공한 뒤에만 활성 상태를 교체
-            robot["current_node"] = current_node
-            if already_arrived:
-                robot["status"] = "IDLE"
-                robot["route"] = None
-            else:
-                robot["status"] = "NAVIGATING"
-                robot["route"] = {
-                    "node_ids": node_ids,
-                    "edge_ids": edge_ids,
-                    "waypoint_yaws": waypoint_yaws,
-                    "phase": "moving" if between_nodes else "ready",
-                    "segment_index": 0,
-                }
+            already_arrived = robot["goal_node"] is None
             response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음
+            waiting = robot["status"] == "WAITING"
 
         result = self._command_response(
             robot_id,
@@ -219,6 +188,9 @@ class MockFmsStore:
 
         if already_arrived:
             result["message"] = "이미 목적지 노드에 있습니다."
+        elif waiting:
+            result["status"] = "WAITING"
+            result["message"] = "현재 위치에서 예약 또는 출발 시각을 기다립니다."
 
         result["route"] = response_route
         result["node"] = target
@@ -226,28 +198,34 @@ class MockFmsStore:
 
     # 로봇 목적지 좌표 이동 명령
     def navigate_to_pose(self, robot_id: str, x: float, y: float) -> dict[str, Any]:
-        """TODO: Replace with user-defined coordinate movement control."""
+        """테스트용 즉시 위치 변경. 실제 주행 명령이 아니다."""
         with self._lock:
-            path_plan = DistanceAStar(load_route_graph())
+            graph = load_route_graph()
+            path_plan = DistanceAStar(graph)
+            x, y = float(x), float(y)
+            occupied_node, occupied_edge = locate_occupancy(
+                graph, path_plan.nodes, x, y,
+            )
 
             robot = self._get_robot(robot_id)
+            probe = dict(robot, occupied_node=occupied_node, occupied_edge=occupied_edge)
+            resource = occupied_resource(probe, graph)
+            now = monotonic()
+            if self._traffic.is_resource_blocked(robot["robot_id"], resource, now=now, graph=graph):
+                raise ValueError("좌표 이동 위치가 다른 로봇에 의해 점유 또는 예약되어 있습니다.")
+            self.stop_robot(robot_id)
             robot.update(
                 {
                     "x": float(x),
                     "y": float(y),
-                    # current_node: 로봇이 현재 위치한다고 확인된 노드. 노드 사이이거나 위치를 확정할 수 없다면 None.
-                    # currnet_node 를 갱신하지 않으면 좌표 이동 이후 노드 이동을 요청하면, 예전 노드에서 출발하는 경로를 계산할 수 있기 때문에
-                    # 현재 노드와 실제 좌표를 맞추기 위해 좌표 이동 시 현재 노드 비우기
-                    "current_node": None,
+                    # 좌표와 실제 점유를 함께 교체한다. 구간 사이에서는 current_node=None.
+                    "current_node": occupied_node,
+                    "occupied_node": occupied_node,
+                    "occupied_edge": occupied_edge,
                     "status": "IDLE",
                     "route": None,
+                    "stop_requested": False,
                 }
-            )
-            robot["current_node"] = locate_current_node(
-                nodes=path_plan.nodes,
-                x=robot["x"],
-                y=robot["y"],
-                tolerance_m=0.2,
             )
 
         return self._command_response(
@@ -257,18 +235,18 @@ class MockFmsStore:
         )
 
     def stop_robot(self, robot_id: str) -> dict[str, Any]:
-        """TODO: Replace with user-defined robot stop control."""
+        """가상 로봇을 즉시 정지하고 요청을 취소한다."""
         with self._lock:
             robot = self._get_robot(robot_id)
-            robot["status"] = "IDLE"
-            robot["route"] = None
+            self._traffic.cancel_navigation_after_stop(robot["robot_id"])
         return self._command_response(robot_id, "stop", None)
 
     def cmd_vel(self, robot_id: str, linear_x: float, angular_z: float) -> dict[str, Any]:
-        """TODO: Replace with user-defined velocity command transport."""
+        """공통 수동 조작 정책을 검사하고 mock 표시 상태를 갱신한다."""
         with self._lock:
             robot = self._get_robot(robot_id)
-            if robot["status"] != "NAVIGATING":
+            can_update = self._traffic.validate_manual_velocity(robot["robot_id"], linear_x, angular_z)
+            if can_update and robot["status"] != "NAVIGATING":
                 robot["status"] = "MOVING" if linear_x or angular_z else "IDLE"
         return {
             "type": "ack",
@@ -279,20 +257,31 @@ class MockFmsStore:
             ),
         }
 
-    def advance_mock_robot(self, robot_id: str, dt: float, speed_mps: float = 0.025) -> None:
+    def advance_mock_robot(self, robot_id: str, dt: float, speed_mps: float = SIMULATION_SPEED_MPS, *, now: float | None = None, graph=None, nodes=None) -> None:
         # 방어 코드
         if not math.isfinite(dt) or not math.isfinite(speed_mps):
             return
         if dt <= 0.0 or speed_mps <= 0.0:
             return
+        if speed_mps != SIMULATION_SPEED_MPS:
+            raise ValueError("이동 속도는 예약 계산에 사용한 시뮬레이션 속도와 같아야 합니다.")
 
+        now = monotonic() if now is None else now
+        if not math.isfinite(now):
+            return
         with self._lock:
             robot = self._get_robot(robot_id)
             route = robot["route"]
 
-            if robot["status"] != "NAVIGATING" or route is None:
+            if route is None or route.get("departure_at") is None:
                 return
-
+            dt = min(dt, max(0.0, now - route["departure_at"]))
+            if dt <= 0:
+                return
+            if graph is None:
+                graph = load_route_graph()
+            if nodes is None:
+                nodes = DistanceAStar(graph).nodes
             # 이번 갱신에서 이동할 수 있는 거리(m)
             remaining = speed_mps * dt
             node_ids = route["node_ids"]
@@ -306,27 +295,43 @@ class MockFmsStore:
                     robot["route"] = None
                     raise ValueError("경로 진행 인덱스가 올바르지 않습니다.")
 
-                target = get_node(node_ids[next_index])
-                dx = target["x"] - robot["x"]
-                dy = target["y"] - robot["y"]
+                target_id = node_ids[next_index]
+                target_x, target_y = nodes[target_id]
+                dx = target_x - robot["x"]
+                dy = target_y - robot["y"]
                 distance = math.hypot(dx, dy)
 
+                departure = route["segment_departures"][route["segment_index"]]
+                remaining = min(remaining, speed_mps * max(0.0, now - departure))
+                finish = now + (distance - remaining) / speed_mps
+                permission = self._traffic.check_segment_permission(
+                    robot["robot_id"], now=now, expected_arrival_at=finish, graph=graph,
+                )
+                if permission.decision == "replan":
+                    # mock 실행은 즉시 정지한다. 실제 실행기는 정지 확인 후 호출해야 한다.
+                    self._traffic.wait_for_reservation_after_stop(robot["robot_id"])
+                    return
+                if permission.decision == "waiting":
+                    robot["status"] = "WAITING"
+                    route["phase"] = "waiting"
+                    return
+                if remaining <= 0:
+                    return
+                robot["status"] = "NAVIGATING"
                 route["phase"] = "moving"
 
                 if distance > 0.0:
+                    # 되돌아가는 경로도 이동 방향으로 회전한 전진이고
+                    # 차체 방향을 유지하는 실제 후진 명령으로 취급하지 않음
                     robot["yaw"] = route["waypoint_yaws"][next_index]
 
                 # 다음 노드까지 도착하고 남은 거리로 계속 진행
                 if distance <= remaining:
-                    robot["x"] = target["x"]
-                    robot["y"] = target["y"]
-                    robot["current_node"] = str(target["id"])
-                    route["segment_index"] = next_index
+                    robot["x"] = target_x
+                    robot["y"] = target_y
+                    self._traffic.confirm_node_arrival(robot["robot_id"], target_id)
                     remaining -= distance
-
-                    if next_index == len(node_ids) - 1:
-                        robot["status"] = "IDLE"
-                        robot["route"] = None
+                    if robot["route"] is None:
                         return
 
                 else:
@@ -336,8 +341,8 @@ class MockFmsStore:
                     robot["y"] += dy * ratio
 
                     # 노드 사이를 이동하는 상태
-                    robot["current_node"] = None
+                    self._traffic.confirm_edge_occupancy(robot["robot_id"])
                     return
 
 
-mock_fms = MockFmsStore()
+mock_fms = MockFmsStore(reservation_tables["simulation"])
