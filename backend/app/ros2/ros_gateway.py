@@ -321,6 +321,9 @@ class RosGateway:
             "source": "ros2",
         }
 
+    def navigation_active(self, robot_id):
+        return self._navigation is not None and self._navigation.is_active(robot_id)
+
     # 실제 로봇을 Route Graph의 목적지 Node로 이동
     @_navigation_locked
     def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict:
@@ -550,11 +553,16 @@ class RosGateway:
     def on_aruco_align_result(self, robot_id: str, status: int) -> None:
         robot = fleet_manager.get_robot(robot_id)
 
-        if robot is None:
+        if robot is None or robot.state == RobotState.EMERGENCY_STOP:
             return
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             print(f"[{robot_id}] ArUco 정렬 성공: " f"Node {robot.current_node}")
+
+            # 주문 없는 일반 노드 이동은 정렬로 완료한다. 빈 OMX 작업을 보내지 않는다.
+            if robot.order_id is None:
+                robot.set_state(RobotState.IDLE)
+                return
 
             # 현재 Node에 연결된 OMX 조회
             omx_id = NODE_OMX_MAP.get(robot.current_node)

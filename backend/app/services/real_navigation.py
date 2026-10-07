@@ -45,6 +45,12 @@ class RealNavigation:
         self._yielding = set()
         self._request_versions = {}
 
+    def is_active(self, robot_id):
+        with self.lock:
+            return (robot_id in self._requests or robot_id in self._executing
+                    or robot_id in self._stopping or robot_id in self._yielding
+                    or robot_id in self._traffic._concession)
+
     def _sync(self, graph, planner, now):
         """측정 좌표는 보존하고 공통 알고리즘 입력용 위치만 노드에 대응시킨다."""
         valid = True
