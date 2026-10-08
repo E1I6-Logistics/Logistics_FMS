@@ -84,11 +84,51 @@ export function getRouteGraph() {
   return request<GeoJsonFeatureCollection>('/api/route/graph?raw=true')
 }
 
-export function sendGoalNode(robotId: string, nodeId: string | number) {
-  return request<Record<string, unknown>>('/api/command/goal-node', {
+export type RouteModelDto = { selector: 'ollama' | 'laya' | 'kev'; model: string }
+export type RouteModelGroupsDto = { ollama: RouteModelDto[]; decision_model: RouteModelDto[] }
+
+export function getRouteModels() {
+  return request<RouteModelGroupsDto>('/api/command/route-models')
+}
+
+export function sendGoalNode(
+  robotId: string,
+  nodeId: string | number,
+  drivingMode: 'standard' | 'llm' = 'standard',
+  routeModel?: RouteModelDto,
+) {
+  return request<{ mode: RobotMode; driving_mode: 'standard' | 'llm'; llm?: Omit<LlmRoutePreviewDto, 'mode' | 'robot_id' | 'start_node' | 'target_node'> }>(
+    '/api/command/goal-node',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ robot_id: robotId, node_id: nodeId, driving_mode: drivingMode, selector: routeModel?.selector, model: routeModel?.model }),
+    },
+  )
+}
+
+export type LlmRoutePreviewDto = {
+  mode: RobotMode
+  robot_id: string
+  start_node: string
+  target_node: string
+  dispatched: boolean
+  path: string[]
+  model: string | null
+  total_weight: number
+  calls: number
+  baseline_path: string[]
+  baseline_weight: number
+  same_path: boolean
+  same_distance: boolean
+  distance_difference: number
+}
+
+export function previewLlmRoute(robotId: string, nodeId: string | number, routeModel: RouteModelDto) {
+  return request<LlmRoutePreviewDto>('/api/command/llm-route-preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ robot_id: robotId, node_id: nodeId }),
+    body: JSON.stringify({ robot_id: robotId, node_id: nodeId, selector: routeModel.selector, model: routeModel.model }),
   })
 }
 

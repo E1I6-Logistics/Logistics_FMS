@@ -3,6 +3,11 @@ import WarehouseMap from './WarehouseMap'
 import RobotOrderForm from './components/RobotOrderForm'
 import {
   sendGoalNode,
+  previewLlmRoute,
+  getRouteModels,
+  type RouteModelDto,
+  type RouteModelGroupsDto,
+  type LlmRoutePreviewDto,
   stopRobot,
   sendCharging,
   stopAllRobots,
@@ -25,6 +30,11 @@ export default function FmsControlApp() {
   const [time, setTime] = useState(new Date())
   const [selectedRobot, setSelectedRobot] = useState<RobotId | null>(null)
   const [targetNode, setTargetNode] = useState<string | null>(null)
+  const [drivingMode, setDrivingMode] = useState<'standard' | 'llm'>('standard')
+  const [llmPreview, setLlmPreview] = useState<LlmRoutePreviewDto | null>(null)
+  const [routeModels, setRouteModels] = useState<RouteModelGroupsDto>({ ollama: [], decision_model: [] })
+  const [selectedRouteModel, setSelectedRouteModel] = useState<RouteModelDto | null>(null)
+  const [routeModelError, setRouteModelError] = useState<string | null>(null)
   const [commandState, setCommandState] = useState<CommandState>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [omxDevices, setOmxDevices] = useState<OmxDeviceDto[]>([])
@@ -61,14 +71,39 @@ export default function FmsControlApp() {
 
   useEffect(() => {
     setTargetNode(null)
+    setLlmPreview(null)
     setCommandState(null)
   }, [selectedRobot])
+
+  useEffect(() => {
+    setLlmPreview(null)
+  }, [targetNode, robotMode])
 
   useEffect(() => {
     if (selectedRobot && !(managedIds as RobotId[]).includes(selectedRobot)) {
       setSelectedRobot(null)
     }
   }, [managedIds, selectedRobot])
+
+  useEffect(() => {
+    void getRouteModels().then(groups => {
+      setRouteModels(groups)
+      setRouteModelError(null)
+      setSelectedRouteModel(previous => {
+        const options = [...groups.ollama, ...groups.decision_model]
+        return options.find(item => item.selector === previous?.selector && item.model === previous.model)
+          ?? options[0] ?? null
+      })
+    }).catch(error => {
+      setRouteModelError(error instanceof Error ? error.message : '모델 목록을 불러오지 못했습니다.')
+      setRouteModels({ ollama: [], decision_model: [] })
+      setSelectedRouteModel(null)
+    })
+  }, [])
+
+  useEffect(() => {
+    setLlmPreview(null)
+  }, [selectedRouteModel])
 
   useEffect(() => {
     const refreshOmx = async () => {
@@ -134,9 +169,66 @@ export default function FmsControlApp() {
     }
   }
 
+  const previewSelectedRoute = () => {
+    if (!selectedRobot || !targetNode) return
+    if (!selectedRouteModel) {
+      setCommandState({ tone: 'danger', message: '경로 모델을 선택하세요.' })
+      return
+    }
+    void (async () => {
+      try {
+        setBusy('routePreview')
+        setLlmPreview(null)
+        setCommandState({ tone: 'info', message: 'LLM 경로를 계산하고 검증 중입니다.' })
+        const preview = await previewLlmRoute(selectedRobot, targetNode, selectedRouteModel)
+        setLlmPreview(preview)
+        setCommandState({
+          tone: 'info',
+          message: preview.same_distance
+            ? 'LLM 경로가 코드 최단거리와 일치합니다. 로봇은 움직이지 않았습니다.'
+            : '유효한 경로지만 코드 최단거리보다 깁니다. 로봇은 움직이지 않았습니다.',
+        })
+      } catch (error) {
+        setCommandState({
+          tone: 'danger',
+          message: error instanceof Error ? error.message : 'LLM 경로를 계산하지 못했습니다.',
+        })
+      } finally {
+        setBusy(null)
+      }
+    })()
+  }
+
   const moveToSelectedNode = () => {
     if (!selectedRobot || !targetNode) return
-    void runCommand('nodeMove', () => sendGoalNode(selectedRobot, targetNode))
+    if (drivingMode === 'standard') {
+      void runCommand('nodeMove', () => sendGoalNode(selectedRobot, targetNode))
+      return
+    }
+    if (!selectedRouteModel) {
+      setCommandState({ tone: 'danger', message: '경로 모델을 선택하세요.' })
+      return
+    }
+    if (robotMode === 'real' &&
+        !window.confirm('LLM 경로를 검증한 뒤 실제 로봇에 주행 명령을 보내시겠습니까?')) {
+      return
+    }
+    void (async () => {
+      try {
+        setBusy('nodeMove')
+        setLlmPreview(null)
+        setCommandState({ tone: 'info', message: 'LLM 경로의 유효성을 확인하고 예약을 요청합니다.' })
+        await sendGoalNode(selectedRobot, targetNode, 'llm', selectedRouteModel)
+        setCommandState({ tone: 'success', message: '유효한 LLM 경로를 기존 예약·양보 제어에 전달했습니다.' })
+      } catch (error) {
+        setCommandState({
+          tone: 'danger',
+          message: error instanceof Error ? error.message : 'LLM 주행을 시작하지 못했습니다.',
+        })
+      } finally {
+        setBusy(null)
+      }
+    })()
   }
 
   const returnToNearestNode = () => {
@@ -330,6 +422,13 @@ export default function FmsControlApp() {
             robotId={selectedRobot}
             liveRobot={selectedLiveRobot}
             targetNode={targetNode}
+            drivingMode={drivingMode}
+            routeModels={routeModels}
+            selectedRouteModel={selectedRouteModel}
+            routeModelError={routeModelError}
+            onRouteModelChange={setSelectedRouteModel}
+            onDrivingModeChange={mode => { setDrivingMode(mode); setLlmPreview(null) }}
+            llmPreview={llmPreview}
             nearestNode={nearestNode}
             realMode={robotMode === 'real'}
             emergencyStopped={emergencyStopped}
@@ -340,6 +439,7 @@ export default function FmsControlApp() {
             onRemoteUp={remote.releaseKey}
             onRemoteStop={remote.stop}
             onMove={moveToSelectedNode}
+            onPreview={previewSelectedRoute}
             onReturnToRoute={returnToNearestNode}
             onCharge={moveToCharge}
             onStop={stopSelectedRobot}
@@ -377,10 +477,17 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
+function RobotPanel({ robotId, liveRobot, targetNode, drivingMode, routeModels, selectedRouteModel, routeModelError, onRouteModelChange, onDrivingModeChange, llmPreview, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onPreview, onReturnToRoute, onCharge, onStop, onRelease, }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
+  drivingMode: 'standard' | 'llm'
+  routeModels: RouteModelGroupsDto
+  selectedRouteModel: RouteModelDto | null
+  routeModelError: string | null
+  onRouteModelChange: (model: RouteModelDto | null) => void
+  onDrivingModeChange: (mode: 'standard' | 'llm') => void
+  llmPreview: LlmRoutePreviewDto | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
   realMode: boolean
   emergencyStopped: boolean
@@ -391,6 +498,7 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
   onRemoteUp: (key: string) => void
   onRemoteStop: () => void
   onMove: () => void
+  onPreview: () => void
   onReturnToRoute: () => void
   onCharge: () => void
   onStop: () => void
@@ -461,19 +569,85 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
         <div style={{ padding: '10px 12px', border: '1px solid #CFE2F7', borderRadius: 9, background: '#F4F8FF', color: route === '—' ? C.muted : '#1155A8', font: `10px ${MONO}`, lineHeight: 1.55 }}>{route}</div>
 
         <SectionTitle>노드 이동</SectionTitle>
+        <div style={{ display: 'flex', gap: 7, marginBottom: 9 }}>
+          {(['standard', 'llm'] as const).map(mode => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={drivingMode === mode}
+              onClick={() => onDrivingModeChange(mode)}
+              style={{ flex: 1, padding: '8px 5px', borderRadius: 7,
+                border: `1px solid ${drivingMode === mode ? C.primary : C.line}`,
+                background: drivingMode === mode ? '#EDF6FF' : '#fff',
+                color: drivingMode === mode ? C.primary : C.muted,
+                fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
+            >
+              {mode === 'standard' ? '기본 주행' : 'LLM 경로'}
+            </button>
+          ))}
+        </div>
+        {drivingMode === 'llm' && (
+          <div style={{ marginBottom: 9 }}>
+            <label htmlFor="route-model" style={{ display: 'block', marginBottom: 5, color: C.muted, fontSize: 10 }}>경로 모델</label>
+            <select id="route-model"
+              value={selectedRouteModel ? selectedRouteModel.selector + ':' + selectedRouteModel.model : ''}
+              onChange={event => {
+                const options = [...routeModels.ollama, ...routeModels.decision_model]
+                onRouteModelChange(options.find(item => item.selector + ':' + item.model === event.target.value) ?? null)
+              }}
+              style={{ width: '100%', padding: '8px 7px', border: '1px solid ' + C.line, borderRadius: 7, background: '#fff', color: C.text, fontSize: 11 }}
+            >
+              {!selectedRouteModel && <option value="">사용 가능한 모델 없음</option>}
+              <optgroup label="Ollama">
+                {routeModels.ollama.map(item => (
+                  <option key={'ollama:' + item.model} value={'ollama:' + item.model}>{item.model}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Decision Model">
+                {routeModels.decision_model.map(item => (
+                  <option key={item.selector + ':' + item.model} value={item.selector + ':' + item.model}>
+                    {item.selector.toUpperCase()} · {item.model}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+            {routeModelError && <div style={{ color: C.danger, fontSize: 10, marginTop: 5 }}>{routeModelError}</div>}
+          </div>
+        )}
         <div style={{ padding: 11, border: `1px solid ${targetNode ? '#A8CAEF' : C.line}`, borderRadius: 9, background: targetNode ? '#F4F8FF' : '#F8FAFC' }}>
           <div style={{ marginBottom: 9, color: targetNode ? C.primary : C.muted, fontSize: 10, fontWeight: 700 }}>
             {targetNode ? `선택 노드: N${targetNode}` : '맵에서 이동할 노드를 선택하세요.'}
           </div>
           <button 
             onClick={onMove} 
-            disabled={ !targetNode || !connected || emergencyStopped || busy !== null }
+            disabled={ !targetNode || !connected || emergencyStopped || busy !== null || (drivingMode === 'llm' && !selectedRouteModel) }
             style={primaryButton(
-              Boolean(targetNode && connected && !emergencyStopped && busy === null),
+              Boolean(targetNode && connected && !emergencyStopped && busy === null && (drivingMode !== 'llm' || selectedRouteModel)),
             )}
           >
-            {busy === 'nodeMove' ? '이동 명령 전송 중' : '선택 노드로 이동'}
+            {busy === 'nodeMove'
+              ? (drivingMode === 'llm' ? 'LLM 검증·예약 중' : '이동 명령 전송 중')
+              : (drivingMode === 'llm' ? 'LLM 경로로 이동' : '선택 노드로 이동')}
           </button>
+          {drivingMode === 'llm' && (
+            <div style={{ marginTop: 8, color: C.muted, fontSize: 9, lineHeight: 1.5 }}>
+              연결된 유향 경로라면 최단거리 여부와 관계없이 기존 예약·양보 제어로 이동합니다.
+              <button type="button" onClick={onPreview}
+                disabled={!targetNode || !connected || emergencyStopped || busy !== null || !selectedRouteModel}
+                style={{ display: 'block', marginTop: 7, padding: '6px 9px',
+                  borderRadius: 6, border: `1px solid ${C.line}`, background: '#fff',
+                  color: C.primary, fontSize: 10, cursor: 'pointer' }}>
+                {busy === 'routePreview' ? '경로 계산 중' : '경로만 미리보기'}
+              </button>
+              {llmPreview && (
+                <div style={{ marginTop: 5, color: llmPreview.same_distance ? C.primary : C.warning }}>
+                  <div>LLM ({llmPreview.model ?? 'same node'}): {llmPreview.path.map(node => `N${node}`).join(' → ')} · {llmPreview.total_weight.toFixed(3)}</div>
+                  <div>코드 기준: {llmPreview.baseline_path.map(node => `N${node}`).join(' → ')} · {llmPreview.baseline_weight.toFixed(3)}</div>
+                  <div>{llmPreview.same_distance ? '최단거리 일치' : `비최단 경로 (+${llmPreview.distance_difference.toFixed(3)})`}</div>
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ margin: '10px 0 7px', borderTop: `1px solid ${C.line}` }} />
           <div style={{ marginBottom: 7, color: nearestNode ? C.muted : C.danger, fontSize: 9, lineHeight: 1.5 }}>
             {!realMode
