@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 
 from threading import RLock
-from time import monotonic
+from time import monotonic, strftime
 
 
 class RobotState(str, Enum):
@@ -91,6 +91,8 @@ class Robot:
         self.order_pickup_index: int = 0
 
     def set_connected(self, connected: bool) -> None:
+        was_connected = self.connected
+        previous_state = self.state
         self.connected = connected
 
         if connected:
@@ -108,8 +110,19 @@ class Robot:
             # 연결 여부는 connected에 남기고 비상정지는 명시적 해제 전까지 유지한다.
             self.state = RobotState.OFFLINE
 
+        if was_connected != self.connected or previous_state != self.state:
+            print(f"[{strftime('%H:%M:%S')}] [ROBOT CONNECTION] robot={self.robot_id} "
+                  f"connected={was_connected}->{self.connected} "
+                  f"state={previous_state.value}->{self.state.value} "
+                  f"order_id={self.order_id}", flush=True)
+
     def set_state(self, state: RobotState) -> None:
+        previous_state = self.state
         self.state = state
+        if previous_state != state:
+            print(f"[{strftime('%H:%M:%S')}] [ROBOT STATE] robot={self.robot_id} "
+                  f"state={previous_state.value}->{state.value} "
+                  f"connected={self.connected} order_id={self.order_id}", flush=True)
 
     def update_pose(self, x: float, y: float, yaw: float) -> None:
         with self._lock:

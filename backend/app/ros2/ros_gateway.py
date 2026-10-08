@@ -181,6 +181,10 @@ class RosGateway:
         for robot in fleet_manager.get_all_robots():
 
             if robot.robot_id not in connected_robot_ids:
+                if robot.connected:
+                    print(f"[{strftime('%H:%M:%S')}] [ROS CONNECTION SYNC] "
+                          f"robot={robot.robot_id} missing_from_zenoh_snapshot "
+                          f"seen={connected_robot_ids} order_id={robot.order_id}", flush=True)
                 fleet_manager.disconnect_robot(robot.robot_id)
                 # self._ros_node.register_robot(robot_id)
 

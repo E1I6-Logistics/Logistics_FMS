@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from time import strftime
 from urllib.request import urlopen
 from typing import Any
 
@@ -86,7 +87,9 @@ class ZenohConnectionManager:
         try:
             sessions = self._get_sessions()
             robot_routes = self._get_robot_routes()
-        except Exception:
+        except Exception as exc:
+            print(f"[{strftime('%H:%M:%S')}] [ZENOH CONNECTIONS ERROR] "
+                  f"connection list unavailable: {exc!r}", flush=True)
             sessions = {}
             robot_routes = {}
 

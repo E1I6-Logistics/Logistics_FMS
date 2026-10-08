@@ -188,7 +188,9 @@ class OrderManager:
                 or omx.omx_id != NODE_OMX_MAP.get(target_robot.current_node)):
             print(f"[{strftime('%H:%M:%S')}] [ORDER RESULT] ignored stale result "
                   f"robot={target_robot.robot_id} omx={omx.omx_id} "
-                  f"node={target_robot.current_node} state={target_robot.state.value}", flush=True)
+                  f"node={target_robot.current_node} state={target_robot.state.value} "
+                  f"connected={target_robot.connected} "
+                  f"expected_omx={NODE_OMX_MAP.get(target_robot.current_node)}", flush=True)
             return
 
         # OMX 작업 실패
