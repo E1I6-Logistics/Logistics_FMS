@@ -72,6 +72,23 @@ class RealNavigation:
         self._initializing_since = {}
         self._stale_idle_reported = set()
 
+    def has_active_request(self, robot_id):
+        """Distinguish an active run from Robot.goal_node's last destination."""
+        with self.lock:
+            state = self._robots.get(robot_id)
+            return (
+                robot_id in self._requests
+                or robot_id in self._executing
+                or robot_id in self._arrivals
+                or robot_id in self._stopping
+                or robot_id in self._traffic._pending
+                or robot_id in self._traffic._concession
+                or any(item[0] == robot_id for item in self._deferred_requests.values())
+                or (state is not None and (
+                    state["goal_node"] is not None or state["route"] is not None
+                ))
+            )
+
     def _docked_station(self, robot_id, graph, nodes, x, y):
         """담당 충전 Node의 통로 반대쪽 도킹 공간에 있는 Pose만 해당 Node로 대응한다."""
         station = self._station_nodes.get(robot_id)

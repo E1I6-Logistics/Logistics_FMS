@@ -42,12 +42,9 @@ def _llm_start_node(robot_id: str, mode: str) -> str:
             raise ValueError("로봇이 주행 중이거나 대기 중입니다. 정지 후 다시 시도하세요.")
         start = robot.get("occupied_node")
     else:
-        robot = fleet_manager.get_robot(normalize_robot_id(robot_id))
-        if robot is None or not robot.connected:
-            raise ValueError("실제 로봇이 연결되어 있지 않습니다.")
-        if robot.goal_node is not None or robot.route is not None:
-            raise ValueError("로봇이 주행 중이거나 대기 중입니다. 정지 후 다시 시도하세요.")
-        start = robot.occupied_node
+        # The last goal_node remains after real arrival; the gateway checks
+        # IDLE, route, and active ROS requests under its navigation lock.
+        start = ros_gateway.llm_start_node(robot_id)
     if start is None:
         raise ValueError("현재 로봇이 노드 위에 있지 않아 경로를 계산할 수 없습니다.")
     return str(start)

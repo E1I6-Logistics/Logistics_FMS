@@ -428,6 +428,24 @@ class RosGateway:
             "source": "ros2",
         }
 
+    @_navigation_locked
+    def llm_start_node(self, robot_id: str) -> str:
+        """Allow a new LLM route only after confirmed completion at a node."""
+        robot_id = normalize_robot_id(robot_id)
+        robot = fleet_manager.get_robot(robot_id)
+        if robot is None or not robot.connected:
+            raise ValueError("실제 로봇이 연결되어 있지 않습니다.")
+        if (robot.state != RobotState.IDLE
+                or robot.route is not None
+                or self._navigation.has_active_request(robot_id)
+                or robot_id in self._waiting_omx
+                or (self._ros_node is not None
+                    and self._ros_node.has_active_auxiliary(robot_id))):
+            raise ValueError("로봇이 주행 중이거나 대기 중입니다. 정지 후 다시 시도하세요.")
+        if robot.occupied_node is None:
+            raise ValueError("현재 로봇이 노드 위에 있지 않아 경로를 계산할 수 없습니다.")
+        return str(robot.occupied_node)
+
     # 실제 로봇을 Route Graph의 목적지 Node로 이동
     @_navigation_locked
     def navigate_to_node(
@@ -446,10 +464,9 @@ class RosGateway:
 
         self._validate_navigation_request(robot_id, node_id)
         if required_path is not None:
-            if robot.goal_node is not None or robot.route is not None:
-                raise ValueError("LLM 경로 적용 전 기존 주행을 정지해야 합니다.")
+            start_node = self.llm_start_node(robot_id)
             if (not required_path or str(required_path[-1]) != str(node_id)
-                    or str(required_path[0]) != str(robot.occupied_node)):
+                    or str(required_path[0]) != start_node):
                 raise ValueError("LLM 경로의 현재 노드 또는 목적지가 일치하지 않습니다.")
             find_edge_ids(load_route_graph(), [str(node) for node in required_path])
         same_active_goal = (
