@@ -67,6 +67,111 @@
           "goal": "0"
         }
       ]
+    },
+    {
+      "name": "cycle_reverse_order",
+      "description": "역순 요청(robot3→robot2→robot1)의 순환 대기와 해소",
+      "robots": [
+        {
+          "id": "robot3",
+          "start": "2",
+          "goal": "0"
+        },
+        {
+          "id": "robot2",
+          "start": "1",
+          "goal": "2"
+        },
+        {
+          "id": "robot1",
+          "start": "0",
+          "goal": "1"
+        }
+      ]
+    },
+    {
+      "name": "central_head_on",
+      "description": "9↔7 중앙 통로의 마주 오는 주행과 양보·우회",
+      "robots": [
+        {
+          "id": "robot1",
+          "start": "9",
+          "goal": "7"
+        },
+        {
+          "id": "robot2",
+          "start": "7",
+          "goal": "9"
+        },
+        {
+          "id": "robot3",
+          "start": "0",
+          "goal": null
+        }
+      ]
+    },
+    {
+      "name": "junction_contention",
+      "description": "7번 교차점의 세 방향 진입과 순차 통과",
+      "robots": [
+        {
+          "id": "robot1",
+          "start": "9",
+          "goal": "11"
+        },
+        {
+          "id": "robot2",
+          "start": "8",
+          "goal": "5"
+        },
+        {
+          "id": "robot3",
+          "start": "5",
+          "goal": "9"
+        }
+      ]
+    },
+    {
+      "name": "swap_with_crossing",
+      "description": "두 로봇의 자리 교환 중 제3 로봇의 공유 구간 통과",
+      "robots": [
+        {
+          "id": "robot1",
+          "start": "1",
+          "goal": "2"
+        },
+        {
+          "id": "robot2",
+          "start": "2",
+          "goal": "1"
+        },
+        {
+          "id": "robot3",
+          "start": "10",
+          "goal": "6"
+        }
+      ]
+    },
+    {
+      "name": "central_cycle",
+      "description": "중앙 세 노드의 순환 대기와 양보 후 우회 복귀",
+      "robots": [
+        {
+          "id": "robot1",
+          "start": "9",
+          "goal": "7"
+        },
+        {
+          "id": "robot2",
+          "start": "7",
+          "goal": "8"
+        },
+        {
+          "id": "robot3",
+          "start": "8",
+          "goal": "9"
+        }
+      ]
     }
   ]
 }
