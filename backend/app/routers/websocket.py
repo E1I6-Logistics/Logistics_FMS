@@ -5,6 +5,7 @@ from time import strftime
 
 from ..ros2.ros_gateway import ros_gateway
 from ..services.mode_service import mode_manager
+from ..services.scenario_service import scenario_manager
 from ..services.websocket_manager import manager
 from ..services.fleet_manager import fleet_manager
 from ..services.map_service import world_to_pixel
@@ -77,6 +78,10 @@ async def cmd_vel_websocket(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "message": "robot_id required"})
                 continue
             try:
+                linear = float(data.get("linear_x", 0.0))
+                angular = float(data.get("angular_z", 0.0))
+                if linear or angular:
+                    scenario_manager.ensure_available(robot_id)
                 if mode_manager.mode == "simulation":
                     from ..services.mock_data import mock_fms
                     acknowledgement = mock_fms.cmd_vel(

@@ -16,6 +16,8 @@ from .routers.robots import router as robots_router
 from .routers.websocket import router as websocket_router
 from .routers.orders import router as orders_router
 from .routers.omx import router as omx_router
+from .routers.scenarios import router as scenarios_router
+from .services.scenario_service import scenario_manager
 
 from .services.map_service import load_map_metadata
 from .services.mode_service import mode_manager
@@ -76,6 +78,7 @@ async def lifespan(app: FastAPI):
         yield
 
     finally:
+        await scenario_manager.shutdown()
         navigation_task.cancel()
         with suppress(asyncio.CancelledError):
             await navigation_task
@@ -119,6 +122,7 @@ app.include_router(connections_router)
 app.include_router(websocket_router)
 app.include_router(orders_router)
 app.include_router(omx_router)
+app.include_router(scenarios_router)
 
 
 @app.get("/")

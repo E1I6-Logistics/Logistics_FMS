@@ -37,6 +37,11 @@ async def get_mode():
 
 @router.put("")
 async def set_mode(payload: ModeRequest):
+    from ..services.scenario_service import scenario_manager
+    try:
+        scenario_manager.ensure_available()
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     if mode_manager.mode == "real" and payload.mode == "simulation":
         # 표시 모드만 바뀌어도 실제 Goal은 계속 실행되므로 작업 중에는 전환하지 않는다.
         with ros_gateway._navigation.lock:

@@ -420,7 +420,7 @@ class FmsRosNode(Node):
             f"[ROS NAV CHECK] robot={robot_id} "
             f"ready={client.server_is_ready()}",
             flush=True,
-        )      
+        )
         if not client.wait_for_server(timeout_sec=5.0):
             print(f"[{strftime('%H:%M:%S')}] [ROS DOCK ERROR] robot={robot_id} server not available", flush=True)
             if self.precision_dock_result_callback:

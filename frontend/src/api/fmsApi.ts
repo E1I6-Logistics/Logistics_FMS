@@ -71,7 +71,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init)
   if (!response.ok) {
     const text = await response.text()
-    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text}` : ''}`)
+    let message = text
+    try {
+      const body = JSON.parse(text) as { detail?: unknown }
+      if (typeof body.detail === 'string') message = body.detail
+    } catch { /* JSON이 아닌 오류는 원문 표시 */ }
+    throw new Error(`${response.status} ${response.statusText}${message ? `: ${message}` : ''}`)
   }
   return response.json() as Promise<T>
 }
@@ -207,4 +212,31 @@ export function dashboardWsUrl() {
 
 export function getOmxDevices() {
   return request<OmxDeviceDto[]>('/api/omx')
+}
+export type ScenarioItem = { name: string; description: string }
+export type ScenarioStatus = {
+  state: 'idle' | 'running' | 'stopping' | 'completed' | 'failed'
+  name: string | null
+  run_id: string | null
+  mode?: RobotMode
+  description?: string
+  elapsed?: number
+  message: string
+  robots: { robot_id: string; status: string; current_node: string | null; goal: string | null }[]
+}
+
+export function getScenarios() {
+  return request<ScenarioItem[]>('/api/scenarios')
+}
+
+export function getScenarioStatus() {
+  return request<ScenarioStatus>('/api/scenarios/status')
+}
+
+export function runScenario(name: string) {
+  return request<ScenarioStatus>('/api/scenarios/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
 }
