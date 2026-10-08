@@ -6,7 +6,7 @@ from backend.app.services.fleet_manager import FleetManager
 from backend.app.services.real_navigation import RealNavigation
 from backend.app.services.pathfinding import DistanceAStar
 from backend.app.services.occupancy import locate_occupancy
-from backend.app.services.reservation import ReservationTable
+from backend.app.services.reservation import ReservationTable, node_key, edge_key
 from backend.app.services.route_graph import load_route_graph
 
 
@@ -73,6 +73,22 @@ class RealNavigationTest(unittest.TestCase):
         self.nav.on_result("robot1", True)
         self.assertEqual(self.completed, ["robot1"])
         self.assertEqual(self.robot.goal_node, "2")
+
+    def test_passed_reservation_releases_only_after_body_clears_resource(self):
+        self.request()
+        self.pose(self.robot, 1., 0.)
+        self.nav.on_feedback("robot1", 1)
+        self.tick()
+        self.assertEqual(self.nav._robots["robot1"]["route"]["segment_index"], 1)
+        self.assertTrue(any(row.resource == edge_key("0", "1")
+                            for row in self.table.snapshot()))
+        self.pose(self.robot, 1.4, 0.)
+        self.tick()
+        resources = {row.resource for row in self.table.snapshot()}
+        self.assertNotIn(edge_key("0", "1"), resources)
+        self.assertNotIn(node_key("1"), resources)
+        self.assertIn(edge_key("1", "2"), resources)
+        self.assertIn(node_key("2"), resources)
 
     def test_next_edge_blocked_holds_at_node_then_resends_remaining_route(self):
         self.request()
@@ -530,16 +546,48 @@ class RealNavigationTest(unittest.TestCase):
         self.assertEqual(self.robot.state, RobotState.MOVING)
         self.assertEqual(self.nav._robots["robot2"]["occupied_node"], "3")
 
-    def test_offline_moving_robot_still_blocks_new_navigation(self):
+    def test_offline_moving_robot_protects_its_route(self):
         other = self.fleet.register_robot("robot2")
         self.pose(other, 1., 1.)
         self.nav.request("robot2", "1", NavigationType.GOAL)
         self.tick()
         other.set_connected(False)
 
-        with self.assertRaisesRegex(ValueError, "robot_offline"):
-            self.nav.request("robot1", "2", NavigationType.GOAL)
+        self.nav.request("robot1", "2", NavigationType.GOAL)
+        self.tick()
         self.assertFalse(any(command["robot_id"] == "robot1" for command in self.sent))
+        self.assertEqual(self.robot.state, RobotState.WAITING)
+        self.assertIn(node_key("1"), self.nav._traffic._protected_resources["robot2"])
+
+    def test_offline_moving_robot_does_not_stop_disjoint_route(self):
+        layout = graph()
+        layout["features"] += [
+            {"geometry": {"type": "Point", "coordinates": [4., 0.]},
+             "properties": {"id": "4"}},
+            {"geometry": {"type": "Point", "coordinates": [5., 0.]},
+             "properties": {"id": "5"}},
+            {"properties": {"id": "45", "startid": "4", "endid": "5"}},
+            {"properties": {"id": "54", "startid": "5", "endid": "4"}},
+        ]
+        with patch("backend.app.services.real_navigation.load_route_graph", return_value=layout):
+            other = self.fleet.register_robot("robot2")
+            self.pose(other, 4., 0.)
+            self.nav.request("robot1", "2", NavigationType.GOAL)
+            self.nav.request("robot2", "5", NavigationType.GOAL)
+            self.tick()
+            other.set_connected(False)
+            self.tick()
+            self.assertEqual(self.robot.state, RobotState.MOVING)
+            self.assertNotIn("robot1", self.cancels)
+            self.assertIn(edge_key("4", "5"), self.nav._traffic._protected_resources["robot2"])
+            self.nav.on_result("robot2", False)
+            self.assertIn(edge_key("4", "5"), self.nav._traffic._protected_resources["robot2"])
+            self.assertTrue(any(row.robot_id == "robot2" for row in self.table.snapshot()))
+            other.set_connected(True)
+            self.pose(other, 4.1, 0.)
+            self.tick()
+            self.assertEqual(other.state, RobotState.PAUSED)
+            self.assertIn(edge_key("4", "5"), self.nav._traffic._protected_resources["robot2"])
 
     def test_new_robot_waiting_for_first_pose_protects_station_without_cancel(self):
         self.nav._station_nodes = {"robot2": "3"}
