@@ -28,6 +28,8 @@ class RobotModeManager:
             return self._mode
 
     def set_mode(self, mode: str) -> RobotMode:
+        from .scenario_service import scenario_manager
+        scenario_manager.ensure_available()
         normalized = self._validate(mode)
         with self._lock:
             self._mode = normalized

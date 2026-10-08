@@ -428,6 +428,9 @@ class RosGateway:
             "source": "ros2",
         }
 
+    def navigation_active(self, robot_id):
+        return self._navigation is not None and self._navigation.is_active(robot_id)
+
     # 실제 로봇을 Route Graph의 목적지 Node로 이동
     @_navigation_locked
     def navigate_to_node(self, robot_id: str, node_id: str | int, *, _order_step=False) -> dict:
@@ -671,7 +674,7 @@ class RosGateway:
     def on_aruco_align_result(self, robot_id: str, status: int) -> None:
         robot = fleet_manager.get_robot(robot_id)
 
-        if robot is None:
+        if robot is None or robot.state == RobotState.EMERGENCY_STOP:
             return
 
         if not robot.connected or robot.state != RobotState.DOCKING:

@@ -2,6 +2,7 @@ from uuid import uuid4
 from time import strftime
 
 from .fleet_manager import fleet_manager
+from .scenario_service import scenario_manager
 from ..models.robot import RobotState
 from ..schemas.robot import normalize_robot_id
 from ..ros2.ros_gateway import ros_gateway, NODE_OMX_MAP
@@ -25,6 +26,7 @@ class OrderManager:
 
         return pickup_nodes
 
+    @scenario_manager.protect_command
     def create_order(
         self,
         robot_id: str,

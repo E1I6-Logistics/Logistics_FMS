@@ -333,6 +333,21 @@ ollama pull qwen3:4b
 
 비교 결과는 `simulation/llm_route_comparisons.jsonl`, 집계 결과는 `simulation/llm_route_summary.json`에 기록되며 두 파일은 Git에서 제외됩니다.
 
+## 병목·교착 시나리오 실행
+
+지도 왼쪽 위 확대 버튼 오른쪽의 콤보박스에서 설명을 선택하고 **테스트 실행**을 누릅니다.
+선택한 시나리오 하나만 실행하며 웹과 CLI는 같은 백엔드 실행 상태를 공유합니다.
+
+```bash
+python3 tests/traffic_scenarios.py cycle
+```
+
+CLI의 시나리오 이름은 필수입니다. 노드·명령 순서·설명은
+`tests/traffic_scenarios.json`에서 수정합니다. 별도 route graph 없이 현재
+`routes/test.geojson`을 사용합니다. 자세한 시작 위치 조건, 모드별 동작,
+설정과 변경 위치는 [시나리오 실행 안내](doc/traffic_scenarios.md)를 참고하세요.
+새 API 적용을 위해 백엔드를 재시작하고 웹 페이지를 새로고침해야 합니다.
+
 ## 검증
 
 ```bash

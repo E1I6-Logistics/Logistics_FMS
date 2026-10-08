@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import WarehouseMap from './WarehouseMap'
 import RobotOrderForm from './components/RobotOrderForm'
+import ScenarioControls from './components/ScenarioControls'
 import {
   sendGoalNode,
   stopRobot,
@@ -23,6 +24,7 @@ const allLayers = { nodeEdge: true, route: true, station: true, robotId: true }
 
 export default function FmsControlApp() {
   const [time, setTime] = useState(new Date())
+  const [scenarioActive, setScenarioActive] = useState(false)
   const [selectedRobot, setSelectedRobot] = useState<RobotId | null>(null)
   const [targetNode, setTargetNode] = useState<string | null>(null)
   const [commandState, setCommandState] = useState<CommandState>(null)
@@ -50,7 +52,7 @@ export default function FmsControlApp() {
     enabled: Boolean(
       selectedRobot &&
       connected &&
-      !emergencyStopped
+      !emergencyStopped && !scenarioActive
     ),
   })
 
@@ -196,7 +198,7 @@ export default function FmsControlApp() {
   }
 
   const handleModeChange = (mode: 'real' | 'simulation') => {
-    if (mode === robotMode || modeSwitching) return
+    if (mode === robotMode || modeSwitching || scenarioActive) return
     setSelectedRobot(null)
     setTargetNode(null)
     setCommandState({ tone: 'info', message: `${mode === 'real' ? '실제 로봇' : '시뮬레이션'} 모드로 전환하고 있습니다.` })
@@ -248,7 +250,7 @@ export default function FmsControlApp() {
                 return (
                   <button
                     key={mode}
-                    disabled={modeSwitching}
+                    disabled={modeSwitching || scenarioActive}
                     aria-pressed={active}
                     onClick={() => handleModeChange(mode)}
                     style={{
@@ -281,6 +283,7 @@ export default function FmsControlApp() {
           />
 
           <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: '#E7EBF0' }} aria-label="FMS 실시간 지도">
+            <ScenarioControls modeSwitching={modeSwitching} onActiveChange={setScenarioActive} />
             {commandState && (
               <CommandToast state={commandState} onClose={() => setCommandState(null)} />
             )}
@@ -297,7 +300,7 @@ export default function FmsControlApp() {
               >
                 <RobotOrderForm
                   robotId={selectedRobot}
-                  disabled={!connected || emergencyStopped}
+                  disabled={!connected || emergencyStopped || scenarioActive}
                 />
               </div>
             )}
@@ -331,6 +334,7 @@ export default function FmsControlApp() {
             liveRobot={selectedLiveRobot}
             targetNode={targetNode}
             nearestNode={nearestNode}
+            scenarioActive={scenarioActive}
             realMode={robotMode === 'real'}
             emergencyStopped={emergencyStopped}
             remoteStatus={remote.status}
@@ -377,12 +381,13 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
+function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onReturnToRoute, onCharge, onStop, onRelease, }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
   nearestNode: { id: string; x: number; y: number; distance: number } | null
   realMode: boolean
+  scenarioActive: boolean
   emergencyStopped: boolean
   remoteStatus: 'off' | 'connecting' | 'ready'
   remoteKeys: Set<string>
@@ -415,7 +420,7 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
   const statusColor = !connected ? C.danger : /MOV|RUN|이동|작업/i.test(status) ? C.success : C.warning
   const batteryColor = battery < 30 ? C.danger : battery < 50 ? C.warning : C.success
   const route = liveRobot?.route?.node_ids?.length ? liveRobot.route.node_ids.map(id => `N${id}`).join(' → ') : '—'
-  const controlsEnabled = connected && !emergencyStopped && remoteStatus === 'ready'
+  const controlsEnabled = connected && !emergencyStopped && !scenarioActive && remoteStatus === 'ready'
 
   return (
     <aside style={{ width: 390, flexShrink: 0, borderLeft: `1px solid ${C.line}`, background: C.surface, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '-2px 0 8px rgba(0,0,0,.05)' }} aria-label={`${robotId} 정보 및 제어`}>
@@ -467,9 +472,9 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
           </div>
           <button 
             onClick={onMove} 
-            disabled={ !targetNode || !connected || emergencyStopped || busy !== null }
+            disabled={ !targetNode || !connected || emergencyStopped || busy !== null || scenarioActive }
             style={primaryButton(
-              Boolean(targetNode && connected && !emergencyStopped && busy === null),
+              Boolean(targetNode && connected && !emergencyStopped && busy === null && !scenarioActive),
             )}
           >
             {busy === 'nodeMove' ? '이동 명령 전송 중' : '선택 노드로 이동'}
@@ -484,9 +489,9 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
           </div>
           <button
             onClick={onReturnToRoute}
-            disabled={ !realMode || !nearestNode || !connected || emergencyStopped || busy !== null }
+            disabled={ !realMode || !nearestNode || !connected || emergencyStopped || busy !== null || scenarioActive }
             style={secondaryButton(
-              Boolean(realMode && nearestNode && connected && !emergencyStopped && busy === null),
+              Boolean(realMode && nearestNode && connected && !emergencyStopped && busy === null && !scenarioActive),
             )}
           >
             {busy === 'returnToRoute' ? '경로 복귀 명령 전송 중' : '가장 가까운 노드로 복귀'}
@@ -515,8 +520,8 @@ function RobotPanel({ robotId, liveRobot, targetNode, nearestNode, realMode, eme
         <SectionTitle>직접 제어</SectionTitle>
         <button
           onClick={onCharge}
-          disabled={!connected || emergencyStopped || busy !== null}
-          style={secondaryButton(connected && !emergencyStopped && busy === null)}
+          disabled={!connected || emergencyStopped || busy !== null || scenarioActive}
+          style={secondaryButton(connected && !emergencyStopped && busy === null && !scenarioActive)}
           title="충전 스테이션으로 이동"
         >
           {busy === 'charge' ? '충전 이동 명령 전송 중' : '충전 스테이션으로 이동'}
