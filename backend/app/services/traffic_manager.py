@@ -41,6 +41,21 @@ class TrafficManager:
         self._pending: dict[str, None] = {}
         self._concession: dict[str, dict] = {}
         self._request_sequence = 0
+        # 연결이 끊긴 주행 로봇의 남은 경로. 재연결해 실제 점유를 확인할 때까지 다른 로봇에 양보하지 않는다.
+        self._protected_resources = {}
+
+    def protect_resources(self, robot_id, resources):
+        with self.lock:
+            self._protected_resources[robot_id] = set(resources)
+
+    def clear_protected_resources(self, robot_id):
+        with self.lock:
+            self._protected_resources.pop(robot_id, None)
+
+    def is_resource_protected(self, robot_id, resource):
+        with self.lock:
+            return any(owner != robot_id and resource in resources
+                       for owner, resources in self._protected_resources.items())
 
     def reset_after_stop(self):
         """전체 실행 종료 및 점유 보존이 확인된 상태에서 계획만 초기화한다."""
@@ -52,6 +67,7 @@ class TrafficManager:
                 self._reservations.release_request(robot_id, navigation_id)
             self._pending.clear()
             self._concession.clear()
+            self._protected_resources.clear()
             self._request_sequence = 0
 
     def has_active_requests(self) -> bool:
@@ -142,7 +158,8 @@ class TrafficManager:
     def is_resource_blocked(self, robot_id, resource, *, now, graph) -> bool:
         with self.lock:
             self._validate_time(now)
-            return any(other["robot_id"] != robot_id and occupied_resource(other, graph) == resource
+            return self.is_resource_protected(robot_id, resource) or any(
+                other["robot_id"] != robot_id and occupied_resource(other, graph) == resource
                        for other in self._robots.values()) or any(
                 row.robot_id != robot_id and row.resource == resource and row.end > now
                 for row in self._reservations.snapshot())
@@ -184,6 +201,9 @@ class TrafficManager:
             if any(other is not robot and occupied_resource(other, graph) in (resource, target)
                    for other in self._robots.values()):
                 return SegmentPermission("replan", "occupied")
+            if (self.is_resource_protected(robot_id, resource)
+                    or self.is_resource_protected(robot_id, target)):
+                return SegmentPermission("replan", "offline_robot_route")
             if (expected_arrival_at + self.safety_margin > edge.end + 1e-6
                     or expected_arrival_at + self.safety_margin > destination.end + 1e-6):
                 return SegmentPermission("replan", "schedule_overrun")
@@ -210,6 +230,10 @@ class TrafficManager:
         blocked = {}
         for row in others:
             blocked.setdefault(row.resource, []).append((row.start, row.end))
+        for owner, resources in self._protected_resources.items():
+            if owner != robot["robot_id"]:
+                for resource in resources:
+                    blocked.setdefault(resource, []).append((now, math.inf))
         for other in self._robots.values():
             if other is robot:
                 continue
@@ -280,6 +304,7 @@ class TrafficManager:
         trial._robots = deepcopy(self._robots)
         trial._pending = dict(self._pending)
         trial._concession = deepcopy(self._concession)
+        trial._protected_resources = deepcopy(self._protected_resources)
         trial._reservations = ReservationTable()
         rows = self._reservations.snapshot()
         for robot_id, navigation_id in {(r.robot_id, r.navigation_id) for r in rows}:

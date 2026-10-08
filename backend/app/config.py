@@ -72,6 +72,11 @@ REAL_NAVIGATION_SPEED_MPS = float(os.getenv("FMS_REAL_NAVIGATION_SPEED_MPS", "0.
 # 시간 오차가 크면 늘리되 다른 로봇의 대기 시간이 길어진다.
 REAL_RESERVATION_MARGIN_S = float(os.getenv("FMS_REAL_RESERVATION_MARGIN_S", "1.5"))
 
+# services/real_navigation.py가 지나간 Node/Edge 예약을 조기 해제할 때 사용하는 로봇 중심의 최소 이격 거리(m).
+# 로봇 반경(현재 burger.yaml의 0.1m)에 위치 오차 여유 0.1m를 더한 기본값이다.
+# 실제 외형 반경·AMCL 오차가 더 크면 늘린다. 낮추면 로봇 몸체가 통로에 남은 채 예약이 풀릴 수 있다.
+REAL_RESERVATION_CLEARANCE_M = float(os.getenv("FMS_REAL_RESERVATION_CLEARANCE_M", "0.2"))
+
 # ros2/ros_gateway.py와 services/real_navigation.py의 실제 최종 도착 거리(m).
 # 기본값 0.15m. 늘리면 목적지 오도착도 허용하므로 Nav2 최종 정확도 실측 후 조정한다.
 REAL_ARRIVAL_DISTANCE_M = float(os.getenv("FMS_REAL_ARRIVAL_DISTANCE_M", "0.15"))
@@ -123,6 +128,7 @@ import math
 for _name in (
     "REAL_NAVIGATION_SPEED_MPS",
     "REAL_RESERVATION_MARGIN_S",
+    "REAL_RESERVATION_CLEARANCE_M",
     "REAL_ARRIVAL_DISTANCE_M",
     "REAL_OCCUPANCY_TOLERANCE_M",
     "REAL_ROUTE_TRANSITION_DISTANCE_M",

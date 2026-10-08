@@ -17,6 +17,7 @@ def load_order_manager():
     gateway._navigation = SimpleNamespace(lock=RLock())
     gateway_module.ros_gateway = gateway
     gateway_module.NODE_OMX_MAP = {"5": "omx1", "6": "omx2", "3": "omx3", "4": "omx4"}
+    gateway_module.CHARGING_STATION_NODES = {"robot1": "0", "robot2": "1", "robot3": "2"}
     mqtt_module = ModuleType("backend.app.services.mqtt_manager")
     mqtt_module.mqtt_manager = Mock()
     with patch.dict(sys.modules, {gateway_module.__name__: gateway_module,
@@ -63,3 +64,28 @@ class OrderPreemptionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.create_order("robot1", {"A": -1, "B": 0, "C": 0, "D": 0}, -1, "3")
         gateway.cancel_current_work.assert_not_called()
+
+    def test_two_pickups_then_workstation_and_station_without_docking(self):
+        self.robot.assign_order("order-1", {"A": 1, "B": 0, "C": 1, "D": 0}, 2,
+                                ["5", "6"], "3")
+        for node, omx_id, destination in (("5", "omx1", "6"), ("6", "omx2", "3"),
+                                          ("3", "omx3", "0")):
+            self.robot.current_node = node
+            self.robot.set_state(RobotState.WAITING)
+            self.manager.on_mqtt_result(SimpleNamespace(omx_id=omx_id),
+                                        {"job_id": "order-1", "success": True})
+            self.assertEqual(gateway.navigate_to_node.call_args.kwargs,
+                             {"robot_id": "robot1", "node_id": destination,
+                              "_order_step": True})
+        self.assertIsNone(self.robot.order_id)
+        gateway.navigate_to_charging_station.assert_not_called()
+
+    def test_workstation_failure_pauses_and_keeps_order(self):
+        self.robot.assign_order("order-1", {"A": 1}, 1, ["5"], "3")
+        self.robot.current_node = "3"
+        self.robot.set_state(RobotState.WAITING)
+        self.manager.on_mqtt_result(SimpleNamespace(omx_id="omx3"),
+                                    {"job_id": "order-1", "success": False})
+        self.assertEqual(self.robot.state, RobotState.PAUSED)
+        self.assertEqual(self.robot.order_id, "order-1")
+        gateway.navigate_to_node.assert_not_called()

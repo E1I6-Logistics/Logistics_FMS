@@ -5,7 +5,7 @@ from .fleet_manager import fleet_manager
 from .scenario_service import scenario_manager
 from ..models.robot import RobotState
 from ..schemas.robot import normalize_robot_id
-from ..ros2.ros_gateway import ros_gateway, NODE_OMX_MAP
+from ..ros2.ros_gateway import ros_gateway, NODE_OMX_MAP, CHARGING_STATION_NODES
 from .mqtt_manager import mqtt_manager
 
 
@@ -201,8 +201,25 @@ class OrderManager:
             print(f"[{strftime('%H:%M:%S')}] [ORDER] workstation work complete: "
                   f"robot={target_robot.robot_id}", flush=True)
 
-            # 아직 주문정보는 지우지 않음
-            # 이후 복귀 로직 연결 예정
+            station_node = CHARGING_STATION_NODES.get(target_robot.robot_id)
+            if station_node is None:
+                target_robot.set_state(RobotState.PAUSED)
+                print(f"[{strftime('%H:%M:%S')}] [ORDER ERROR] robot={target_robot.robot_id} "
+                      "charging station not assigned", flush=True)
+                return
+
+            try:
+                # 주문 완료 후에는 담당 스테이션 Node까지만 이동한다. PrecisionDock은 실행하지 않는다.
+                ros_gateway._validate_navigation_request(target_robot.robot_id, station_node)
+                target_robot.clear_order()
+                ros_gateway.navigate_to_node(
+                    robot_id=target_robot.robot_id, node_id=station_node, _order_step=True)
+                print(f"[{strftime('%H:%M:%S')}] [ORDER] robot={target_robot.robot_id} "
+                      f"return to station node={station_node} without docking", flush=True)
+            except (ValueError, RuntimeError) as exc:
+                target_robot.set_state(RobotState.PAUSED)
+                print(f"[{strftime('%H:%M:%S')}] [ORDER ERROR] robot={target_robot.robot_id} "
+                      f"station_return_failed={exc!r}", flush=True)
             return
 
         # Pickup OMX 작업 완료

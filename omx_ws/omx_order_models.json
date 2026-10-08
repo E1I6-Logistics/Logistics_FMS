@@ -1,0 +1,10 @@
+{
+  "A": {
+    "path": "outputs/train/warehouse_all_200_two_cycles_v3_act_250k/checkpoints/150000/pretrained_model",
+    "task": "Pick up the topmost item, place it in the basket, and return to the initial pose"
+  },
+  "B": {
+    "path": "outputs/train/warehouse_item_b_100_merged_act_200k/checkpoints/150000/pretrained_model",
+    "task": "Pick up item B, place it in the basket, and return to the initial pose"
+  }
+}
