@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 # 여러 자료형 허용을 위한 Union 타입 사용
-from typing import Union
+from typing import Literal, Union
 
 # API 요청 및 응답 데이터 검증용 Pydantic 모델 사용
 from pydantic import BaseModel
@@ -36,6 +36,9 @@ class GoalNodeRequest(BaseModel):
 
     # 숫자 또는 문자열 형식 Node ID 사용
     node_id: Union[int, str]
+    driving_mode: Literal["standard", "llm"] = "standard"
+    selector: Literal["ollama", "laya", "kev"] | None = None
+    model: str | None = None
 
 
 # ============================================================
@@ -43,6 +46,13 @@ class GoalNodeRequest(BaseModel):
 # ============================================================
 
 # Robot 정지 요청 데이터 구조 생성
+class LlmRoutePreviewRequest(BaseModel):
+    robot_id: str
+    node_id: Union[int, str]
+    selector: Literal["ollama", "laya", "kev"]
+    model: str
+
+
 class StopRequest(BaseModel):
 
     robot_id: str

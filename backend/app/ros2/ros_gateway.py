@@ -430,7 +430,10 @@ class RosGateway:
 
     # 실제 로봇을 Route Graph의 목적지 Node로 이동
     @_navigation_locked
-    def navigate_to_node(self, robot_id: str, node_id: str | int, *, _order_step=False) -> dict:
+    def navigate_to_node(
+        self, robot_id: str, node_id: str | int, *,
+        _order_step=False, required_path: list[str] | None = None,
+    ) -> dict:
         # Robot ID 정규화 및 ROS 등록 여부 확인
         robot_id = self._resolve_robot_id(robot_id)
         robot = fleet_manager.get_robot(robot_id)
@@ -442,6 +445,13 @@ class RosGateway:
             raise ValueError(f"비상정지 상태입니다: {robot_id}")
 
         self._validate_navigation_request(robot_id, node_id)
+        if required_path is not None:
+            if robot.goal_node is not None or robot.route is not None:
+                raise ValueError("LLM 경로 적용 전 기존 주행을 정지해야 합니다.")
+            if (not required_path or str(required_path[-1]) != str(node_id)
+                    or str(required_path[0]) != str(robot.occupied_node)):
+                raise ValueError("LLM 경로의 현재 노드 또는 목적지가 일치하지 않습니다.")
+            find_edge_ids(load_route_graph(), [str(node) for node in required_path])
         same_active_goal = (
             robot.goal_node == str(node_id)
             and (_order_step or robot.order_id is None)
@@ -452,7 +462,9 @@ class RosGateway:
         )
         if not same_active_goal:
             self._stop_before_navigation(
-                robot_id, lambda: self._start_navigation(robot_id, node_id),
+                robot_id, lambda: self._start_navigation(
+                    robot_id, node_id, required_path=required_path
+                ),
                 "new_goal_request", cancel_order=not _order_step)
 
         return {
@@ -501,11 +513,15 @@ class RosGateway:
         robot_id: str,
         node_id: str | int,
         navigation_type: NavigationType = NavigationType.GOAL,
+        *,
+        required_path: list[str] | None = None,
     ) -> None:
         # 경로/예약 정책은 시뮬레이션과 동일한 TrafficManager를 사용한다.
         # 기존 이동 목적과 최종 도착 이후의 시퀀스는 Robot에 유지한다.
         try:
-            self._navigation.request(robot_id, node_id, navigation_type)
+            self._navigation.request(
+                robot_id, node_id, navigation_type, required_path=required_path
+            )
         except (ValueError, RuntimeError):
             robot = fleet_manager.get_robot(robot_id)
             if robot is not None:

@@ -69,5 +69,22 @@
     "warmups": 1,
     "max_steps": 26,
     "deadline_seconds": 0.15
-  }
+  },
+  "decision_models": [
+    {
+      "selector": "laya",
+      "name": "convaiinnovations/laya-multilingual",
+      "enabled": true
+    },
+    {
+      "selector": "kev",
+      "name": "kev-08b",
+      "enabled": true
+    },
+    {
+      "selector": "kev",
+      "name": "kev-4b",
+      "enabled": true
+    }
+  ]
 }

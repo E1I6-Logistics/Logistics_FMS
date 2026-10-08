@@ -41,6 +41,7 @@ class TrafficManager:
         self._pending: dict[str, None] = {}
         self._concession: dict[str, dict] = {}
         self._request_sequence = 0
+        self._required_paths: dict[str, list[str]] = {}
 
     def reset_after_stop(self):
         """전체 실행 종료 및 점유 보존이 확인된 상태에서 계획만 초기화한다."""
@@ -53,13 +54,14 @@ class TrafficManager:
             self._pending.clear()
             self._concession.clear()
             self._request_sequence = 0
+            self._required_paths.clear()
 
     def has_active_requests(self) -> bool:
         with self.lock:
             return bool(self._concession) or any(
                 robot["goal_node"] is not None for robot in self._robots.values())
 
-    def request_navigation_after_stop(self, robot_id, goal_node, *, now, graph):
+    def request_navigation_after_stop(self, robot_id, goal_node, *, now, graph, required_path=None):
         """기존 실행 정지와 점유 갱신 후 새 요청을 접수하고 예약한다."""
         with self.lock:
             self._validate_time(now)
@@ -69,7 +71,17 @@ class TrafficManager:
                 raise ValueError("목적지 노드가 존재하지 않습니다.")
             robot = self._robots[robot_id]
             occupied_resource(robot, graph)
+            if required_path is not None:
+                required_path = [str(node) for node in required_path]
+                if (len(required_path) < 2
+                        or required_path[0] != robot["occupied_node"]
+                        or required_path[-1] != goal_node
+                        or len(required_path) != len(set(required_path))):
+                    raise ValueError("LLM 경로의 시작·도착 또는 중복 노드가 올바르지 않습니다.")
+                find_edge_ids(graph, required_path)
             self.cancel_navigation_after_stop(robot_id)
+            if required_path is not None:
+                self._required_paths[robot_id] = required_path
             robot["stop_requested"] = False
             self._request_sequence += 1
             robot["request_order"] = self._request_sequence
@@ -88,6 +100,7 @@ class TrafficManager:
             robot["request_order"] = None
             robot["stop_requested"] = True
             self._concession.pop(robot_id, None)
+            self._required_paths.pop(robot_id, None)
             self._pending.pop(robot_id, None)
             self._release_schedule(robot)
             robot["route"] = None
@@ -223,16 +236,29 @@ class TrafficManager:
             blocked.setdefault(resource, []).append((max(0., now - self.safety_margin), until))
 
         resource = occupied_resource(robot, graph)
+        required_path = self._required_paths.get(robot["robot_id"])
+        allowed_edges = (
+            set(zip(required_path, required_path[1:]))
+            if required_path is not None and robot["robot_id"] not in self._concession
+            else None
+        )
         plan = planner.plan_timed(
             self._concession.get(robot["robot_id"], {}).get("node", robot["goal_node"]),
             (robot["x"], robot["y"]), robot["occupied_node"],
             resource[1:] if resource[0] == "edge" else None,
             blocked=blocked, now=now, speed_mps=self.speed_mps,
-            safety_margin=self.safety_margin,
+            safety_margin=self.safety_margin, allowed_edges=allowed_edges,
         )
         if plan is None:
             return False
         node_ids, departures = plan["node_ids"], plan["segment_departures"]
+        if allowed_edges is not None:
+            # A pin uses the existing timed planner and reservations, but never
+            # silently replaces the model-selected directed path with a detour.
+            if node_ids[0] not in required_path:
+                return False
+            if node_ids != required_path[required_path.index(node_ids[0]):]:
+                return False
         edge_ids = find_edge_ids(graph, node_ids)
         waypoint_yaws = [float(robot["yaw"])]
         for start, end in zip(node_ids, node_ids[1:]):
@@ -265,6 +291,7 @@ class TrafficManager:
     def _finish_route(self, robot):
         robot["route"] = None
         self._release_schedule(robot)
+        self._required_paths.pop(robot["robot_id"], None)
         if robot["robot_id"] in self._concession:
             robot["status"] = "WAITING"
             self._pending.setdefault(robot["robot_id"], None)
@@ -280,6 +307,7 @@ class TrafficManager:
         trial._robots = deepcopy(self._robots)
         trial._pending = dict(self._pending)
         trial._concession = deepcopy(self._concession)
+        trial._required_paths = deepcopy(self._required_paths)
         trial._reservations = ReservationTable()
         rows = self._reservations.snapshot()
         for robot_id, navigation_id in {(r.robot_id, r.navigation_id) for r in rows}:
@@ -342,6 +370,10 @@ class TrafficManager:
                 continue
             candidates = []
             for concession in [*reversed(cycle), *blockers]:
+                # Do not move a pinned robot off its verified path as a yield.
+                # Other robots may still yield; otherwise this request waits.
+                if concession in self._required_paths:
+                    continue
                 robot = self._robots[concession]
                 for node in planner.nodes:
                     if node == robot["occupied_node"]:

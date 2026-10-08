@@ -85,7 +85,7 @@ class DistanceAStar:
     # blocked: 노드·통로별로 사용할 수 없는 시간 구간 -> 안전 여유가 반영된 기존 예약과 실제 점유를 전달.
     # 구간 중간 출발은 허용 방향별 끝점을 모두 비교
     def plan_timed(self, end, position, current_node, occupied_edge=None, *,
-                   blocked, now, speed_mps, safety_margin):
+                   blocked, now, speed_mps, safety_margin, allowed_edges=None):
         end = str(end)
         if end not in self.nodes:
             raise ValueError('목적지 노드가 존재하지 않습니다.')
@@ -160,6 +160,8 @@ class DistanceAStar:
             for previous, endpoint in ((a, b), (b, a)):
                 if not any(neighbor == endpoint for neighbor, _ in self.edges[previous]):
                     continue
+                if allowed_edges is not None and (previous, endpoint) not in allowed_edges:
+                    continue
                 duration = math.dist(position, self.nodes[endpoint]) / speed_mps
                 for i, interval in enumerate(intervals[endpoint]):
                     move = earliest(now, math.inf, interval, edge_key(a, b), duration, True)
@@ -191,6 +193,8 @@ class DistanceAStar:
                     'segment_departures': initial_departures + list(reversed(departures)),
                 }
             for neighbor, distance in self.edges[node]:
+                if allowed_edges is not None and (node, neighbor) not in allowed_edges:
+                    continue
                 for i, interval in enumerate(intervals[neighbor]):
                     move = earliest(arrival, source_end, interval, edge_key(node, neighbor),
                                     distance / speed_mps)

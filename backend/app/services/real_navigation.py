@@ -361,7 +361,10 @@ class RealNavigation:
             robot.next_node = robot.next_edge = None
         self._cancelled.clear()
 
-    def request(self, robot_id, node_id, navigation_type, *, _request_version=None):
+    def request(
+        self, robot_id, node_id, navigation_type, *,
+        required_path=None, _request_version=None,
+    ):
         with self.lock:
             if _request_version is None:
                 _request_version = self._request_versions.get(robot_id, 0) + 1
@@ -386,10 +389,11 @@ class RealNavigation:
             if affected:
                 # 양보 로봇을 Edge 중간에서 취소하지 않고 안전 Node까지 보내 둔다.
                 self._deferred_requests[affected[0]] = (
-                    robot_id, node_id, navigation_type, _request_version)
+                    robot_id, node_id, navigation_type, _request_version, required_path)
                 return
             self._traffic.request_navigation_after_stop(
-                robot_id, str(node_id), now=self._clock(), graph=graph)
+                robot_id, str(node_id), now=self._clock(), graph=graph,
+                required_path=required_path)
             robot.goal_node = str(node_id)
             robot.navigation_type = navigation_type
             robot.set_state(RobotState.WAITING)
@@ -806,5 +810,8 @@ class RealNavigation:
         self._publish()
         deferred = self._deferred_requests.pop(robot_id, None)
         if deferred is not None:
-            priority, node, navigation_type, version = deferred
-            self.request(priority, node, navigation_type, _request_version=version)
+            priority, node, navigation_type, version, required_path = deferred
+            self.request(
+                priority, node, navigation_type,
+                required_path=required_path, _request_version=version,
+            )
