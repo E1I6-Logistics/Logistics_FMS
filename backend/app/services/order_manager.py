@@ -1,10 +1,12 @@
 from uuid import uuid4
 from time import strftime
+from threading import Thread
 
 from .fleet_manager import fleet_manager
 from ..models.robot import RobotState
 from ..schemas.robot import normalize_robot_id
 from ..ros2.ros_gateway import ros_gateway, NODE_OMX_MAP
+from .route_graph import load_route_graph
 from .mqtt_manager import mqtt_manager
 
 
@@ -25,15 +27,105 @@ class OrderManager:
 
         return pickup_nodes
 
+    def _occupied_by_other_robots(self, robot_id: str) -> set[str]:
+        selected = normalize_robot_id(robot_id)
+        occupied: set[str] = set()
+        for robot in fleet_manager.get_all_robots():
+            if normalize_robot_id(robot.robot_id) == selected:
+                continue
+            with robot._lock:
+                if robot.occupied_node is not None:
+                    occupied.add(str(robot.occupied_node))
+        return occupied
+
+    def preview_first_leg(
+        self, robot_id: str, items: dict[str, int], selector: str, model: str,
+    ) -> dict:
+        """Compute the first pickup route before changing any order state."""
+        pickups = self.get_pickup_nodes(items)
+        if not pickups:
+            raise ValueError("픽업할 품목이 없습니다.")
+        from .llm_route_preview import preview_llm_route
+        start = ros_gateway.llm_start_node(robot_id)
+        return preview_llm_route(
+            load_route_graph(), start, pickups[0],
+            selector=selector, model=model,
+            occupied_nodes=self._occupied_by_other_robots(robot_id),
+        )
+
+    def _start_next_llm_leg(
+        self, robot_id: str, order_id: str, pickup_index: int,
+        start_node: str, target_node: str, selector: str, model: str,
+    ) -> None:
+        """Run inference off the ROS/MQTT lock, then dispatch only if the order is unchanged."""
+        try:
+            from .llm_route_preview import preview_llm_route
+            preview = preview_llm_route(
+                load_route_graph(), start_node, target_node,
+                selector=selector, model=model,
+                occupied_nodes=self._occupied_by_other_robots(robot_id),
+            )
+            with ros_gateway._navigation.lock:
+                robot = fleet_manager.get_robot(robot_id)
+                if (robot is None or robot.order_id != order_id
+                        or robot.order_pickup_index != pickup_index
+                        or robot.state != RobotState.TASK_ASSIGNED
+                        or str(robot.occupied_node) != start_node
+                        or robot.order_selector != selector or robot.order_model != model):
+                    return
+                ros_gateway.navigate_to_node(
+                    robot_id=robot_id, node_id=target_node, _order_step=True,
+                    required_path=preview["path"],
+                )
+        except Exception as exc:
+            with ros_gateway._navigation.lock:
+                robot = fleet_manager.get_robot(robot_id)
+                if (robot is not None and robot.order_id == order_id
+                        and robot.order_pickup_index == pickup_index
+                        and robot.state == RobotState.TASK_ASSIGNED):
+                    robot.set_state(RobotState.PAUSED)
+                    print(f"[{strftime('%H:%M:%S')}] [ORDER LLM ERROR] "
+                          f"robot={robot_id} target={target_node} error={exc!r}", flush=True)
+
+    def _navigate_order_leg(self, robot, target_node: str) -> None:
+        if robot.order_driving_mode != "llm":
+            ros_gateway.navigate_to_node(
+                robot_id=robot.robot_id, node_id=target_node, _order_step=True,
+            )
+            return
+        if robot.occupied_node is None or robot.order_id is None:
+            raise ValueError("다음 주문 구간의 현재 노드를 확인할 수 없습니다.")
+        if robot.order_selector is None or robot.order_model is None:
+            raise ValueError("주문 경로 모델이 지정되지 않았습니다.")
+        # A duplicate MQTT result must not schedule a second leg.
+        robot.set_state(RobotState.TASK_ASSIGNED)
+        Thread(
+            target=self._start_next_llm_leg,
+            args=(
+                robot.robot_id, robot.order_id, robot.order_pickup_index,
+                str(robot.occupied_node), str(target_node),
+                robot.order_selector, robot.order_model,
+            ),
+            name=f"order-route-{robot.robot_id}",
+            daemon=True,
+        ).start()
+
     def create_order(
         self,
         robot_id: str,
         items: dict[str, int],
         total_quantity: int,
         workstation_node: str,
+        driving_mode: str = "standard",
+        selector: str | None = None,
+        model: str | None = None,
+        first_required_path: list[str] | None = None,
     ) -> dict:
         with ros_gateway._navigation.lock:
-            return self._create_order_locked(robot_id, items, total_quantity, workstation_node)
+            return self._create_order_locked(
+                robot_id, items, total_quantity, workstation_node,
+                driving_mode, selector, model, first_required_path,
+            )
 
     def _create_order_locked(
         self,
@@ -41,6 +133,10 @@ class OrderManager:
         items: dict[str, int],
         total_quantity: int,
         workstation_node: str,
+        driving_mode: str,
+        selector: str | None,
+        model: str | None,
+        first_required_path: list[str] | None,
     ) -> dict:
 
         # R-01 -> robot1
@@ -79,6 +175,21 @@ class OrderManager:
                 f"calculated_total={calculated_total}"
             )
 
+        if driving_mode not in ("standard", "llm"):
+            raise ValueError("지원하지 않는 주문 주행 방식입니다.")
+        if driving_mode == "llm":
+            if selector is None or model is None or first_required_path is None:
+                raise ValueError("LLM 주문에는 경로 모델과 첫 픽업 경로가 필요합니다.")
+            from .route_model_catalog import require_enabled_model
+            require_enabled_model(selector, model)
+            if (robot.state != RobotState.IDLE or robot.order_id is not None
+                    or robot.route is not None
+                    or ros_gateway._navigation.has_active_request(robot_id)
+                    or robot.occupied_node is None):
+                raise ValueError("LLM 주문은 로봇이 노드에서 대기 중일 때만 시작할 수 있습니다.")
+        else:
+            selector = model = None
+
         # 주문 ID 생성
         order_id = str(uuid4())
 
@@ -96,10 +207,15 @@ class OrderManager:
                 total_quantity=total_quantity,
                 pickup_nodes=pickup_nodes,
                 workstation_node=workstation_node,
+                driving_mode=driving_mode,
+                selector=selector,
+                model=model,
             )
             try:
                 ros_gateway.navigate_to_node(
-                    robot_id=robot_id, node_id=first_pickup_node, _order_step=True)
+                    robot_id=robot_id, node_id=first_pickup_node,
+                    _order_step=True, required_path=first_required_path,
+                )
             except (ValueError, RuntimeError):
                 robot.clear_order()
                 if robot.state == RobotState.TASK_ASSIGNED:
@@ -123,6 +239,9 @@ class OrderManager:
             "total_quantity": total_quantity,
             "pickup_nodes": pickup_nodes,
             "workstation_node": workstation_node,
+            "driving_mode": driving_mode,
+            "selector": selector,
+            "model": model,
             "status": robot.state.value,
         }
 
@@ -140,7 +259,7 @@ class OrderManager:
             next_node = robot.order_pickup_nodes[robot.order_pickup_index]
             print(f"[{strftime('%H:%M:%S')}] [ORDER] robot={robot_id} "
                   f"next pickup={next_node}", flush=True)
-            ros_gateway.navigate_to_node(robot_id=robot_id, node_id=next_node, _order_step=True)
+            self._navigate_order_leg(robot, next_node)
 
             return
 
@@ -152,8 +271,7 @@ class OrderManager:
 
         print(f"[{strftime('%H:%M:%S')}] [ORDER] robot={robot_id} "
               f"pickup complete, workstation={workstation_node}", flush=True)
-        ros_gateway.navigate_to_node(
-            robot_id=robot_id, node_id=workstation_node, _order_step=True)
+        self._navigate_order_leg(robot, workstation_node)
 
     def on_mqtt_result(self, omx, data) -> None:
         # MQTT thread의 늦은 결과가 정지/새 주문의 상태 변경과 교차하지 않게 한다.

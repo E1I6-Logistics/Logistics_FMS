@@ -464,7 +464,18 @@ class RosGateway:
 
         self._validate_navigation_request(robot_id, node_id)
         if required_path is not None:
-            start_node = self.llm_start_node(robot_id)
+            if _order_step:
+                # Order legs start while TASK_ASSIGNED/WAITING, not IDLE.
+                # Still require the robot to occupy the path's first node.
+                if robot.order_id is None or robot.occupied_node is None:
+                    raise ValueError("주문 경로를 시작할 현재 노드를 확인할 수 없습니다.")
+                if robot.route is not None or robot.state not in (
+                    RobotState.TASK_ASSIGNED, RobotState.WAITING,
+                ):
+                    raise ValueError("이전 주문 이동이 완료되지 않았습니다.")
+                start_node = str(robot.occupied_node)
+            else:
+                start_node = self.llm_start_node(robot_id)
             if (not required_path or str(required_path[-1]) != str(node_id)
                     or str(required_path[0]) != start_node):
                 raise ValueError("LLM 경로의 현재 노드 또는 목적지가 일치하지 않습니다.")

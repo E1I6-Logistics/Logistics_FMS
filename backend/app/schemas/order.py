@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -13,3 +15,7 @@ class CreateOrderRequest(BaseModel):
     items: OrderItems
     total_quantity: int
     workstation_node: str
+
+    driving_mode: Literal["standard", "llm"] = "standard"
+    selector: Literal["ollama", "laya", "kev"] | None = None
+    model: str | None = None

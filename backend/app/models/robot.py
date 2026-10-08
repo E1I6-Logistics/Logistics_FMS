@@ -86,6 +86,9 @@ class Robot:
         self.order_total_quantity: int = 0
         self.order_workstation_node: str | None = None
         self.order_pickup_nodes: list[str] = []
+        self.order_driving_mode: str = "standard"
+        self.order_selector: str | None = None
+        self.order_model: str | None = None
 
         # 현재 진행 중인 Pickup 순서
         self.order_pickup_index: int = 0
@@ -127,6 +130,9 @@ class Robot:
         total_quantity: int,
         pickup_nodes: list[str],
         workstation_node: str,
+        driving_mode: str = "standard",
+        selector: str | None = None,
+        model: str | None = None,
     ) -> None:
 
         self.order_id = order_id
@@ -134,6 +140,9 @@ class Robot:
         self.order_total_quantity = total_quantity
         self.order_pickup_nodes = pickup_nodes
         self.order_workstation_node = workstation_node
+        self.order_driving_mode = driving_mode
+        self.order_selector = selector
+        self.order_model = model
         self.order_pickup_index = 0  # 첫 번째 Pickup부터 시작
 
         self.state = RobotState.TASK_ASSIGNED
@@ -144,6 +153,9 @@ class Robot:
         self.order_total_quantity = 0
         self.order_pickup_nodes = []
         self.order_workstation_node = None
+        self.order_driving_mode = "standard"
+        self.order_selector = None
+        self.order_model = None
         self.order_pickup_index = 0
 
     def update_battery(self, percentage: float) -> None:

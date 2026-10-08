@@ -390,6 +390,8 @@ export default function FmsControlApp() {
                 <RobotOrderForm
                   robotId={selectedRobot}
                   disabled={!connected || emergencyStopped}
+                  routeModels={routeModels}
+                  routeModelError={routeModelError}
                 />
               </div>
             )}
