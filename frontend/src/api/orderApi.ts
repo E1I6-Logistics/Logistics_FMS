@@ -1,3 +1,5 @@
+import type { RouteModelDto } from './fmsApi'
+
 const DEFAULT_API_BASE = `${window.location.protocol}//${window.location.hostname}:8000`
 const API_BASE = (import.meta.env.VITE_FMS_API_BASE ?? DEFAULT_API_BASE).replace(/\/$/, '')
 
@@ -13,6 +15,9 @@ export type CreateOrderPayload = {
   items: OrderItems
   total_quantity: number
   workstation_node: '3' | '4'
+  driving_mode?: 'standard' | 'llm'
+  selector?: RouteModelDto['selector']
+  model?: string
 }
 
 export type CreateOrderResponse = {
