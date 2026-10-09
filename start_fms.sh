@@ -28,9 +28,11 @@ NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 ROS_SETUP="${FMS_ROS_SETUP:-/opt/ros/$ROS_DISTRO/setup.bash}"
 ROS_WS_SETUP="${FMS_ROS_WS_SETUP:-$PROJECT_DIR/robots_ws/Logistics_AMR/install/setup.bash}"
-ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-15}"
-RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-ROS_AUTOMATIC_DISCOVERY_RANGE="${ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"
+# Keep the FMS ROS transport independent of the calling shell's ROS mode.
+# Use FMS_* variables when this stack needs an explicit override.
+ROS_DOMAIN_ID="${FMS_ROS_DOMAIN_ID:-15}"
+RMW_IMPLEMENTATION="${FMS_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+ROS_AUTOMATIC_DISCOVERY_RANGE="${FMS_ROS_AUTOMATIC_DISCOVERY_RANGE:-LOCALHOST}"
 
 ZENOH_CONNECT_ENDPOINT="${FMS_ZENOH_CONNECT_ENDPOINT:-tcp/127.0.0.1:$ZENOH_PORT}"
 BRIDGE_BIN="${FMS_ZENOH_BRIDGE_BIN:-zenoh-bridge-ros2dds}"
@@ -156,6 +158,7 @@ wait_for_stable_process() {
 select_docker_command
 load_node_environment
 load_ros_environment
+log "ROS transport: domain=$ROS_DOMAIN_ID rmw=$RMW_IMPLEMENTATION discovery=$ROS_AUTOMATIC_DISCOVERY_RANGE"
 command -v "$BRIDGE_BIN" >/dev/null 2>&1 || fail "Bridge binary not found: $BRIDGE_BIN"
 
 # Clean up PID-less legacy processes and the router before starting a new stack.

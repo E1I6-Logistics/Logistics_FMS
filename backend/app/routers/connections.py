@@ -15,7 +15,10 @@ async def get_connections():
         from ..services.mock_data import mock_fms
         return {"devices": mock_fms.connections()}
 
-    devices = zenoh_connection_manager.connections()
+    try:
+        devices = zenoh_connection_manager.connections()
+    except ConnectionError:
+        return {"devices": zenoh_connection_manager.last_successful(), "status": "unavailable"}
 
     ros_gateway.sync_connected_robots(devices)
 

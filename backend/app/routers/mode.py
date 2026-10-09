@@ -60,7 +60,7 @@ async def set_mode(payload: ModeRequest):
                     or (ros_gateway._ros_node is not None
                         and ros_gateway._ros_node.has_active_auxiliary(robot.robot_id))]
             if busy:
-                print(f"[{strftime('%H:%M:%S')}] [MODE] real->simulation rejected: "
+                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [MODE] real->simulation rejected: "
                       f"active_robots={busy}", flush=True)
                 raise HTTPException(status_code=409, detail=f"실제 로봇 작업 중에는 모드를 변경할 수 없습니다: {busy}")
             mode_manager.set_mode(payload.mode)

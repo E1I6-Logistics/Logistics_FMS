@@ -441,8 +441,16 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, nearestNod
           <StatusCard label="배터리" value={`${Math.round(battery)}%`} color={batteryColor}>
             <div style={{ height: 5, borderRadius: 5, overflow: 'hidden', background: '#E3E8EF', marginTop: 8 }}><div style={{ width: `${battery}%`, height: '100%', background: batteryColor }} /></div>
           </StatusCard>
-          <StatusCard label="통신 상태" value={connected ? '● 정상' : '● 끊김'} color={connected ? C.success : C.danger} />
+          <StatusCard label="통신 상태"
+            value={liveRobot?.connectionState === 'UNKNOWN' ? '● 확인 중' : connected ? '● 정상' : '● 끊김'}
+            color={liveRobot?.connectionState === 'UNKNOWN' ? C.warning : connected ? C.success : C.danger} />
         </div>
+
+        {status === 'PAUSED' && liveRobot?.pauseReason && (
+          <div role="status" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: '#FFF4E5', color: C.warning, fontSize: 11, overflowWrap: 'anywhere' }}>
+            일시정지 사유: {liveRobot.pauseReason}
+          </div>
+        )}
 
         <div style={{ marginTop: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: `1px solid ${C.line}`, borderRadius: 9, background: '#F3FBF7' }}>
           <div>

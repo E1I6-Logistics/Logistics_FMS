@@ -17,7 +17,7 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await manager.connect(websocket)
-    print(f"[{strftime('%H:%M:%S')}] [WS DASHBOARD] mode =", mode_manager.mode)
+    print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [WS DASHBOARD] mode =", mode_manager.mode, flush=True)
     try:
         if mode_manager.mode == "simulation":
             from ..services.mock_data import mock_fms
@@ -27,7 +27,7 @@ async def dashboard_websocket(websocket: WebSocket):
             for state in mock_fms.robot_snapshots(mode_manager.mode):
                 await websocket.send_json({"type": "telemetry", "data": state})
         else:
-            print(f"[{strftime('%H:%M:%S')}] [REAL WS] Sending telemetry for all robots")
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL WS] Sending telemetry for all robots", flush=True)
             await websocket.send_json(
                 {"type": "system", "data": {"mode": mode_manager.mode, "source": "ros2"}}
             )
@@ -42,6 +42,7 @@ async def dashboard_websocket(websocket: WebSocket):
                     "robot_id": robot.robot_id,
                     "ui_id": to_ui_robot_id(robot.robot_id),
                     "status": robot.state.value,
+                    "pause_reason": robot.pause_reason,
                     "battery": robot.battery,
                     "x": robot.x,
                     "y": robot.y,
@@ -56,7 +57,7 @@ async def dashboard_websocket(websocket: WebSocket):
                     "source": "ros2",
                     "pose_source": "AMCL",
                 }
-                print(f"[{strftime('%H:%M:%S')}] [REAL WS]", robot.robot_id, "route=", robot.route)
+                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL WS]", robot.robot_id, "route=", robot.route, flush=True)
                 await websocket.send_json({"type": "telemetry", "data": state})
 
         while True:

@@ -113,7 +113,7 @@ class OrderManager:
         else:
             ros_gateway.cancel_current_work(robot_id, start_order)
 
-        print(f"[{strftime('%H:%M:%S')}] [ORDER] new order robot={robot_id} "
+        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER] new order robot={robot_id} "
               f"order_id={order_id} items={items} total={total_quantity} "
               f"pickup_nodes={pickup_nodes} workstation={workstation_node} "
               f"state={robot.state.value}", flush=True)
@@ -140,7 +140,7 @@ class OrderManager:
         # 아직 방문할 Pickup이 남아 있음
         if robot.order_pickup_index < len(robot.order_pickup_nodes):
             next_node = robot.order_pickup_nodes[robot.order_pickup_index]
-            print(f"[{strftime('%H:%M:%S')}] [ORDER] robot={robot_id} "
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER] robot={robot_id} "
                   f"next pickup={next_node}", flush=True)
             ros_gateway.navigate_to_node(robot_id=robot_id, node_id=next_node, _order_step=True)
 
@@ -152,7 +152,7 @@ class OrderManager:
         if workstation_node is None:
             raise ValueError("작업대 Node가 지정되어 있지 않습니다.")
 
-        print(f"[{strftime('%H:%M:%S')}] [ORDER] robot={robot_id} "
+        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER] robot={robot_id} "
               f"pickup complete, workstation={workstation_node}", flush=True)
         ros_gateway.navigate_to_node(
             robot_id=robot_id, node_id=workstation_node, _order_step=True)
@@ -166,7 +166,7 @@ class OrderManager:
         job_id = data.get("job_id")
         success = data.get("success", False)
 
-        print(f"[{strftime('%H:%M:%S')}] [ORDER RESULT] omx={omx.omx_id} "
+        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER RESULT] omx={omx.omx_id} "
               f"job_id={job_id} success={success}", flush=True)
 
         # 해당 주문을 수행 중인 Robot 찾기
@@ -178,7 +178,7 @@ class OrderManager:
                 break
 
         if target_robot is None:
-            print(f"[{strftime('%H:%M:%S')}] [ORDER RESULT] "
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER RESULT] "
                   f"matching robot not found: job_id={job_id}", flush=True)
             return
 
@@ -186,7 +186,7 @@ class OrderManager:
         if (target_robot.state != RobotState.WAITING
                 or target_robot.current_node is None
                 or omx.omx_id != NODE_OMX_MAP.get(target_robot.current_node)):
-            print(f"[{strftime('%H:%M:%S')}] [ORDER RESULT] ignored stale result "
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [ORDER RESULT] ignored stale result "
                   f"robot={target_robot.robot_id} omx={omx.omx_id} "
                   f"node={target_robot.current_node} state={target_robot.state.value} "
                   f"connected={target_robot.connected} "
@@ -200,13 +200,13 @@ class OrderManager:
 
         # 작업대 OMX 작업까지 완료
         if target_robot.current_node == target_robot.order_workstation_node:
-            print(f"[{strftime('%H:%M:%S')}] [ORDER] workstation work complete: "
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER] workstation work complete: "
                   f"robot={target_robot.robot_id}", flush=True)
 
             station_node = CHARGING_STATION_NODES.get(target_robot.robot_id)
             if station_node is None:
                 target_robot.set_state(RobotState.PAUSED)
-                print(f"[{strftime('%H:%M:%S')}] [ORDER ERROR] robot={target_robot.robot_id} "
+                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] robot={target_robot.robot_id} "
                       "charging station not assigned", flush=True)
                 return
 
@@ -216,11 +216,11 @@ class OrderManager:
                 target_robot.clear_order()
                 ros_gateway.navigate_to_node(
                     robot_id=target_robot.robot_id, node_id=station_node, _order_step=True)
-                print(f"[{strftime('%H:%M:%S')}] [ORDER] robot={target_robot.robot_id} "
+                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER] robot={target_robot.robot_id} "
                       f"return to station node={station_node} without docking", flush=True)
             except (ValueError, RuntimeError) as exc:
                 target_robot.set_state(RobotState.PAUSED)
-                print(f"[{strftime('%H:%M:%S')}] [ORDER ERROR] robot={target_robot.robot_id} "
+                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] robot={target_robot.robot_id} "
                       f"station_return_failed={exc!r}", flush=True)
             return
 
@@ -230,7 +230,7 @@ class OrderManager:
             self.move_to_next_destination(target_robot.robot_id)
         except (ValueError, RuntimeError) as exc:
             target_robot.set_state(RobotState.PAUSED)
-            print(f"[{strftime('%H:%M:%S')}] [ORDER ERROR] robot={target_robot.robot_id} "
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] robot={target_robot.robot_id} "
                   f"next_destination_failed={exc!r}", flush=True)
 
 

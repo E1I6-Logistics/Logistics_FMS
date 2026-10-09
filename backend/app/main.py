@@ -37,11 +37,12 @@ from time import monotonic, strftime
 from .services.websocket_manager import manager
 from .services.mqtt_manager import mqtt_manager
 
-# Uvicorn의 INFO/ERROR 및 HTTP 접속 로그도 주행 로그와 같은 짧은 시각으로 표시한다.
+# Uvicorn 자체 로그에도 날짜와 시각을 표시한다.
 for logger_name in ("uvicorn.error", "uvicorn.access"):
     for handler in logging.getLogger(logger_name).handlers:
         handler.setFormatter(logging.Formatter(
-            "[%(asctime)s] [UVICORN] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
+            "[%(asctime)s] [%(levelname)s] [UVICORN] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"))
 
 
 @asynccontextmanager
@@ -181,5 +182,5 @@ async def run_real_navigation() -> None:
         try:
             ros_gateway.advance_navigation()
         except (ValueError, RuntimeError) as exc:
-            print(f"[{strftime('%H:%M:%S')}] [MAIN REAL NAV ERROR] "
-                  f"navigation tick failed: {exc!r}", flush=True)
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [MAIN REAL NAV ERROR] "
+                  f"주행 상태 확인 중 오류 error_type={type(exc).__name__} detail={exc!r}", flush=True)

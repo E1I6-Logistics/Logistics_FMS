@@ -31,6 +31,7 @@ async def fetch_robots():
             {
                 "robot_id": robot.robot_id,
                 "status": robot.state.value,
+                "pause_reason": robot.pause_reason,
                 "battery": robot.battery,
                 "x": robot.x,
                 "y": robot.y,

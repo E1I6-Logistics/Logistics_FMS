@@ -57,6 +57,8 @@ class RosCancellationTest(unittest.TestCase):
         self.node._follow_waypoints_cancel_callbacks = {}
         self.node._follow_waypoints_feedback_tokens = {}
         self.node._follow_waypoints_feedback_last = {}
+        self.node._result_query_at = {}
+        self.node._result_query_count = {}
         self.node._auxiliary_goals = {}
         self.node._follow_waypoints_clients = {}
         self.node.get_logger = Mock(return_value=Mock())
@@ -151,6 +153,32 @@ class RosCancellationTest(unittest.TestCase):
         self.assertIs(self.node._follow_waypoints_goal_handles["robot1"], handle)
         self.node.navigation_error_callback.assert_called_once()
         self.node.navigation_result_callback.assert_not_called()
+
+    def test_cancelled_goal_requeries_result_but_waits_for_terminal(self):
+        handle, callback = Mock(), Mock()
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        self.node._follow_waypoints_cancel_callbacks["robot1"] = callback
+        self.node._result_query_at["robot1"] = 100.
+        self.node._result_query_count["robot1"] = 1
+        with patch.object(node_module, "monotonic", return_value=106.):
+            self.node.reconcile_navigation_results()
+        handle.get_result_async.assert_called_once()
+        callback.assert_not_called()
+        terminal = Mock()
+        terminal.result.return_value = SimpleNamespace(status=5)
+        self.node._on_follow_waypoints_result("robot1", handle, terminal)
+        callback.assert_called_once()
+        self.assertNotIn("robot1", self.node._follow_waypoints_goal_handles)
+
+    def test_result_requery_is_bounded(self):
+        handle = Mock()
+        self.node._follow_waypoints_goal_handles["robot1"] = handle
+        self.node._follow_waypoints_cancel_callbacks["robot1"] = Mock()
+        self.node._result_query_at["robot1"] = 100.
+        self.node._result_query_count["robot1"] = node_module.RESULT_QUERY_LIMIT
+        with patch.object(node_module, "monotonic", return_value=1000.):
+            self.node.reconcile_navigation_results()
+        handle.get_result_async.assert_not_called()
 
     def test_old_failed_future_does_not_affect_new_goal(self):
         handle, future = Mock(), Mock()
@@ -267,6 +295,13 @@ class GatewaySequenceTest(unittest.TestCase):
         self.get_node.start()
         self.addCleanup(self.get_node.stop)
         gateway_module.mqtt_manager.reset_mock(return_value=True, side_effect=True)
+
+    def test_single_missing_snapshot_does_not_disconnect_robot(self):
+        with patch.object(gateway_module, "monotonic", side_effect=[100., 106.]):
+            self.gateway.sync_connected_robots([])
+            self.assertTrue(self.robot.connected)
+            self.gateway.sync_connected_robots([])
+        self.assertFalse(self.robot.connected)
 
     def test_new_goal_waits_for_aruco_terminal_result(self):
         self.robot.set_state(RobotState.DOCKING)

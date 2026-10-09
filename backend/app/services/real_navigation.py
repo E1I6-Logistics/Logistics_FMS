@@ -451,7 +451,7 @@ class RealNavigation:
                     if rid not in self._stale_idle_reported:
 
                         print(
-                            f"[{strftime('%H:%M:%S')}] [REAL NAV POSE] robot={rid} "
+                            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV POSE] robot={rid} "
                             "idle pose unavailable; last occupancy retained",
                             flush=True,
                         )
@@ -466,19 +466,25 @@ class RealNavigation:
 
                     continue
 
-                # 주행 중 연결이 끊겼다면 마지막 경로 전체를 보호한다. 독립된 경로는 계속 처리한다.
-                if row is not None and not robot.connected and row["route"] is not None:
+                # 주행 중 연결 또는 Pose가 끊기면 마지막 경로 전체를 보호한다.
+                # 알려진 경로와 겹치지 않는 다른 로봇은 계속 감시·실행한다.
+                if row is not None and row["route"] is not None:
                     nodes = row["route"]["node_ids"]
                     resources = {node_key(node) for node in nodes}
                     resources.update(edge_key(start, end)
                                      for start, end in zip(nodes, nodes[1:]))
                     self._traffic.protect_resources(rid, resources)
                     self._traffic._pending.pop(rid, None)
-                    row["status"] = "OFFLINE"
-                    self._sync_errors[rid] = "robot_offline_route_protected"
+                    if not robot.connected:
+                        row["status"] = "OFFLINE"
+                    self._sync_errors[rid] = (
+                        "robot_offline_route_protected" if not robot.connected
+                        else "pose_stale_route_protected"
+                    )
                     if previous_errors.get(rid) != self._sync_errors[rid]:
-                        print(f"[{strftime('%H:%M:%S')}] [REAL NAV OFFLINE] robot={rid} "
-                              f"remaining route protected; resources={len(resources)}", flush=True)
+                        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV POSITION] robot={rid} "
+                              f"reason={self._sync_errors[rid]} protected_resources={len(resources)} "
+                              "다른 로봇은 보호된 구간에 들어갈 수 없음", flush=True)
                     continue
 
                 # 재연결 직후 Pose가 아직 없으면 기존 경로 보호를 계속한다.
@@ -503,6 +509,8 @@ class RealNavigation:
             self._stale_idle_reported.discard(rid)
 
             edge = None
+
+            node = None
 
             docked = False
 
@@ -618,16 +626,33 @@ class RealNavigation:
 
             except (ValueError, KeyError, IndexError) as exc:
 
-                valid = False
-
-                self._sync_errors[rid] = f"occupancy_or_route_mismatch:{exc}"
+                # 실제 Pose가 그래프 자원으로 확정됐지만 예상 Route와 다르면
+                # 실제 자원과 남은 Route를 보호하고 해당 로봇만 멈춘다.
+                mapped_node = node
+                if row is not None and row["route"] is not None and (
+                    mapped_node is not None or edge is not None
+                ):
+                    nodes = row["route"]["node_ids"]
+                    resources = {node_key(item) for item in nodes}
+                    resources.update(edge_key(start, end)
+                                     for start, end in zip(nodes, nodes[1:]))
+                    if mapped_node is not None:
+                        resources.add(node_key(mapped_node))
+                    if edge is not None:
+                        resources.add(occupied_resource(
+                            {"occupied_node": None, "occupied_edge": edge}, graph))
+                    self._traffic.protect_resources(rid, resources)
+                    self._sync_errors[rid] = f"route_mismatch_protected:{exc}"
+                else:
+                    valid = False
+                    self._sync_errors[rid] = f"occupancy_or_route_mismatch:{exc}"
 
                 if previous_errors.get(rid) != self._sync_errors[rid]:
 
                     route = row["route"] if row is not None else None
 
                     print(
-                        f"[{strftime('%H:%M:%S')}] [REAL NAV OCCUPANCY] robot={rid} "
+                        f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV OCCUPANCY] robot={rid} "
                         f"actual=({x:.3f}, {y:.3f}) edge={edge} "
                         f"route={route['node_ids'] if route else None} "
                         f"segment_index={route['segment_index'] if route else None} "
@@ -701,8 +726,11 @@ class RealNavigation:
 
             robot.set_state(RobotState.PAUSED if robot.connected else RobotState.OFFLINE)
 
+        if robot.state == RobotState.PAUSED:
+            robot.pause_reason = str(reason)
+
         print(
-            f"[{strftime('%H:%M:%S')}] [REAL NAV STATE] robot={robot_id} "
+            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV STATE] robot={robot_id} "
             f"state={robot.state.value} reason={reason}",
             flush=True,
         )
@@ -754,7 +782,7 @@ class RealNavigation:
                 robot.set_state(RobotState.WAITING)
 
             print(
-                f"[{strftime('%H:%M:%S')}] [REAL NAV CANCEL] robot={robot_id} "
+                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV CANCEL] robot={robot_id} "
                 f"reason={reason} navigation_id={robot.navigation_id if robot else None}",
                 flush=True,
             )
@@ -792,7 +820,7 @@ class RealNavigation:
                             self._pause(robot_id, "after_stop_failed")
 
                             print(
-                                f"[{strftime('%H:%M:%S')}] [REAL NAV ERROR] "
+                                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [REAL NAV ERROR] "
                                 f"robot={robot_id} after_stop_failed={exc!r}",
                                 flush=True,
                             )
@@ -808,7 +836,7 @@ class RealNavigation:
                 self._pause(robot_id, "cancel_send_failed")
 
                 print(
-                    f"[{strftime('%H:%M:%S')}] [REAL NAV ERROR] "
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [REAL NAV ERROR] "
                     f"robot={robot_id} cancel_send_failed={exc!r}",
                     flush=True,
                 )
@@ -909,6 +937,11 @@ class RealNavigation:
 
                 raise ValueError(
                     f"실제 로봇의 최신 위치와 점유를 확인할 수 없습니다: {self._sync_errors}"
+                )
+
+            if robot_id in self._sync_errors:
+                raise ValueError(
+                    f"요청 로봇의 최신 위치와 점유를 확인할 수 없습니다: {self._sync_errors[robot_id]}"
                 )
 
             self._clear_cancelled()
@@ -1078,7 +1111,7 @@ class RealNavigation:
                     index = execution[2] + current_waypoint
 
                     print(
-                        f"[{strftime('%H:%M:%S')}] [REAL NAV FEEDBACK] robot={robot_id} "
+                        f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV FEEDBACK] robot={robot_id} "
                         f"current_waypoint={current_waypoint} "
                         f"segment={route['node_ids'][index]}->{route['node_ids'][index + 1]}",
                         flush=True,
@@ -1254,7 +1287,7 @@ class RealNavigation:
 
         self._resume_pending.add(rid)
 
-        print(f"[{strftime('%H:%M:%S')}] [REAL NAV WAITING] robot={rid} node={node}", flush=True)
+        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV WAITING] robot={rid} node={node}", flush=True)
 
         self._publish()
 
@@ -1315,7 +1348,7 @@ class RealNavigation:
             except (OSError, ValueError, KeyError, IndexError, RuntimeError) as exc:
 
                 print(
-                    f"[{strftime('%H:%M:%S')}] [REAL NAV ERROR] navigation_update_failed={exc!r}",
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [REAL NAV ERROR] navigation_update_failed={exc!r}",
                     flush=True,
                 )
 
@@ -1381,6 +1414,14 @@ class RealNavigation:
                         self.stop(rid, reason="pose_or_occupancy_invalid")
 
                 return
+
+            for rid, reason in self._sync_errors.items():
+                if reason in ("pose_stale_route_protected",) or reason.startswith(
+                    "route_mismatch_protected:"
+                ):
+                    if rid in self._executing and rid not in self._stopping:
+                        self._pause(rid, reason)
+                        self.stop(rid, reason="pose_or_occupancy_invalid")
 
             self._release_cleared_reservations(planner)
 
@@ -1487,7 +1528,7 @@ class RealNavigation:
                         if route["segment_index"] + 2 < len(route["node_ids"]):
 
                             print(
-                                f"[{strftime('%H:%M:%S')}] [REAL NAV LOOKAHEAD] robot={rid} "
+                                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV LOOKAHEAD] robot={rid} "
                                 f"current={route['node_ids'][route['segment_index']]}->{target} "
                                 f"next={target}->{route['node_ids'][route['segment_index'] + 2]} "
                                 f"decision={decision}",
@@ -1499,7 +1540,7 @@ class RealNavigation:
                         self._hold[rid] = (target, reason)
 
                         print(
-                            f"[{strftime('%H:%M:%S')}] [REAL NAV HOLD] robot={rid} "
+                            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV HOLD] robot={rid} "
                             f"hold_node={target} reason={reason}",
                             flush=True,
                         )
@@ -1576,7 +1617,7 @@ class RealNavigation:
                         self._hold[rid] = (target, reason)
 
                         print(
-                            f"[{strftime('%H:%M:%S')}] [REAL NAV HOLD] robot={rid} "
+                            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV HOLD] robot={rid} "
                             f"hold_node={target} reason={reason}",
                             flush=True,
                         )
@@ -1654,7 +1695,7 @@ class RealNavigation:
             self._send_goal(robot_id=rid, waypoints=waypoints)
 
             print(
-                f"[{strftime('%H:%M:%S')}] [REAL NAV ROUTE SEND] robot={rid} "
+                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV ROUTE SEND] robot={rid} "
                 f"route={'->'.join(state['route']['node_ids']) if state['route'] else target} "
                 f"waypoints={','.join(state['route']['node_ids'][segment_index + 1:]) if segment_index is not None else target}",
                 flush=True,
@@ -1663,7 +1704,7 @@ class RealNavigation:
             if rid in self._resume_pending:
 
                 print(
-                    f"[{strftime('%H:%M:%S')}] [REAL NAV RESUME] robot={rid} "
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV RESUME] robot={rid} "
                     f"route={'->'.join(state['route']['node_ids']) if state['route'] else target}",
                     flush=True,
                 )
@@ -1825,7 +1866,7 @@ class RealNavigation:
         self._arrivals.pop(robot_id, None)
 
         print(
-            f"[{strftime('%H:%M:%S')}] [REAL NAV ARRIVAL] robot={robot_id} target={target} "
+            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV ARRIVAL] robot={robot_id} target={target} "
             f"actual=({robot.x:.3f}, {robot.y:.3f}) "
             f"goal=({target_position[0]:.3f}, {target_position[1]:.3f}) "
             f"distance={distance:.3f} tolerance={self._arrival_distance:.3f}",

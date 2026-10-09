@@ -51,6 +51,7 @@ class Robot:
 
         # 현재 동작 상태
         self.state: RobotState = RobotState.OFFLINE
+        self.pause_reason: str | None = None
 
         # 마지막 AMCL 수신 시각. monotonic() 기준 초 단위. 위치 최신성 검사용
         # monotonic() - 내부 경과 시간 비교. 시스템 시간 변경의 영향을 받지 않음
@@ -111,7 +112,10 @@ class Robot:
             self.state = RobotState.OFFLINE
 
         if was_connected != self.connected or previous_state != self.state:
-            print(f"[{strftime('%H:%M:%S')}] [ROBOT CONNECTION] robot={self.robot_id} "
+            if self.state != RobotState.PAUSED:
+                self.pause_reason = None
+            level = "INFO" if connected else "WARN"
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [{level}] [ROBOT CONNECTION] robot={self.robot_id} "
                   f"connected={was_connected}->{self.connected} "
                   f"state={previous_state.value}->{self.state.value} "
                   f"order_id={self.order_id}", flush=True)
@@ -119,8 +123,11 @@ class Robot:
     def set_state(self, state: RobotState) -> None:
         previous_state = self.state
         self.state = state
+        if state != RobotState.PAUSED:
+            self.pause_reason = None
         if previous_state != state:
-            print(f"[{strftime('%H:%M:%S')}] [ROBOT STATE] robot={self.robot_id} "
+            level = "WARN" if state in (RobotState.PAUSED, RobotState.EMERGENCY_STOP, RobotState.OFFLINE) else "INFO"
+            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [{level}] [ROBOT STATE] robot={self.robot_id} "
                   f"state={previous_state.value}->{state.value} "
                   f"connected={self.connected} order_id={self.order_id}", flush=True)
 

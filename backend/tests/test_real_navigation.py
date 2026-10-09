@@ -589,6 +589,77 @@ class RealNavigationTest(unittest.TestCase):
             self.assertEqual(other.state, RobotState.PAUSED)
             self.assertIn(edge_key("4", "5"), self.nav._traffic._protected_resources["robot2"])
 
+    def test_stale_moving_robot_only_stops_its_own_disjoint_route(self):
+        layout = graph()
+        layout["features"] += [
+            {"geometry": {"type": "Point", "coordinates": [4., 0.]},
+             "properties": {"id": "4"}},
+            {"geometry": {"type": "Point", "coordinates": [5., 0.]},
+             "properties": {"id": "5"}},
+            {"properties": {"id": "45", "startid": "4", "endid": "5"}},
+            {"properties": {"id": "54", "startid": "5", "endid": "4"}},
+        ]
+        with patch("backend.app.services.real_navigation.load_route_graph", return_value=layout):
+            other = self.fleet.register_robot("robot2")
+            self.pose(other, 4., 0.)
+            self.nav.request("robot1", "2", NavigationType.GOAL)
+            self.nav.request("robot2", "5", NavigationType.GOAL)
+            self.tick()
+            self.now += 3.
+            self.robot.pose_received_at = self.now
+            self.nav.tick()
+            self.assertEqual(self.robot.state, RobotState.MOVING)
+            self.assertNotIn("robot1", self.cancels)
+            self.assertIn("robot2", self.cancels)
+            self.assertEqual(other.pause_reason, "pose_stale_route_protected")
+            self.assertIn(edge_key("4", "5"), self.nav._traffic._protected_resources["robot2"])
+
+    def test_mapped_route_mismatch_does_not_cancel_disjoint_robot(self):
+        layout = graph()
+        layout["features"] += [
+            {"geometry": {"type": "Point", "coordinates": [4., 0.]},
+             "properties": {"id": "4"}},
+            {"geometry": {"type": "Point", "coordinates": [5., 0.]},
+             "properties": {"id": "5"}},
+            {"properties": {"id": "45", "startid": "4", "endid": "5"}},
+            {"properties": {"id": "54", "startid": "5", "endid": "4"}},
+        ]
+        with patch("backend.app.services.real_navigation.load_route_graph", return_value=layout):
+            other = self.fleet.register_robot("robot2")
+            self.pose(other, 4., 0.)
+            self.nav.request("robot1", "2", NavigationType.GOAL)
+            self.nav.request("robot2", "5", NavigationType.GOAL)
+            self.tick()
+            self.pose(other, 1., 1.)
+            self.tick()
+            self.assertEqual(self.robot.state, RobotState.MOVING)
+            self.assertEqual(other.state, RobotState.PAUSED)
+            self.assertIn("robot2", self.cancels)
+            self.assertNotIn("robot1", self.cancels)
+            self.assertIn(node_key("3"), self.nav._traffic._protected_resources["robot2"])
+
+    def test_mapped_unexpected_edge_is_protected(self):
+        layout = graph()
+        layout["features"] += [
+            {"geometry": {"type": "Point", "coordinates": [4., 0.]},
+             "properties": {"id": "4"}},
+            {"geometry": {"type": "Point", "coordinates": [5., 0.]},
+             "properties": {"id": "5"}},
+            {"properties": {"id": "45", "startid": "4", "endid": "5"}},
+            {"properties": {"id": "54", "startid": "5", "endid": "4"}},
+        ]
+        with patch("backend.app.services.real_navigation.load_route_graph", return_value=layout):
+            other = self.fleet.register_robot("robot2")
+            self.pose(other, 4., 0.)
+            self.nav.request("robot1", "2", NavigationType.GOAL)
+            self.nav.request("robot2", "5", NavigationType.GOAL)
+            self.tick()
+            self.pose(other, 1., .5)
+            self.tick()
+            self.assertEqual(other.state, RobotState.PAUSED)
+            self.assertIn(edge_key("1", "3"), self.nav._traffic._protected_resources["robot2"])
+            self.assertEqual(self.robot.state, RobotState.MOVING)
+
     def test_new_robot_waiting_for_first_pose_protects_station_without_cancel(self):
         self.nav._station_nodes = {"robot2": "3"}
         self.request()
