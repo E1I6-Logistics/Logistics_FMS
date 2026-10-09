@@ -241,7 +241,7 @@ class FmsRosNode(Node):
         goal = PrecisionDock.Goal()
 
         goal.target_pose.header.frame_id = "base_link"
-        goal.target_pose.pose.position.x = 0.0
+        goal.target_pose.pose.position.x = 0.09
         goal.target_pose.pose.position.y = 0.0
         goal.target_pose.pose.position.z = 0.0
         goal.target_pose.pose.orientation.w = 1.0
