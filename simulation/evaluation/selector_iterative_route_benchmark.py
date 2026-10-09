@@ -22,11 +22,13 @@ sys.path.insert(0, str(ROOT))
 from simulation.evaluation.device_metadata import git_metadata, selector_device_metadata
 from simulation.evaluation.graph_path import resolve_graph_path
 from simulation.route_selector import get_selector
+from simulation.services.iterative_route_policy import (
+    MAX_VISITS_PER_NODE, NEXT_NODE_INSTRUCTIONS, next_node_options, next_node_state,
+)
 from simulation.services.route_service import (
     build_compact_adjacency_graph,
     build_route_inputs,
     build_edge_weight_lookup,
-    get_available_edges,
     plan_route,
     validate_and_calculate_path_distance,
 )
@@ -40,21 +42,6 @@ MANIFEST_FILENAME = "manifest.json"
 DEFAULT_CASE_COUNT = 5
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 DOCKING_NODE_IDS = tuple(range(7))
-
-NEXT_NODE_INSTRUCTIONS = (
-    "Select exactly one next node for the minimum-total-weight route from "
-    "current_node to target_node. The selected node must be connected by one "
-    "directed edge from current_node. Use the CompactAdjacencyGraph weight exactly "
-    "as stored. Choose only from the supplied criteria. If available_edges "
-    "is present, it is an exact lookup of outgoing edges and stored weights; "
-    "choose only a node "
-    "listed there. Never reuse a directed edge listed in used_edges. Select "
-    "only a node whose visit count is below max_visits_per_node. Do not return "
-    "to previous_node unless backtrack_allowed is true. Older nodes may be "
-    "revisited within the visit limit when needed to reach the target. Return "
-    "only the selected criteria ID."
-)
-
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -266,7 +253,7 @@ def _run_route(
     steps: list[dict[str, Any]] = []
     used_edges: set[tuple[int, int]] = set()
     visit_counts: dict[int, int] = {start: 1}
-    max_visits_per_node = 2
+    max_visits_per_node = MAX_VISITS_PER_NODE
     api_call_count = 0
     accumulated_distance = 0.0
     error: str | None = None
@@ -283,56 +270,20 @@ def _run_route(
     for step_index in range(step_limit):
         if current == target:
             break
-        # Node 재방문은 복구를 위해 허용하지만 같은 방향성 Edge는 한 번만
-        # 사용한다. 우선 직전 Node를 제외하고, 후보가 없을 때만 미사용 역방향
-        # Edge를 통한 한 단계 backtrack을 허용한다. Node별 방문은 최대 2회다.
-        previous_node = path[-2] if len(path) >= 2 else None
-        raw_neighbor_edges = get_available_edges(
-            prepared["compact_graph"], current
+        # Node 재방문은 복구를 위해 허용하지만 같은 방향성 Edge는 한 번만 사용한다. 
+        # 우선 직전 Node를 제외하고, 후보가 없을 때만 미사용 역방향 Edge를 통한 한 단계 backtrack을 허용한다. 
+        # Node별 방문은 최대 2회다.
+        options = next_node_options(
+            prepared["compact_graph"], prepared["nodes"], current, path,
+            used_edges, visit_counts, candidate_scope=candidate_scope,
+            max_visits_per_node=max_visits_per_node,
         )
-
-        def edge_allowed(edge: dict[str, Any], *, allow_previous: bool) -> bool:
-            node = int(edge["node"])
-            return (
-                node != current
-                and (allow_previous or node != previous_node)
-                and (current, node) not in used_edges
-                and visit_counts.get(node, 0) < max_visits_per_node
-            )
-
-        strict_neighbor_edges = [
-            edge for edge in raw_neighbor_edges
-            if edge_allowed(edge, allow_previous=False)
-        ]
-        recovery_neighbor_edges = [
-            edge for edge in raw_neighbor_edges
-            if edge_allowed(edge, allow_previous=True)
-        ]
-        backtrack_allowed = not strict_neighbor_edges and bool(recovery_neighbor_edges)
-        neighbor_edges = (
-            recovery_neighbor_edges if backtrack_allowed else strict_neighbor_edges
-        )
-        prevented_this_step = len(raw_neighbor_edges) - len(neighbor_edges)
+        previous_node = options["previous_node"]
+        neighbor_edges = options["available_edges"]
+        backtrack_allowed = options["backtrack_allowed"]
+        candidate_nodes = options["candidate_nodes"]
+        prevented_this_step = options["prevented_candidate_count"]
         cycle_prevented_count += prevented_this_step
-
-        if candidate_scope == "neighbors":
-            candidate_nodes = [int(edge["node"]) for edge in neighbor_edges]
-        else:
-            strict_nodes = [
-                node for node in prepared["nodes"]
-                if node != current
-                and node != previous_node
-                and (current, node) not in used_edges
-                and visit_counts.get(node, 0) < max_visits_per_node
-            ]
-            recovery_nodes = [
-                node for node in prepared["nodes"]
-                if node != current
-                and (current, node) not in used_edges
-                and visit_counts.get(node, 0) < max_visits_per_node
-            ]
-            backtrack_allowed = not strict_nodes and bool(recovery_nodes)
-            candidate_nodes = recovery_nodes if backtrack_allowed else strict_nodes
         if not candidate_nodes:
             error = (
                 "순환 방지 조건을 만족하는 이동 후보가 없습니다: "
@@ -347,8 +298,8 @@ def _run_route(
             neighbor_edges if context_mode == "neighbor_context" else None
         )
 
-        # 선택지가 하나면 모델이 판단할 내용이 없다. 세 selector 모두 choice 후보를
-        # 두 개 이상 요구하므로 API를 호출하지 않고 유일한 edge를 강제 이동으로 남긴다.
+        # 선택지가 하나면 모델이 판단할 내용이 없다. 
+        # 세 selector 모두 choice 후보를 두 개 이상 요구하므로 API를 호출하지 않고 유일한 edge를 강제 이동으로 남긴다.
         if len(candidate_nodes) == 1:
             next_node = candidate_nodes[0]
             weight = prepared["edge_weights"][(current, next_node)]
@@ -401,23 +352,12 @@ def _run_route(
             current = next_node
             continue
 
-        state = {
-            "route_graph": prepared["compact_graph"],
-            "current_node": current,
-            "previous_node": previous_node,
-            "target_node": target,
-            "visited_nodes": path,
-            "visit_counts": dict(sorted(visit_counts.items())),
-            "max_visits_per_node": max_visits_per_node,
-            "used_edges": [
-                {"from": edge_start, "to": edge_end}
-                for edge_start, edge_end in sorted(used_edges)
-            ],
-            "backtrack_allowed": backtrack_allowed,
-            "accumulated_distance": accumulated_distance,
-        }
-        if available_edges is not None:
-            state["available_edges"] = available_edges
+        state = next_node_state(
+            prepared["compact_graph"], current, target, path,
+            used_edges, visit_counts, accumulated_distance, options,
+            context_mode=context_mode,
+            max_visits_per_node=max_visits_per_node,
+        )
         step_started = time.perf_counter()
         step_record: dict[str, Any] = {
             "step": step_index + 1,
