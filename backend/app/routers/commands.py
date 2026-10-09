@@ -1,14 +1,82 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 
-from ..schemas.command import GoalCoordinateRequest, GoalNodeRequest, StopRequest
+from ..schemas.command import GoalCoordinateRequest, GoalNodeRequest, LlmRoutePreviewRequest, StopRequest
 from ..ros2.ros_gateway import ros_gateway
 from ..services.mode_service import mode_manager
 from ..services.scenario_service import scenario_manager
 from ..services.command_service import navigate_to_node
+from ..services.route_graph import load_route_graph
+from ..services.fleet_manager import fleet_manager
+from ..schemas.robot import normalize_robot_id
+from ..models.robot import RobotState
 
 router = APIRouter(prefix="/api/command", tags=["commands"])
+
+
+@router.get("/route-models")
+async def route_models():
+    """Return models explicitly enabled in the benchmark configuration."""
+    from ..services.route_model_catalog import enabled_route_models
+    try:
+        return enabled_route_models()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"모델 목록을 읽지 못했습니다: {exc}") from exc
+
+
+def _preview_start_node(robot_id: str, mode: str) -> str:
+    """Read a stationary robot's occupied node without modifying navigation state."""
+    if mode == "simulation":
+        from ..services.mock_data import mock_fms
+        robot = mock_fms.robot_snapshot(robot_id, mode)
+        if robot.get("goal_node") is not None or robot.get("route") is not None:
+            raise ValueError("로봇이 주행 중이거나 대기 중입니다. 정지 후 다시 시도하세요.")
+        start = robot.get("occupied_node")
+    else:
+        resolved_id = normalize_robot_id(robot_id)
+        robot = fleet_manager.get_robot(resolved_id)
+        if robot is None or not robot.connected:
+            raise ValueError(f"연결된 로봇을 찾을 수 없습니다: {robot_id}")
+        with robot._lock:
+            if robot.state != RobotState.IDLE or robot.route is not None or ros_gateway.navigation_active(resolved_id):
+                raise ValueError("로봇이 주행 중이거나 대기 중입니다. 정지 후 다시 시도하세요.")
+            start = robot.occupied_node
+    if start is None:
+        raise ValueError("현재 로봇이 노드 위에 있지 않아 경로를 계산할 수 없습니다.")
+    return str(start)
+
+
+@router.post("/llm-route-preview")
+async def llm_route_preview(payload: LlmRoutePreviewRequest):
+    """Calculate and validate a route; never dispatch a movement command."""
+    try:
+        scenario_manager.ensure_available(payload.robot_id)
+        from ..services.llm_route_preview import preview_llm_route
+        mode = mode_manager.mode
+        start = _preview_start_node(payload.robot_id, mode)
+        graph = load_route_graph()
+        result = await run_in_threadpool(
+            preview_llm_route, graph, start, payload.node_id,
+            selector=payload.selector, model=payload.model,
+        )
+        if mode_manager.mode != mode:
+            raise HTTPException(status_code=409, detail="모드가 변경되어 미리보기가 리셋되었습니다.")
+        return {
+            "mode": mode,
+            "robot_id": payload.robot_id,
+            "start_node": start,
+            "target_node": str(payload.node_id),
+            "dispatched": False,
+            **result,
+        }
+    except HTTPException:
+        raise
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"LLM 경로 미리보기에 실패했습니다: {exc}") from exc
 
 
 @router.post("/goal")
