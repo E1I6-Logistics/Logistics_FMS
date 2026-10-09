@@ -179,7 +179,22 @@ export default function FmsControlApp() {
       setCommandState({ tone: 'info', message: 'LLM 경로 미리보기의 서버 연결이 아직 완료되지 않았습니다.' })
       return
     }
-    if (!selectedRobot || !targetNode || !selectedRouteModel || scenarioActive) return
+    if (!selectedRobot) {
+      setCommandState({ tone: 'info', message: '먼저 로봇을 선택하세요.' })
+      return
+    }
+    if (!targetNode) {
+      setCommandState({ tone: 'info', message: '지도에서 목적지 노드를 선택하세요.' })
+      return
+    }
+    if (!selectedRouteModel) {
+      setCommandState({ tone: 'danger', message: routeModelError ?? '경로 모델을 선택하세요.' })
+      return
+    }
+    if (scenarioActive) {
+      setCommandState({ tone: 'info', message: '시나리오가 끝난 뒤 경로를 미리보세요.' })
+      return
+    }
     void (async () => {
       try {
         setBusy('routePreview')
@@ -665,10 +680,10 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMod
               <button
                 type="button"
                 onClick={onPreview}
-                disabled={!llmPreviewReady || !targetNode || !connected || emergencyStopped || busy !== null || scenarioActive || !selectedRouteModel}
+                disabled={busy !== null}
                 style={{ display: 'block', marginTop: 7, padding: '6px 9px', borderRadius: 6,
                   border: '1px solid ' + C.line, background: '#fff', color: C.primary, fontSize: 10,
-                  cursor: llmPreviewReady ? 'pointer' : 'not-allowed' }}
+                  cursor: busy === null ? 'pointer' : 'wait' }}
               >
                 {busy === 'routePreview' ? '경로 계산 중' : '경로만 미리보기'}
               </button>
