@@ -29,6 +29,7 @@ const allLayers = { nodeEdge: true, route: true, station: true, robotId: true }
 
 // Enable each action only after the corresponding backend route is connected.
 // Without this guard an older /goal-node endpoint would silently use standard routing.
+const LLM_PREVIEW_READY = true
 const LLM_MOVE_READY = false
 const LLM_ORDER_READY = false
 
@@ -93,7 +94,7 @@ export default function FmsControlApp() {
   }, [targetNode, robotMode, selectedRouteModel])
 
   useEffect(() => {
-    if (!LLM_MOVE_READY && !LLM_ORDER_READY) return
+    if (!LLM_PREVIEW_READY && !LLM_MOVE_READY && !LLM_ORDER_READY) return
     void getRouteModels().then(groups => {
       setRouteModels(groups)
       setRouteModelError(null)
@@ -174,7 +175,7 @@ export default function FmsControlApp() {
   }
 
   const previewSelectedRoute = () => {
-    if (!LLM_MOVE_READY) {
+    if (!LLM_PREVIEW_READY) {
       setCommandState({ tone: 'info', message: 'LLM 경로 미리보기의 서버 연결이 아직 완료되지 않았습니다.' })
       return
     }
@@ -441,6 +442,7 @@ export default function FmsControlApp() {
             onRouteModelChange={setSelectedRouteModel}
             onDrivingModeChange={mode => { setDrivingMode(mode); setLlmPreview(null) }}
             llmPreview={llmPreview}
+            llmPreviewReady={LLM_PREVIEW_READY}
             llmMoveReady={LLM_MOVE_READY}
             nearestNode={nearestNode}
             scenarioActive={scenarioActive}
@@ -491,7 +493,7 @@ function RobotRail({ robotIds, selectedRobot, getStatus, onSelect }: {
 
 type LiveRobot = ReturnType<typeof useRobotFleet>['managedRobots'][number]
 
-function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMode, routeModels, selectedRouteModel, routeModelError, onRouteModelChange, onDrivingModeChange, llmPreview, llmMoveReady, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onPreview, onReturnToRoute, onCharge, onStop, onRelease, }: {
+function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMode, routeModels, selectedRouteModel, routeModelError, onRouteModelChange, onDrivingModeChange, llmPreview, llmPreviewReady, llmMoveReady, nearestNode, realMode, emergencyStopped, remoteStatus, remoteKeys, busy, onRemoteDown, onRemoteUp, onRemoteStop, onMove, onPreview, onReturnToRoute, onCharge, onStop, onRelease, }: {
   robotId: RobotId | null
   liveRobot?: LiveRobot
   targetNode: string | null
@@ -502,6 +504,7 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMod
   onRouteModelChange: (model: RouteModelDto | null) => void
   onDrivingModeChange: (mode: 'standard' | 'llm') => void
   llmPreview: LlmRoutePreviewDto | null
+  llmPreviewReady: boolean
   llmMoveReady: boolean
   nearestNode: { id: string; x: number; y: number; distance: number } | null
   realMode: boolean
@@ -635,7 +638,7 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMod
             {routeModelError && <div role="alert" style={{ color: C.danger, fontSize: 10, marginTop: 5 }}>{routeModelError}</div>}
             {!llmMoveReady && (
               <div style={{ color: C.muted, fontSize: 9, marginTop: 5 }}>
-                LLM 주행 서버 연결 전입니다. 경로 미리보기와 이동은 연결 후 사용할 수 있습니다.
+                경로 미리보기는 사용할 수 있습니다. LLM 경로로 이동은 주행 연결 후 사용할 수 있습니다.
               </div>
             )}
           </div>
@@ -662,10 +665,10 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMod
               <button
                 type="button"
                 onClick={onPreview}
-                disabled={!llmMoveReady || !targetNode || !connected || emergencyStopped || busy !== null || scenarioActive || !selectedRouteModel}
+                disabled={!llmPreviewReady || !targetNode || !connected || emergencyStopped || busy !== null || scenarioActive || !selectedRouteModel}
                 style={{ display: 'block', marginTop: 7, padding: '6px 9px', borderRadius: 6,
                   border: '1px solid ' + C.line, background: '#fff', color: C.primary, fontSize: 10,
-                  cursor: llmMoveReady ? 'pointer' : 'not-allowed' }}
+                  cursor: llmPreviewReady ? 'pointer' : 'not-allowed' }}
               >
                 {busy === 'routePreview' ? '경로 계산 중' : '경로만 미리보기'}
               </button>
