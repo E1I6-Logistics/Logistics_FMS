@@ -83,6 +83,8 @@ logs/
 # Docker
 # ------------------------------------------------------------
 docker-compose.override.yml
+# Local stack settings; copy infra/docker-compose.example.yml first.
+infra/docker-compose.yml
 
 
 # ------------------------------------------------------------

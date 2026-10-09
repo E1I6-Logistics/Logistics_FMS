@@ -1,0 +1,30 @@
+services:
+
+  # ============================================================
+  # Zenoh Router
+  # ============================================================
+  zenoh-router:
+    image: eclipse/zenoh:1.9.0
+    container_name: fms-zenoh-router
+    ports:
+      - "7447:7447/tcp"
+      - "8001:8001/tcp"
+    command: ["--listen", "tcp/0.0.0.0:7447", "--rest-http-port", "8001"]
+    restart: unless-stopped
+
+
+  # ============================================================
+  # MQTT Broker
+  # ============================================================
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0.22
+    container_name: fms-mqtt-broker
+    ports:
+      - "1883:1883/tcp"
+
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+    restart: unless-stopped

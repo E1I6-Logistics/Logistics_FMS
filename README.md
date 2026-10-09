@@ -103,7 +103,8 @@ Logistics_FMS/
 │   ├── robot/                   # Robot PC Zenoh 설치·셸 설정
 │   ├── setup.sh                 # Ubuntu 개발 환경 일괄 설치
 │   └── verify_env.sh            # 환경 점검
-├── infra/docker-compose.yml     # Zenoh Router 컨테이너
+├── infra/docker-compose.example.yml # 공유용 Zenoh/MQTT 설정 예시
+├── infra/docker-compose.yml     # 로컬 Compose 설정 (Git 제외)
 ├── tools/diagnostics/           # Zenoh 진단 도구
 ├── doc/                         # ROS 2/Zenoh 및 백엔드 제어 문서
 ├── logs/                        # 실행 로그와 PID 파일
@@ -210,8 +211,11 @@ export FMS_ROUTE_GRAPH=test.geojson
 
 ## 실행과 종료
 
+처음 실행할 때 공유 예시를 로컬 Compose 설정으로 복사합니다. Docker Desktop 환경에서는 Zenoh와 MQTT 포트가 WSL로 전달되도록 예시에 포트 공개가 설정되어 있습니다.
+
 ```bash
 cd ~/Logistics_FMS
+cp infra/docker-compose.example.yml infra/docker-compose.yml
 ./start_fms.sh
 ```
 
