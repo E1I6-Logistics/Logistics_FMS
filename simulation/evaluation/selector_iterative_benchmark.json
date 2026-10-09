@@ -18,33 +18,33 @@
   "models": [
     {
       "name": "qwen3:0.6b",
-      "enabled": true,
+      "enabled": false,
       "think": false
     },
     {
       "name": "deepseek-coder:1.3b",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "llama3.2:3b",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "qwen3:4b",
-      "enabled": true,
+      "enabled": false,
       "think": false
     },
     {
       "name": "gemma3:4b",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "llama3.1:8b",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "mistral-nemo:12b",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "gemma3:12b",
@@ -58,6 +58,12 @@
       "name": "phi4:14b",
       "enabled": true
     }
+  ],
+  "decision_models": [
+    {"selector": "laya", "name": "convaiinnovations/laya", "enabled": true},
+    {"selector": "laya", "name": "convaiinnovations/laya-multilingual", "enabled": true},
+    {"selector": "kev", "name": "kev-08b", "enabled": true},
+    {"selector": "kev", "name": "kev-4b", "enabled": true}
   ],
   "settings": {
     "case_mode": "random",
