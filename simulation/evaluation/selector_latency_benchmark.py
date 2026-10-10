@@ -400,6 +400,7 @@ def run_latency_benchmark(
         "selector_max_length": getattr(selector, "max_length", None),
     }
     manifest = {
+        "baseline_algorithm": "astar_stored_weight",
         "benchmark": "route-selector-language-position-latency-v3",
         "status": "running",
         "started_at": started_at,

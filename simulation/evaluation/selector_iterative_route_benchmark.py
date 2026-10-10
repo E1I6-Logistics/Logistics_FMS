@@ -871,6 +871,7 @@ def run_benchmark(
     selector = selector or get_selector()
     selector_name = getattr(selector, "name", selector.__class__.__name__)
     manifest = {
+        "baseline_algorithm": "astar_stored_weight",
         "benchmark": "selector-iterative-next-node-v1",
         "status": "running",
         "started_at": _utc_now(),

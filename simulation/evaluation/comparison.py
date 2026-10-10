@@ -197,9 +197,9 @@ def compare_path_with_llm(
         "provider": provider_key,
         "model": os.getenv(model_env_name),
         "prompt_strategy": (
-            "compact-dijkstra"
+            "compact-astar"
             if raw_graph.get("type") == "CompactRouteGraph"
-            else "geojson-dijkstra"
+            else "geojson-astar"
         ),
         "input": {
             "start_node": start_id,
@@ -208,6 +208,7 @@ def compare_path_with_llm(
             "route_graph": raw_graph,
         },
         "baseline": {
+            "algorithm": "astar_stored_weight",
             "path": baseline_path,
             "recalculated_total_distance": baseline_distance,
         },

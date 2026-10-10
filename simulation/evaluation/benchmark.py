@@ -482,6 +482,7 @@ def _run_trial(
             ),
         },
         "baseline": {
+            "algorithm": "astar_stored_weight",
             "path": baseline_path,
             "recalculated_total_distance": baseline_distance,
         },
@@ -790,6 +791,7 @@ def run_benchmark(
             "config_sha256": prepared["config_sha256"],
             "graph_file": str(prepared["graph_path"].relative_to(ROOT)),
             "graph_sha256": prepared["graph_sha256"],
+            "baseline_algorithm": "astar_stored_weight",
             "comparison_condition_sha256": prepared[
                 "comparison_condition_sha256"
             ],

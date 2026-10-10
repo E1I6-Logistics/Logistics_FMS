@@ -210,6 +210,7 @@ def run_question_types_benchmark(
         "expected_trial_count": len(CASES) * repeats,
     }
     manifest = {
+        "baseline_algorithm": "astar_stored_weight",
         "benchmark": "route-selector-question-types-v1",
         "status": "running",
         "started_at": started_at,

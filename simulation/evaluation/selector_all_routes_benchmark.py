@@ -408,6 +408,7 @@ def run_benchmark(
         "selector_head_max_length": getattr(selector, "head_max_length", None),
     }
     manifest = {
+        "baseline_algorithm": "astar_stored_weight",
         "benchmark": "route-selector-all-simple-routes-v1",
         "status": "running",
         "started_at": _utc_now(),
