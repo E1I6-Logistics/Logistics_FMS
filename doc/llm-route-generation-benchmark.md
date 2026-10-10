@@ -1,6 +1,6 @@
 # 로컬 모델 경로 생성·선택 벤치마크
 
-코드가 계산한 최단 경로와 로컬 모델의 결과를 비교한다.
+코드가 저장된 Edge `weight`를 사용해 A*로 계산한 최단 경로와 로컬 모델의 결과를 비교한다.
 
 - **Ollama 경로 생성 시험**: 모델이 최단 경로를 직접 생성한다.
 - **Laya·Kev 경로 선택 시험**: 코드가 만든 경로 후보 중 하나를 선택한다.
@@ -134,6 +134,11 @@ Jetson에서는 실행 중 다른 터미널에서 `sudo tegrastats`의 `GR3D_FRE
 | V2 Direct 프롬프트 SHA-256 | `47e58ad5ebe0f5dede1985128bb3055c800ab785a87372ce80ddf2fb25c4660c` |
 | V2 CoT 프롬프트 SHA-256 | `b2592acb671b10b493325b9f432fc16ea293a596bd7ae8cd00a72e58cd9c9278` |
 | V2 Iterative 프롬프트 SHA-256 | `161bc29b88a67f7d2f5f1a36358fdfaab6721aca1bb102a36e6f191ddfac0eb5` |
+
+원본 GeoJSON과 CompactRouteGraph 입력은 단일 비교 CLI의 `--llm-graph`로 선택할 수 있다.
+V1·V2 일괄 벤치마크의 입력은 현재 CompactRouteGraph 또는
+CompactAdjacencyGraph만 지원하므로 원본 GeoJSON 속도 비교에는 입력 형식 지원을 추가해야 한다.
+입력 크기·토큰 수·응답시간을 비교할 때는 같은 맵과 Start/Target, 모델 설정을 사용한다.
 
 장비 비교 전 `git rev-parse HEAD`와 `git status --short`를 확인한다. 두 V2 설정의
 `comparison_condition_sha256`이 같으면 Graph, 모델, Start/Target, Ground Truth와
@@ -774,8 +779,9 @@ CoT와 Dijkstra는 같은 개념이 아니다.
 - **Dijkstra**는 음수가 아닌 Edge weight에서 최단 경로를 구하는 결정적 알고리즘이다.
 - **CoT**는 모델이 중간 계산 단계를 따라가도록 유도하는 추론·프롬프트 방식이다.
 
-이 시험의 CoT 프롬프트가 Dijkstra 순서를 지시하지만, 모델이 그 순서를 정확히
-수행한다는 보장은 없다. 그래서 최종 경로와 각 Edge를 코드로 다시 검증한다.
+이 시험의 CoT 프롬프트가 Dijkstra 순서를 지시하더라도 기준 경로는
+저장된 `weight`를 사용하는 A*로 계산한다. 모델이 지시된 순서를 정확히
+수행한다는 보장은 없으므로 최종 경로와 각 Edge를 코드로 다시 검증한다.
 Iterative 조건은 모델에게 Dijkstra의 tentative distance나 relaxation을 계산하게 하지
 않는다. 매 호출에서 모델은 전체 Graph, 현재 위치, Target, 방문 경로와 누적 거리를
 보고 다음 Node 하나만 선택한다. Python은 상태 저장과 모델이 반환한 Node의 실제
