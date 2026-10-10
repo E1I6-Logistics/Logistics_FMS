@@ -124,7 +124,7 @@ def plan_route(
     *,
     require_stored_weight: bool = False,
 ) -> dict[str, Any]:
-    """Calculate a directed shortest path from the resolved edge weights."""
+    """Calculate a directed shortest path with A* and resolved edge weights."""
     graph = graph if graph is not None else load_route_graph()
     nodes = node_lookup(graph)
     start_id, goal_id = str(start_id), str(goal_id)
@@ -156,11 +156,25 @@ def plan_route(
         edge_id = str(properties.get("id", f"{start}-{end}"))
         adjacency[start].append((end, weight, edge_id))
 
+    # A*는 목적지까지의 직선거리를 남은 비용의 하한 추정치(h)로 환산한다.
+    # 모든 간선의 weight / 직선거리 중 최솟값을 사용해 h가 실제 최단 비용을 넘지 않게 한다.
+    # 좌표 거리가 양수인 비용 0 간선이 있으면 h도 0이 된다.
+    ratios = [
+        weight / length
+        for start, outgoing in adjacency.items()
+        for end, weight, _ in outgoing
+        if (length := math.dist(points[start], points[end])) > 0
+    ]
+    heuristic_scale = min(ratios, default=0.0) * (1.0 - 1e-12)
+
+    def heuristic(node_id: str) -> float:
+        return heuristic_scale * math.dist(points[node_id], points[goal_id])
+
     distances = {start_id: 0.0}
     previous: dict[str, tuple[str, str]] = {}
-    queue = [(0.0, start_id)]
+    queue = [(heuristic(start_id), 0.0, start_id)]
     while queue:
-        distance, current = heapq.heappop(queue)
+        _, distance, current = heapq.heappop(queue)
         if distance > distances[current]:
             continue
         if current == goal_id:
@@ -170,7 +184,9 @@ def plan_route(
             if candidate < distances.get(neighbor, math.inf):
                 distances[neighbor] = candidate
                 previous[neighbor] = (current, edge_id)
-                heapq.heappush(queue, (candidate, neighbor))
+                heapq.heappush(
+                    queue, (candidate + heuristic(neighbor), candidate, neighbor)
+                )
 
     if goal_id not in distances:
         raise ValueError(f"노드 {start_id}에서 {goal_id}까지 연결된 경로가 없습니다.")
