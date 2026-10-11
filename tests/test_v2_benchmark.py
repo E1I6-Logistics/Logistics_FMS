@@ -67,5 +67,39 @@ class V2BenchmarkTest(unittest.TestCase):
             self.assertFalse(case["retrieval"]["enabled"])
 
 
+    # 출력 예산 확대 시 원본·프롬프트는 유지하고 실제 설정과 비교 해시만 바뀌는지 확인한다.
+    def test_output_budget_overrides_are_recorded_without_changing_prompts(self):
+        before = DEFAULT_MATRIX.read_bytes()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            normal = resolve_experiment_configs(DEFAULT_MATRIX, root / "normal")
+            expanded = resolve_experiment_configs(
+                DEFAULT_MATRIX, root / "expanded",
+                settings_overrides={"num_predict": 2048, "timeout_seconds": 600},
+            )
+            for a, b in zip(normal, expanded):
+                old, new = json.loads(a.read_text()), json.loads(b.read_text())
+                self.assertEqual(new["settings"]["num_predict"], 2048)
+                self.assertEqual(new["settings"]["timeout_seconds"], 600)
+                self.assertEqual(old["prompt_sha256"], new["prompt_sha256"])
+                self.assertEqual(old["graph"], new["graph"])
+                self.assertEqual(old["cases"], new["cases"])
+                self.assertNotEqual(old["comparison_condition_sha256"], new["comparison_condition_sha256"])
+                load_and_validate_config(b)
+        self.assertEqual(DEFAULT_MATRIX.read_bytes(), before)
+
+    # 무제한 출력·음수·입력 공간 없는 예산을 실행 전에 거부한다.
+    def test_invalid_budget_overrides_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for overrides in (
+                {"num_predict": -1}, {"num_predict": 0},
+                {"timeout_seconds": 0}, {"num_predict": 4096},
+            ):
+                with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                    resolve_experiment_configs(
+                        DEFAULT_MATRIX, Path(directory), settings_overrides=overrides
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

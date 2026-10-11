@@ -44,7 +44,9 @@ def _write_json(path: Path, value: Any) -> None:
     )
 
 
-def resolve_experiment_configs(matrix_path: Path, directory: Path) -> list[Path]:
+def resolve_experiment_configs(
+    matrix_path: Path, directory: Path, *, settings_overrides: dict[str, int] | None = None
+) -> list[Path]:
     """Expand one shared V2 matrix into six reproducible benchmark configs."""
     matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
     required_names = {
@@ -59,7 +61,14 @@ def resolve_experiment_configs(matrix_path: Path, directory: Path) -> list[Path]
     if names != required_names:
         raise ValueError(f"V2 experiment names mismatch: {sorted(names)}")
 
-    common_settings = matrix["settings"]
+    # 원본 설정은 보존하고 실제 실행 설정과 비교 해시에 출력 예산 변경을 반영한다.
+    overrides = settings_overrides or {}
+    for key, value in overrides.items():
+        if key not in {"num_predict", "timeout_seconds"} or type(value) is not int or value <= 0:
+            raise ValueError(f"invalid settings override: {key}={value!r}")
+    common_settings = {**matrix["settings"], **overrides}
+    if common_settings["num_predict"] >= common_settings["num_ctx"]:
+        raise ValueError("num_predict must be smaller than num_ctx to leave room for input")
     conditions = {
         "graph_sha256": matrix["graph"]["sha256"],
         "models": matrix["models"],
@@ -116,13 +125,21 @@ def main() -> int:
     parser.add_argument(
         "--check", action="store_true", help="Ollama 호출 없이 6조건을 검증"
     )
+    parser.add_argument("--num-predict", type=int, help="override output token budget")
+    parser.add_argument("--timeout-seconds", type=int, help="override request timeout")
     args = parser.parse_args()
+    settings_overrides = {
+        key: value for key, value in {
+            "num_predict": args.num_predict,
+            "timeout_seconds": args.timeout_seconds,
+        }.items() if value is not None
+    }
     matrix_path = args.matrix.resolve()
 
     if args.check:
         with tempfile.TemporaryDirectory() as temporary:
             config_paths = resolve_experiment_configs(
-                matrix_path, Path(temporary) / "configs"
+                matrix_path, Path(temporary) / "configs", settings_overrides=settings_overrides
             )
             rows = []
             for config_path in config_paths:
@@ -137,6 +154,8 @@ def main() -> int:
                         ],
                         "graph_sha256": prepared["graph_sha256"],
                         "cases": len(prepared["cases"]),
+                        "num_predict": prepared["config"]["settings"]["num_predict"],
+                        "timeout_seconds": prepared["config"]["settings"]["timeout_seconds"],
                     }
                 )
             if len({row["condition_sha256"] for row in rows}) != 1:
@@ -152,7 +171,9 @@ def main() -> int:
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"V2 output directory is not empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    config_paths = resolve_experiment_configs(matrix_path, output / "configs")
+    config_paths = resolve_experiment_configs(
+        matrix_path, output / "configs", settings_overrides=settings_overrides
+    )
     selected = set(args.only)
     if selected:
         known = {path.stem for path in config_paths}
@@ -168,6 +189,7 @@ def main() -> int:
         "status": "running",
         "conditions": [path.stem for path in config_paths],
         "model_filter": args.model or None,
+        "settings_overrides": settings_overrides,
     }
     _write_json(output / "matrix_manifest.json", manifest)
     for config_path in config_paths:

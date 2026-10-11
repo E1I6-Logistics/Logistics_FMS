@@ -940,6 +940,36 @@ python -m simulation.evaluation.v2_benchmark \
 
 V2는 Jetson에서 실행하지 않는다. PC 결과만 V2 비교 자료로 사용한다.
 
+### CoT 출력 예산 확대 재시험
+
+기존 512토큰 결과를 보존한 채 CoT 두 조건만 1024/2048토큰으로 실행한다.
+모델·맵·경로·프롬프트·num_ctx=4096은 유지한다. 아래 명령은 timeout=120초도 유지하여
+출력 예산만 변경한다. 실행별 3모델 × 2조건 × 5쌍 × 5회 = 150회다.
+
+```bash
+for budget in 1024 2048; do
+  python -m simulation.evaluation.v2_benchmark \
+    --matrix simulation/evaluation/route_generation_v2_matrix.json \
+    --only cot_no_rag --only cot_graph_retrieval \
+    --model gemma3:12b --model deepseek-coder:6.7b --model phi4:14b \
+    --num-predict "$budget" \
+    --output "simulation/benchmark_results/pc-v2-cot-budget-${budget}-$(date +%Y%m%d-%H%M%S)" || break
+done
+```
+
+긴 출력이 120초 timeout에 걸리면, 정확도 진단용 별도 실행에서는
+`--timeout-seconds 600`을 추가한다. 이때 512/1024/2048을 모두 같은 600초로
+측정해야 출력 예산 효과를 비교할 수 있다. 이전 512/120초 결과와는 두 설정이 다르다.
+num_ctx는 입력과 출력을 함께 수용하므로 실제 prompt_eval_count를 확인한다.
+num_predict < num_ctx 검사는 최소 검사일 뿐 전체 입력 보존을 보장하지 않는다.
+
+`--check --num-predict 2048`로 모델 호출 없이 설정을 확인할 수 있다.
+--check는 기존 동작대로 6조건 전체를 검사하며 --only/--model 필터는 실행 때 적용한다.
+변경 값은 matrix_manifest.json의 settings_overrides와 각 조건 manifest.json의
+settings에 기록되고, configs/*.json과 비교 조건 해시에도 반영된다.
+유효 도착·최단 비용 일치·output_budget_exhaustion_rate·timeout_rate·시간을 함께 비교한다.
+출력 완료가 계산 정확성의 보장은 아니다.
+
 ### 9.5 결과 확인
 
 V2 최상위 폴더에는 `matrix_manifest.json`, 파생 설정 6개와 조건별 결과 폴더가
