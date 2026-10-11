@@ -22,11 +22,11 @@ ROUTE_DIR = BASE_DIR / "routes"
 # 지도와 이동 경로
 # ============================================================
 
-# 사용할 지도 설정 파일. 별도 지정이 없으면 my_map.yaml을 쓴다.
-MAP_YAML_PATH = MAP_DIR / os.getenv("FMS_MAP_YAML", "my_map.yaml")
+# 사용할 지도 설정 파일. 별도 지정이 없으면 logitle_map.yaml을 쓴다.
+MAP_YAML_PATH = MAP_DIR / os.getenv("FMS_MAP_YAML", "logitle_map.yaml")
 
-# 사용할 이동 경로 파일. 별도 지정이 없으면 test.geojson을 쓴다.
-ROUTE_GRAPH_PATH = ROUTE_DIR / os.getenv("FMS_ROUTE_GRAPH", "test.geojson")
+# 사용할 이동 경로 파일. 별도 지정이 없으면 logitle_route_grid.geojson을 쓴다.
+ROUTE_GRAPH_PATH = ROUTE_DIR / os.getenv("FMS_ROUTE_GRAPH", "logitle_route_grid.geojson")
 
 # 서버 시작 모드(main/API 분기에서 사용). 시뮬레이션 제거 후에는 FMS_ROBOT_MODE=real로 실행한다.
 ROBOT_MODE = os.getenv("FMS_ROBOT_MODE", "simulation").strip().lower()
