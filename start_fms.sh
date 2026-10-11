@@ -6,11 +6,6 @@ set -Eeuo pipefail
 # - Docker: Zenoh Router, MQTT Broker
 # - Host: FastAPI, Vite, ROS 2 daemon, zenoh-bridge-ros2dds
 
-set +u
-source /opt/ros/jazzy/setup.bash
-source "./robots_ws/Logistics_AMR/install/local_setup.bash"
-set -u
-
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
 COMPOSE_FILE="${FMS_COMPOSE_FILE:-$PROJECT_DIR/infra/docker-compose.yml}"
@@ -54,7 +49,7 @@ cleanup_failed_start() {
         trap - EXIT
         printf '[FMS][ERROR] Startup failed; stopping the partially started stack.\n' >&2
         set +e
-        "$PROJECT_DIR/stop_fms.sh"
+        FMS_COMPOSE_FILE="$COMPOSE_FILE" "$PROJECT_DIR/stop_fms.sh"
     fi
 
     exit "$status"
@@ -74,6 +69,41 @@ select_docker_command() {
     fi
 
     "${DOCKER[@]}" compose version >/dev/null 2>&1 || fail "docker compose plugin not found"
+}
+
+prepare_compose_file() {
+    local docker_os runtime_file expanded_file
+    docker_os="$("${DOCKER[@]}" info --format '{{.OperatingSystem}}' 2>/dev/null)"
+    [[ "$docker_os" == *"Docker Desktop"* ]] || return 0
+
+    # Docker Desktop의 host 네트워크는 WSL localhost에 포트를 공개하지 않는다.
+    # 원본 Compose 파일은 보존하고, 무시되는 logs/에 실행용 설정만 만든다.
+    expanded_file="$LOG_DIR/docker-compose-expanded.json"
+    runtime_file="$LOG_DIR/docker-compose-desktop.json"
+    "${DOCKER[@]}" compose -f "$COMPOSE_FILE" config --format json >"$expanded_file" \
+        || fail "Docker Compose 설정을 읽지 못했습니다: $COMPOSE_FILE"
+    "$PYTHON_BIN" - "$expanded_file" "$runtime_file" "$ZENOH_PORT" "$MQTT_PORT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source, output, zenoh_port, mqtt_port = sys.argv[1:]
+config = json.loads(Path(source).read_text(encoding="utf-8"))
+ports = {
+    "zenoh-router": [(zenoh_port, "7447"), ("8001", "8001")],
+    "mqtt-broker": [(mqtt_port, "1883")],
+}
+for name, mappings in ports.items():
+    service = config["services"].get(name)
+    if service is not None and service.get("network_mode") == "host":
+        del service["network_mode"]
+        service["ports"] = [f"{host}:{container}" for host, container in mappings]
+Path(output).write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+PY
+    "${DOCKER[@]}" compose -f "$runtime_file" config -q \
+        || fail "Docker Desktop 실행 설정이 올바르지 않습니다: $runtime_file"
+    COMPOSE_FILE="$runtime_file"
+    log "Docker Desktop: published Zenoh/MQTT ports via $runtime_file"
 }
 
 load_node_environment() {
@@ -154,13 +184,14 @@ wait_for_stable_process() {
 [ -d "$FRONTEND_DIR" ] || fail "Frontend directory not found: $FRONTEND_DIR"
 
 select_docker_command
+prepare_compose_file
 load_node_environment
 load_ros_environment
 command -v "$BRIDGE_BIN" >/dev/null 2>&1 || fail "Bridge binary not found: $BRIDGE_BIN"
 
 # Clean up PID-less legacy processes and the router before starting a new stack.
 if [ "${FMS_CLEAN_START:-1}" = "1" ]; then
-    "$PROJECT_DIR/stop_fms.sh"
+    FMS_COMPOSE_FILE="$COMPOSE_FILE" "$PROJECT_DIR/stop_fms.sh"
 fi
 CLEANUP_ON_EXIT=1
 
