@@ -495,14 +495,30 @@ class RealNavigation:
                 # 연결 해제 후에도 마지막 점유를 지우지 않는다. 알 수 없는 점유로 새 실행 금지.
 
                 if robot.connected or row is not None:
+                    # 자동 주행 중이 아닌 로봇은 마지막 점유를 보존한다.
+                    if (
+                        row is not None
+                        and row["route"] is None
+                        and row["goal_node"] is None
+                        and rid not in self._requests
+                        and rid not in self._executing
+                        and rid not in self._stopping
+                        and rid not in self._traffic._pending
+                        and rid not in self._traffic._concession
+                        and (
+                            row["occupied_node"] is not None
+                            or row["occupied_edge"] is not None
+                        )
+                    ):
+                        resource = occupied_resource(row, graph)
+                        self._traffic.protect_resources(rid, {resource})
 
-                    valid = False
-
-                    self._sync_errors[rid] = (
-                        "robot_offline" if not robot.connected else "pose_stale_or_invalid"
-                    )
-
-                continue
+                        print(
+                            f"[REAL NAV] robot={rid} "
+                            f"위치 갱신 실패, 마지막 점유 보호: {resource}",
+                            flush=True,
+                        )
+                        continue
 
             self._initializing_since.pop(rid, None)
 
@@ -644,8 +660,32 @@ class RealNavigation:
                     self._traffic.protect_resources(rid, resources)
                     self._sync_errors[rid] = f"route_mismatch_protected:{exc}"
                 else:
-                    valid = False
-                    self._sync_errors[rid] = f"occupancy_or_route_mismatch:{exc}"
+                    # 자동 주행 중이 아니고 마지막 점유 정보가 있는 로봇
+                    if (
+                        row is not None
+                        and row["route"] is None
+                        and row["goal_node"] is None
+                        and rid not in self._requests
+                        and rid not in self._executing
+                        and rid not in self._stopping
+                        and rid not in self._traffic._pending
+                        and rid not in self._traffic._concession
+                        and (
+                            row["occupied_node"] is not None
+                            or row["occupied_edge"] is not None
+                        )
+                    ):
+                        resource = occupied_resource(row, graph)
+                        self._traffic.protect_resources(rid, {resource})
+
+                        self._sync_errors[rid] = (
+                            f"inactive_robot_position_unconfirmed:{exc}"
+                        )
+                    else:
+                        valid = False
+                        self._sync_errors[rid] = (
+                            f"occupancy_or_route_mismatch:{exc}"
+                        )
 
                 if previous_errors.get(rid) != self._sync_errors[rid]:
 
