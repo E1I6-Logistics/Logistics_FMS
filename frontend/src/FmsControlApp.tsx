@@ -30,6 +30,7 @@ export default function FmsControlApp() {
   const [commandState, setCommandState] = useState<CommandState>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [omxDevices, setOmxDevices] = useState<OmxDeviceDto[]>([])
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
 
   const {
     managedIds,
@@ -282,7 +283,7 @@ export default function FmsControlApp() {
             onSelect={setSelectedRobot}
           />
 
-          <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: '#E7EBF0' }} aria-label="FMS 실시간 지도">
+          <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: C.surface }} aria-label="FMS 실시간 지도">
             <ScenarioControls modeSwitching={modeSwitching} onActiveChange={setScenarioActive} />
             {commandState && (
               <CommandToast state={commandState} onClose={() => setCommandState(null)} />
@@ -327,28 +328,56 @@ export default function FmsControlApp() {
               <span aria-hidden="true" style={{ marginRight: 8 }}>■</span>
               {busy === 'emergency' ? '정지 명령 전송 중' : '전체 비상정지'}
             </button>
+            <button
+              type="button"
+              aria-label={rightPanelOpen ? '오른쪽 로봇 제어 패널 접기' : '오른쪽 로봇 제어 패널 펼치기'}
+              aria-expanded={rightPanelOpen}
+              title={rightPanelOpen ? '로봇 제어 패널 접기' : '로봇 제어 패널 펼치기'}
+              onClick={() => setRightPanelOpen(open => !open)}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: rightPanelOpen ? -16 : 14,
+                zIndex: 40,
+                width: 32,
+                height: 54,
+                transform: 'translateY(-50%)',
+                border: `1px solid ${C.line}`,
+                borderRadius: 9,
+                background: C.surface,
+                color: C.muted,
+                fontSize: 24,
+                lineHeight: 1,
+                cursor: 'pointer',
+                boxShadow: '0 3px 12px rgba(0,0,0,.12)',
+              }}
+            >
+              {rightPanelOpen ? '›' : '‹'}
+            </button>
           </section>
 
-          <RobotPanel
-            robotId={selectedRobot}
-            liveRobot={selectedLiveRobot}
-            targetNode={targetNode}
-            nearestNode={nearestNode}
-            scenarioActive={scenarioActive}
-            realMode={robotMode === 'real'}
-            emergencyStopped={emergencyStopped}
-            remoteStatus={remote.status}
-            remoteKeys={remote.activeKeys}
-            busy={busy}
-            onRemoteDown={remote.pressKey}
-            onRemoteUp={remote.releaseKey}
-            onRemoteStop={remote.stop}
-            onMove={moveToSelectedNode}
-            onReturnToRoute={returnToNearestNode}
-            onCharge={moveToCharge}
-            onStop={stopSelectedRobot}
-            onRelease={releaseSelectedRobot}
-          />
+          {rightPanelOpen && (
+            <RobotPanel
+              robotId={selectedRobot}
+              liveRobot={selectedLiveRobot}
+              targetNode={targetNode}
+              nearestNode={nearestNode}
+              scenarioActive={scenarioActive}
+              realMode={robotMode === 'real'}
+              emergencyStopped={emergencyStopped}
+              remoteStatus={remote.status}
+              remoteKeys={remote.activeKeys}
+              busy={busy}
+              onRemoteDown={remote.pressKey}
+              onRemoteUp={remote.releaseKey}
+              onRemoteStop={remote.stop}
+              onMove={moveToSelectedNode}
+              onReturnToRoute={returnToNearestNode}
+              onCharge={moveToCharge}
+              onStop={stopSelectedRobot}
+              onRelease={releaseSelectedRobot}
+            />
+          )}
         </div>
       </main>
     </div>
