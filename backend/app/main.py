@@ -139,10 +139,12 @@ async def root():
 
 @app.get("/health")
 async def health():
+    mode = mode_manager.mode
+
     return {
         "status": "ok",
-        "mode": mode_manager.mode,
-        "data_source": "mock",
+        "mode": mode,
+        "data_source": "mock" if mode == "simulation" else "ros2",
     }
 
 
