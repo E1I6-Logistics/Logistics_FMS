@@ -674,9 +674,12 @@ class RealNavigation:
                     self._traffic.protect_resources(rid, resources)
                     self._sync_errors[rid] = f"route_mismatch_protected:{exc}"
                 else:
-                    # 자동 주행 중이 아니고 마지막 점유 정보가 있는 로봇
+                    # 정지된 비작업 로봇의 마지막 점유 보호
                     if (
                         row is not None
+                        and robot.state in (RobotState.IDLE, RobotState.OFFLINE)
+                        and robot.order_id is None
+                        and robot.navigation_type is None
                         and row["route"] is None
                         and row["goal_node"] is None
                         and rid not in self._requests
@@ -1567,13 +1570,39 @@ class RealNavigation:
                     )
 
                     if current_conflict:
+                        occupied_by = [
+                            other["robot_id"]
+                            for other in self._robots.values()
+                            if other["robot_id"] != rid
+                            and occupied_resource(other, graph) in current_resources
+                        ]
 
-                        # 이미 현재 구간을 다른 로봇이 점유하면 시간표보다 충돌 방지가 우선이다.
+                        reserved_by = [
+                            row.robot_id
+                            for row in self._traffic._reservations.snapshot()
+                            if row.robot_id != rid
+                            and row.resource in current_resources
+                            and row.start <= now < row.end
+                        ]
+
+                        protected_by = [
+                            owner
+                            for owner, resources in self._traffic._protected_resources.items()
+                            if owner != rid
+                            and any(resource in resources for resource in current_resources)
+                        ]
+
+                        print(
+                            f"[REAL NAV CONFLICT] robot={rid} "
+                            f"segment={route['node_ids'][route['segment_index']]}->{target} "
+                            f"occupied_by={occupied_by} "
+                            f"reserved_by={reserved_by} "
+                            f"protected_by={protected_by}",
+                            flush=True,
+                        )
 
                         self._pause(rid, "current_segment_occupied")
-
                         self.stop(rid, reason="current_segment_occupied")
-
                         continue
 
                     reason = self._next_segment_reason(rid, route, planner, graph, now)
