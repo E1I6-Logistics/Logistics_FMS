@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
@@ -14,6 +16,9 @@ from ..schemas.robot import normalize_robot_id
 from ..models.robot import RobotState
 
 router = APIRouter(prefix="/api/command", tags=["commands"])
+
+# 추론 중 정지 또는 새 요청이 오면 이전 결과로 출발하지 않는다.
+_llm_requests: dict[str, str] = {}
 
 
 @router.get("/route-models")
@@ -97,7 +102,34 @@ async def send_coordinate_goal(payload: GoalCoordinateRequest):
 async def send_node_goal(payload: GoalNodeRequest):
     try:
         scenario_manager.ensure_available(payload.robot_id)
-        return navigate_to_node(payload.robot_id, payload.node_id, mode_manager.mode)
+        robot_id = normalize_robot_id(payload.robot_id)
+        _llm_requests.pop(robot_id, None)
+        if payload.driving_mode == "standard":
+            return navigate_to_node(payload.robot_id, payload.node_id, mode_manager.mode)
+        token = uuid4().hex
+        _llm_requests[robot_id] = token
+        try:
+            from ..services.llm_route_preview import preview_llm_route
+            mode = mode_manager.mode
+            start = _preview_start_node(payload.robot_id, mode)
+            graph = load_route_graph()
+            # 모델 호출은 잠금·이벤트 루프 밖에서 수행하고 완성 경로만 예약한다.
+            preview = await run_in_threadpool(
+                preview_llm_route, graph, start, payload.node_id,
+                selector=payload.selector, model=payload.model,
+            )
+            if (_llm_requests.get(robot_id) != token or mode_manager.mode != mode
+                    or load_route_graph() != graph):
+                raise HTTPException(status_code=409, detail="정지·새 요청·모드 또는 맵 변경으로 LLM 결과를 취소했습니다.")
+            scenario_manager.ensure_available(payload.robot_id)
+            if _preview_start_node(payload.robot_id, mode) != start:
+                raise ValueError("경로 생성 중 로봇의 출발 노드가 변경되었습니다.")
+            result = navigate_to_node(payload.robot_id, payload.node_id, mode, required_path=preview["path"])
+            return dict(result, driving_mode="llm", selector=payload.selector,
+                        model=payload.model, llm_preview=preview)
+        finally:
+            if _llm_requests.get(robot_id) == token:
+                _llm_requests.pop(robot_id, None)
 
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -128,6 +160,7 @@ async def charging_station(payload: StopRequest):
 @router.post("/stop")
 async def stop_robot(payload: StopRequest):
     try:
+        _llm_requests.pop(normalize_robot_id(payload.robot_id), None)
         scenario_manager.interrupt(payload.robot_id)
         if mode_manager.mode == "simulation":
             from ..services.mock_data import mock_fms
@@ -148,6 +181,7 @@ async def stop_robot(payload: StopRequest):
 @router.post("/stop-all")
 async def stop_all_robots():
     try:
+        _llm_requests.clear()
         scenario_manager.interrupt()
         if mode_manager.mode == "simulation":
             from ..services.mock_data import mock_fms

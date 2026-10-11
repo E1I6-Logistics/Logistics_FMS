@@ -40,6 +40,7 @@ class TrafficManager:
         self.lock = RLock()
         self._pending: dict[str, None] = {}
         self._concession: dict[str, dict] = {}
+        self._required_paths = {}
         self._request_sequence = 0
 
     def reset_after_stop(self):
@@ -59,7 +60,7 @@ class TrafficManager:
             return bool(self._concession) or any(
                 robot["goal_node"] is not None for robot in self._robots.values())
 
-    def request_navigation_after_stop(self, robot_id, goal_node, *, now, graph):
+    def request_navigation_after_stop(self, robot_id, goal_node, *, now, graph, required_path=None):
         """기존 실행 정지와 점유 갱신 후 새 요청을 접수하고 예약한다."""
         with self.lock:
             self._validate_time(now)
@@ -69,7 +70,24 @@ class TrafficManager:
                 raise ValueError("목적지 노드가 존재하지 않습니다.")
             robot = self._robots[robot_id]
             occupied_resource(robot, graph)
+            # 경로 생성 중 상태가 바뀐 요청은 기존 주행을 취소하기 전에 거부한다.
+            fixed = None
+            if required_path is not None:
+                fixed = tuple(str(n) for n in required_path)
+                if robot["goal_node"] is not None or robot["route"] is not None or robot["status"] != "IDLE":
+                    raise ValueError("로봇이 주행 중이거나 대기 중입니다. 정지 후 다시 시도하세요.")
+                if not fixed or fixed[0] != robot["occupied_node"] or fixed[-1] != goal_node:
+                    raise ValueError("LLM 경로의 출발·목적지와 로봇 상태가 다릅니다.")
+                if any(n not in planner.nodes for n in fixed) or any(
+                        not any(n == b for n, _ in planner.edges[a]) for a, b in zip(fixed, fixed[1:])):
+                    raise ValueError("LLM 경로에 존재하지 않는 노드·유향 간선이 있습니다.")
+                # 모델 결과의 방문 제한을 예약 경계에서도 다시 확인한다.
+                steps = list(zip(fixed, fixed[1:]))
+                if len(set(steps)) != len(steps) or any(fixed.count(n) > 2 for n in set(fixed)):
+                    raise ValueError("LLM 경로가 간선 재사용 또는 노드 방문 제한을 위반했습니다.")
             self.cancel_navigation_after_stop(robot_id)
+            if fixed is not None:
+                self._required_paths[robot_id] = fixed
             robot["stop_requested"] = False
             self._request_sequence += 1
             robot["request_order"] = self._request_sequence
@@ -87,6 +105,7 @@ class TrafficManager:
             robot["navigation_id"] = None
             robot["request_order"] = None
             robot["stop_requested"] = True
+            self._required_paths.pop(robot_id, None)
             self._concession.pop(robot_id, None)
             self._pending.pop(robot_id, None)
             self._release_schedule(robot)
@@ -116,6 +135,8 @@ class TrafficManager:
             robot["occupied_node"] = str(node_id)
             robot["occupied_edge"] = None
             route["segment_index"] = index
+            if robot_id in self._required_paths:
+                self._required_paths[robot_id] = self._required_paths[robot_id][1:]
             if index == len(route["node_ids"]) - 1:
                 self._finish_route(robot)
 
@@ -229,6 +250,7 @@ class TrafficManager:
             resource[1:] if resource[0] == "edge" else None,
             blocked=blocked, now=now, speed_mps=self.speed_mps,
             safety_margin=self.safety_margin,
+            required_path=self._required_paths.get(robot["robot_id"]),
         )
         if plan is None:
             return False
@@ -257,6 +279,7 @@ class TrafficManager:
                 "node_ids": node_ids, "edge_ids": edge_ids, "waypoint_yaws": waypoint_yaws,
                 "segment_index": 0, "phase": "ready", "departure_at": departure,
                 "segment_departures": departures,
+                "route_source": "llm" if robot["robot_id"] in self._required_paths else "algorithm",
             }
             robot["status"] = "WAITING" if departure > now else "NAVIGATING"
         return True
@@ -269,6 +292,7 @@ class TrafficManager:
             robot["status"] = "WAITING"
             self._pending.setdefault(robot["robot_id"], None)
         else:
+            self._required_paths.pop(robot["robot_id"], None)
             robot["goal_node"] = None
             robot["request_order"] = None
             robot["status"] = "IDLE"
@@ -278,6 +302,7 @@ class TrafficManager:
         trial = copy(self)
         trial.lock = RLock()
         trial._robots = deepcopy(self._robots)
+        trial._required_paths = dict(self._required_paths)
         trial._pending = dict(self._pending)
         trial._concession = deepcopy(self._concession)
         trial._reservations = ReservationTable()
@@ -291,7 +316,8 @@ class TrafficManager:
     def _resolve_deadlock(self, now, graph, planner):
         if self._concession or not self._pending:
             return
-        waiting = sorted(self._pending, key=lambda rid: self._robots[rid]["request_order"])
+        # LLM 경로는 양보 경로로 바꾸지 않고 동일 경로의 예약을 기다린다.
+        waiting = sorted((rid for rid in self._pending if rid not in self._required_paths), key=lambda rid: self._robots[rid]["request_order"])
         parked = [rid for rid, robot in self._robots.items()
                   if robot["status"] == "IDLE" and robot["goal_node"] is None
                   and robot["route"] is None and not robot["stop_requested"]]

@@ -165,7 +165,7 @@ class MockFmsStore:
         }
 
     
-    def navigate_to_node(self, robot_id: str, node_id: str | int) -> dict[str, Any]:
+    def navigate_to_node(self, robot_id: str, node_id: str | int, *, required_path=None) -> dict[str, Any]:
         """가상 로봇의 이동 요청을 공통 교통 제어 서비스에 전달한다."""
         with self._lock:
             robot = self._get_robot(robot_id)
@@ -174,7 +174,7 @@ class MockFmsStore:
             graph = load_route_graph()
             # 시뮬레이션은 이 잠금 안에서 즉시 정지할 수 있다.
             self._traffic.request_navigation_after_stop(
-                robot["robot_id"], target["id"], now=monotonic(), graph=graph,
+                robot["robot_id"], target["id"], now=monotonic(), graph=graph, required_path=required_path,
             )
             already_arrived = robot["goal_node"] is None
             response_route = deepcopy(robot["route"])  # 응답 경로는 잠금 안에서 복사하는 편이 좋음

@@ -30,7 +30,7 @@ const allLayers = { nodeEdge: true, route: true, station: true, robotId: true }
 // Enable each action only after the corresponding backend route is connected.
 // Without this guard an older /goal-node endpoint would silently use standard routing.
 const LLM_PREVIEW_READY = true
-const LLM_MOVE_READY = false
+const LLM_MOVE_READY = true
 const LLM_ORDER_READY = false
 
 export default function FmsControlApp() {
@@ -242,8 +242,13 @@ export default function FmsControlApp() {
         setBusy('nodeMove')
         setLlmPreview(null)
         setCommandState({ tone: 'info', message: 'LLM 경로의 유효성을 확인하고 예약을 요청합니다.' })
-        await sendGoalNode(selectedRobot, targetNode, 'llm', selectedRouteModel)
-        setCommandState({ tone: 'success', message: '유효한 LLM 경로를 예약·양보 제어에 전달했습니다.' })
+        const result = await sendGoalNode(selectedRobot, targetNode, 'llm', selectedRouteModel)
+        const preview = result.llm_preview as LlmRoutePreviewDto | undefined
+        if (preview) setLlmPreview(preview)
+        setCommandState({ tone: result.status === 'WAITING' ? 'info' : 'success',
+          message: result.status === 'WAITING'
+            ? 'LLM 경로의 점유·예약이 해제되기를 기다립니다. 양보가 필요한 경우 자동 양보는 미구현입니다.'
+            : '유효한 LLM 경로를 예약했습니다.' })
       } catch (error) {
         setCommandState({
           tone: 'danger',
@@ -676,7 +681,7 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMod
           </button>
           {drivingMode === 'llm' && (
             <div style={{ marginTop: 8, color: C.muted, fontSize: 9, lineHeight: 1.5 }}>
-              연결된 유향 경로는 최단거리 여부와 관계없이 예약·양보 제어에 전달합니다.
+              연결된 유향 경로는 최단거리 여부와 관계없이 선택 순서 그대로 예약합니다.
               <button
                 type="button"
                 onClick={onPreview}

@@ -85,7 +85,7 @@ class DistanceAStar:
     # blocked: 노드·통로별로 사용할 수 없는 시간 구간 -> 안전 여유가 반영된 기존 예약과 실제 점유를 전달.
     # 구간 중간 출발은 허용 방향별 끝점을 모두 비교
     def plan_timed(self, end, position, current_node, occupied_edge=None, *,
-                   blocked, now, speed_mps, safety_margin):
+                   blocked, now, speed_mps, safety_margin, required_path=None):
         end = str(end)
         if end not in self.nodes:
             raise ValueError('목적지 노드가 존재하지 않습니다.')
@@ -98,6 +98,19 @@ class DistanceAStar:
                 raise ValueError('현재 노드와 실제 위치가 일치하지 않습니다.')
         elif occupied_edge is None or any(n not in self.nodes for n in occupied_edge):
             raise ValueError('구간 중간 출발에는 점유 통로가 필요합니다.')
+
+        # LLM 경로는 노드 순서를 고정하고, 예약 가능한 출발 시각만 계산한다.
+        fixed = tuple(str(node) for node in required_path) if required_path is not None else None
+        if fixed is not None:
+            if not fixed or fixed[-1] != end or any(node not in self.nodes for node in fixed):
+                raise ValueError("고정 경로의 노드 또는 목적지가 올바르지 않습니다.")
+            if any(not any(n == b for n, _ in self.edges[a]) for a, b in zip(fixed, fixed[1:])):
+                raise ValueError("고정 경로에 존재하지 않는 유향 간선이 있습니다.")
+            if current_node is not None:
+                if fixed[0] != current_node:
+                    raise ValueError("고정 경로의 출발 노드와 현재 점유가 다릅니다.")
+            elif len(fixed) < 2 or set(fixed[:2]) != set(occupied_edge):
+                raise ValueError("고정 경로의 첫 구간과 현재 점유 통로가 다릅니다.")
 
         margin = safety_margin
         intervals = {}
@@ -149,7 +162,7 @@ class DistanceAStar:
         if current_node is not None:
             for i, (lower, upper) in enumerate(intervals[current_node]):
                 if lower <= now <= upper:
-                    state = (current_node, i)
+                    state = (current_node, i, 0)
                     best[state] = now
                     seeds[state] = ([current_node], [])
                     push(state, now)
@@ -160,13 +173,15 @@ class DistanceAStar:
             for previous, endpoint in ((a, b), (b, a)):
                 if not any(neighbor == endpoint for neighbor, _ in self.edges[previous]):
                     continue
+                if fixed is not None and (previous, endpoint) != fixed[:2]:
+                    continue
                 duration = math.dist(position, self.nodes[endpoint]) / speed_mps
                 for i, interval in enumerate(intervals[endpoint]):
                     move = earliest(now, math.inf, interval, edge_key(a, b), duration, True)
                     if move is None:
                         continue
                     departure, arrival = move
-                    state = (endpoint, i)
+                    state = (endpoint, i, 1 if fixed is not None else 0)
                     if arrival < best.get(state, math.inf):
                         best[state] = arrival
                         seeds[state] = ([previous, endpoint], [departure])
@@ -176,10 +191,10 @@ class DistanceAStar:
             _, arrival, state = heapq.heappop(queue)
             if arrival != best[state]:
                 continue
-            node, interval_index = state
+            node, interval_index, progress = state
             source_end = intervals[node][interval_index][1]
             # 목적지에서 계속 정차할 수 있는 구간에 도착해야 완료다.
-            if node == end and source_end == math.inf:
+            if node == end and source_end == math.inf and (fixed is None or progress == len(fixed) - 1):
                 suffix, departures = [], []
                 while state in parents:
                     suffix.append(state[0])
@@ -190,14 +205,18 @@ class DistanceAStar:
                     'node_ids': prefix + list(reversed(suffix)),
                     'segment_departures': initial_departures + list(reversed(departures)),
                 }
-            for neighbor, distance in self.edges[node]:
+            outgoing = self.edges[node]
+            if fixed is not None:
+                outgoing = [(n, d) for n, d in outgoing
+                            if progress + 1 < len(fixed) and n == fixed[progress + 1]]
+            for neighbor, distance in outgoing:
                 for i, interval in enumerate(intervals[neighbor]):
                     move = earliest(arrival, source_end, interval, edge_key(node, neighbor),
                                     distance / speed_mps)
                     if move is None:
                         continue
                     departure, reached = move
-                    successor = (neighbor, i)
+                    successor = (neighbor, i, progress + 1 if fixed is not None else 0)
                     if reached < best.get(successor, math.inf):
                         best[successor] = reached
                         parents[successor] = (state, departure)

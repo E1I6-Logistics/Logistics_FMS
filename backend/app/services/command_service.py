@@ -1,12 +1,12 @@
 """개별 명령과 시나리오가 공유하는 기존 모드별 이동/정지 호출."""
 
-def navigate_to_node(robot_id, node_id, mode):
+def navigate_to_node(robot_id, node_id, mode, *, required_path=None):
     if mode == "simulation":
         from .mock_data import mock_fms
-        result = mock_fms.navigate_to_node(robot_id, node_id)
+        result = mock_fms.navigate_to_node(robot_id, node_id, **({"required_path": required_path} if required_path is not None else {}))
     elif mode == "real":
         from ..ros2.ros_gateway import ros_gateway
-        result = ros_gateway.navigate_to_node(robot_id, node_id)
+        result = ros_gateway.navigate_to_node(robot_id, node_id, **({"required_path": required_path} if required_path is not None else {}))
     else:
         raise ValueError("지원하지 않는 운용 모드")
     return dict(result, mode=mode)

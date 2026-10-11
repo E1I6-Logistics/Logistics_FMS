@@ -843,7 +843,7 @@ class RealNavigation:
 
         self._cancelled.clear()
 
-    def request(self, robot_id, node_id, navigation_type, *, _request_version=None):
+    def request(self, robot_id, node_id, navigation_type, *, _request_version=None, required_path=None):
 
         with self.lock:
 
@@ -898,12 +898,13 @@ class RealNavigation:
                     node_id,
                     navigation_type,
                     _request_version,
+                    required_path,
                 )
 
                 return
 
             self._traffic.request_navigation_after_stop(
-                robot_id, str(node_id), now=self._clock(), graph=graph
+                robot_id, str(node_id), now=self._clock(), graph=graph, required_path=required_path
             )
 
             robot.goal_node = str(node_id)
@@ -1773,6 +1774,6 @@ class RealNavigation:
 
         if deferred is not None:
 
-            priority, node, navigation_type, version = deferred
+            priority, node, navigation_type, version, required_path = deferred
 
-            self.request(priority, node, navigation_type, _request_version=version)
+            self.request(priority, node, navigation_type, _request_version=version, required_path=required_path)
