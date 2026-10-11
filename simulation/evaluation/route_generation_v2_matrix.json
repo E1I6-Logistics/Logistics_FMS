@@ -159,7 +159,7 @@
         "enabled": false,
         "policy": "full_graph"
       },
-      "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\nroute_graph is a CompactAdjacencyGraph whose adjacency entries contain to and weight.\nWithin this one API call, apply Dijkstra: initialize tentative distances, repeatedly\nsettle the reachable node with minimum distance, relax outgoing adjacency entries,\nrecord predecessors, stop when target is settled, and reconstruct the path. Return\nconcise reasoning_steps, the final path, and total weight as schema-constrained JSON.",
+      "prompt": "You are a shortest-path solver for a directed weighted graph.\nroute_graph is a coordinate-free CompactAdjacencyGraph; each adjacency entry\ncontains a directed destination (to) and its stored weight. Within this one\nAPI call, apply A*. Compute an admissible graph-only heuristic: let m be the\nminimum nonnegative edge weight, and let hops(n) be the minimum number of\ndirected edges from n to target when weights are ignored. Use h(n) = m *\nhops(n), or h(n) = 0 if m = 0. For nodes that cannot reach target, do not\nexpand them. Start with g(start) = 0 and f(n) = g(n) + h(n). Repeatedly expand\nthe open node with the smallest f, relax outgoing edges using their exact\nstored weights, and record predecessors. Stop when target is removed from\nthe open set; then reconstruct the path. Return concise reasoning_steps,\nthe final path, and total weight as schema-constrained JSON.",
       "neighbor_context": {
         "enabled": false,
         "policy": "none"
@@ -176,7 +176,7 @@
         "enabled": true,
         "policy": "path_relevant_adjacency_once"
       },
-      "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\nroute_graph is a CompactAdjacencyGraph whose adjacency entries contain to and weight.\nWithin this one API call, apply Dijkstra: initialize tentative distances, repeatedly\nsettle the reachable node with minimum distance, relax outgoing adjacency entries,\nrecord predecessors, stop when target is settled, and reconstruct the path. Return\nconcise reasoning_steps, the final path, and total weight as schema-constrained JSON.",
+      "prompt": "You are a shortest-path solver for a directed weighted graph.\nroute_graph is a coordinate-free CompactAdjacencyGraph; each adjacency entry\ncontains a directed destination (to) and its stored weight. Within this one\nAPI call, apply A*. Compute an admissible graph-only heuristic: let m be the\nminimum nonnegative edge weight, and let hops(n) be the minimum number of\ndirected edges from n to target when weights are ignored. Use h(n) = m *\nhops(n), or h(n) = 0 if m = 0. For nodes that cannot reach target, do not\nexpand them. Start with g(start) = 0 and f(n) = g(n) + h(n). Repeatedly expand\nthe open node with the smallest f, relax outgoing edges using their exact\nstored weights, and record predecessors. Stop when target is removed from\nthe open set; then reconstruct the path. Return concise reasoning_steps,\nthe final path, and total weight as schema-constrained JSON.",
       "neighbor_context": {
         "enabled": false,
         "policy": "none"
