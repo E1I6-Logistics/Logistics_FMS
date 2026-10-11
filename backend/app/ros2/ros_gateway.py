@@ -234,7 +234,7 @@ class RosGateway:
                 try:
                     self._stop_before_navigation(robot_id, callback, reason, cancel_order=False)
                 except (ValueError, RuntimeError) as exc:
-                    robot.set_state(RobotState.PAUSED)
+                    robot.pause("omx_next_request_failed", str(exc))
                     print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ROS GATEWAY OMX ERROR] robot={robot_id} "
                           f"next_request_failed={exc!r}", flush=True)
 
@@ -464,7 +464,7 @@ class RosGateway:
         same_active_goal = (
             robot.goal_node == str(node_id)
             and (_order_step or robot.order_id is None)
-            and robot.state in (RobotState.MOVING, RobotState.WAITING)
+            and robot.state in (RobotState.NAVIGATING, RobotState.WAITING)
             and robot_id not in self._navigation._stopping
             and (robot_id in self._navigation._requests
                  or robot_id in self._navigation._executing)
@@ -574,7 +574,7 @@ class RosGateway:
                 try:
                     self._ros_node.send_precision_dock(robot_id)
                 except (ValueError, RuntimeError) as exc:
-                    robot.set_state(RobotState.PAUSED)
+                    robot.pause("precision_dock_goal_send_failed", str(exc))
                     print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ROS GATEWAY DOCK ERROR] "
                           f"robot={robot_id} goal_send_failed={exc!r}", flush=True)
                 return
@@ -600,7 +600,7 @@ class RosGateway:
                 try:
                     self._ros_node.send_aruco_align(robot_id=robot_id, marker_id=marker_id)
                 except (ValueError, RuntimeError) as exc:
-                    robot.set_state(RobotState.PAUSED)
+                    robot.pause("aruco_goal_send_failed", str(exc))
                     print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ROS GATEWAY ARUCO ERROR] "
                           f"robot={robot_id} goal_send_failed={exc!r}", flush=True)
                 return
@@ -615,7 +615,7 @@ class RosGateway:
 
         elif status == GoalStatus.STATUS_ABORTED:
             # 실패 처리
-            robot.set_state(RobotState.PAUSED)
+            robot.pause("navigation_aborted", f"status={status}")
 
     @_navigation_locked
     def return_to_nearest_node(self, robot_id: str) -> dict:
@@ -683,7 +683,7 @@ class RosGateway:
             robot.route = None
             print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ROS GATEWAY DOCK] robot={robot_id} completed", flush=True)
         else:
-            robot.set_state(RobotState.PAUSED)
+            robot.pause("precision_dock_failed", f"status={status}")
             print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [ROS GATEWAY DOCK] robot={robot_id} failed", flush=True)
 
     @_navigation_locked
@@ -726,7 +726,7 @@ class RosGateway:
                     items[key] = quantity
 
             if not items:
-                robot.set_state(RobotState.PAUSED)
+                robot.pause("order_items_missing_for_node", f"order_id={robot.order_id}, node={robot.current_node}")
                 print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ROS GATEWAY ARUCO] robot={robot_id} "
                       f"order={robot.order_id} has no items for node={robot.current_node}", flush=True)
                 return
@@ -738,16 +738,16 @@ class RosGateway:
             robot.set_state(RobotState.WAITING)
             try:
                 mqtt_manager.send_job(omx_id=omx_id, job_id=robot.order_id, items=items)
-            except (ValueError, RuntimeError) as e:
+            except (ValueError, RuntimeError) as exc:
                 print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ROS GATEWAY MQTT ERROR] "
-                      f"robot={robot_id} error={e!r}", flush=True)
-                robot.set_state(RobotState.PAUSED)
+                      f"robot={robot_id} error={exc!r}", flush=True)
+                robot.pause("mqtt_job_send_failed", str(exc))
                 return
 
         else:
             print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [ROS GATEWAY ARUCO] robot={robot_id} "
                   f"failed status={status}", flush=True)
-            robot.set_state(RobotState.PAUSED)
+            robot.pause("aruco_alignment_failed", f"status={status}")
 
 
 ros_gateway = RosGateway()

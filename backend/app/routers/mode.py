@@ -47,7 +47,7 @@ async def set_mode(payload: ModeRequest):
         with ros_gateway._navigation.lock:
             navigation = ros_gateway._navigation
             busy = [robot.robot_id for robot in fleet_manager.get_all_robots()
-                    if robot.state in (RobotState.MOVING, RobotState.WAITING,
+                    if robot.state in (RobotState.MOVING, RobotState.WAITING, RobotState.NAVIGATING,
                                        RobotState.TASK_ASSIGNED, RobotState.DOCKING)
                     or robot.order_id is not None
                     or robot.route is not None

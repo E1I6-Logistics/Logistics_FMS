@@ -195,7 +195,10 @@ class OrderManager:
 
         # OMX 작업 실패
         if not success:
-            target_robot.set_state(RobotState.PAUSED)
+            target_robot.pause(
+                "omx_job_failed",
+                f"omx_id={omx.omx_id}, order_id={target_robot.order_id}",
+            )
             return
 
         # 작업대 OMX 작업까지 완료
@@ -205,9 +208,12 @@ class OrderManager:
 
             station_node = CHARGING_STATION_NODES.get(target_robot.robot_id)
             if station_node is None:
-                target_robot.set_state(RobotState.PAUSED)
-                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] robot={target_robot.robot_id} "
-                      "charging station not assigned", flush=True)
+                target_robot.pause("charging_station_missing")
+                print(
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] "
+                    f"robot={target_robot.robot_id} charging station not assigned",
+                    flush=True,
+                )
                 return
 
             try:
@@ -219,9 +225,12 @@ class OrderManager:
                 print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [ORDER] robot={target_robot.robot_id} "
                       f"return to station node={station_node} without docking", flush=True)
             except (ValueError, RuntimeError) as exc:
-                target_robot.set_state(RobotState.PAUSED)
-                print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] robot={target_robot.robot_id} "
-                      f"station_return_failed={exc!r}", flush=True)
+                target_robot.pause("station_return_failed", str(exc))
+                print(
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] "
+                    f"robot={target_robot.robot_id} station_return_failed={exc!r}",
+                    flush=True,
+                )
             return
 
         # Pickup OMX 작업 완료
@@ -229,9 +238,12 @@ class OrderManager:
         try:
             self.move_to_next_destination(target_robot.robot_id)
         except (ValueError, RuntimeError) as exc:
-            target_robot.set_state(RobotState.PAUSED)
-            print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] robot={target_robot.robot_id} "
-                  f"next_destination_failed={exc!r}", flush=True)
+            target_robot.pause("next_destination_failed", str(exc))
+            print(
+                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [ORDER ERROR] "
+                f"robot={target_robot.robot_id} next_destination_failed={exc!r}",
+                flush=True,
+            )
 
 
 order_manager = OrderManager()

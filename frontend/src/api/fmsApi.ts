@@ -177,6 +177,7 @@ export type RobotStateDto = {
   ui_id?: string
   status: string
   pause_reason?: string | null
+  pause_reason_code?: string | null
   battery: number | null
   x: number
   y: number

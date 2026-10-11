@@ -714,24 +714,26 @@ class RealNavigation:
 
         return valid
 
-    def _pause(self, robot_id, reason):
-
+    def _pause(
+        self, robot_id: str, reason_code: str, detail: str | None = None
+    ) -> None:
         robot = self._fleet.get_robot(robot_id)
 
         if robot is None:
-
             return
 
-        if robot.state != RobotState.EMERGENCY_STOP:
+        if robot.state == RobotState.EMERGENCY_STOP:
+            return
 
-            robot.set_state(RobotState.PAUSED if robot.connected else RobotState.OFFLINE)
-
-        if robot.state == RobotState.PAUSED:
-            robot.pause_reason = str(reason)
+        if robot.connected:
+            robot.pause(reason_code, detail)
+        else:
+            robot.set_state(RobotState.OFFLINE)
 
         print(
-            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV STATE] robot={robot_id} "
-            f"state={robot.state.value} reason={reason}",
+            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV STATE] "
+            f"robot={robot_id} state={robot.state.value} "
+            f"reason_code={reason_code} detail={detail!r}",
             flush=True,
         )
 
@@ -1060,7 +1062,7 @@ class RealNavigation:
             ):
 
                 robot.set_state(
-                    RobotState.MOVING
+                    RobotState.NAVIGATING
                     if rid in self._executing and rid not in self._stopping
                     else RobotState.WAITING
                 )
@@ -1279,7 +1281,7 @@ class RealNavigation:
 
         except (OSError, KeyError, ValueError) as exc:
 
-            self._pause(rid, f"hold_failed:{exc}")
+            self._pause(rid, "hold_failed", str(exc))
 
             return  # 정지를 확인하지 못했으므로 예약은 유지한다.
 
@@ -1409,7 +1411,9 @@ class RealNavigation:
 
                     if rid not in self._stopping:
 
-                        self._pause(rid, str(self._sync_errors))
+                        reason = self._sync_errors.get(rid, "state_sync_failed")
+                        reason_code, _, detail = reason.partition(":")
+                        self._pause(rid, reason_code, detail or None)
 
                         self.stop(rid, reason="pose_or_occupancy_invalid")
 
@@ -1420,7 +1424,8 @@ class RealNavigation:
                     "route_mismatch_protected:"
                 ):
                     if rid in self._executing and rid not in self._stopping:
-                        self._pause(rid, reason)
+                        reason_code, _, detail = reason.partition(":")
+                        self._pause(rid, reason_code, detail or None)
                         self.stop(rid, reason="pose_or_occupancy_invalid")
 
             self._release_cleared_reservations(planner)
@@ -1723,7 +1728,7 @@ class RealNavigation:
 
         if rid in self._executing:
 
-            robot.set_state(RobotState.MOVING)
+            robot.set_state(RobotState.NAVIGATING)
 
     def on_execution_error(self, robot_id, reason):
 
@@ -1731,7 +1736,7 @@ class RealNavigation:
 
         with self.lock:
 
-            self._pause(robot_id, reason)
+            self._pause(robot_id, "navigation_execution_error", reason)
 
             if robot_id in self._stopping:
 
@@ -1762,7 +1767,7 @@ class RealNavigation:
 
             if not robot.connected:
                 # 통신 단절 중의 Result만으로 물리 정지와 점유 해제를 확정하지 않는다.
-                self._pause(robot_id, f"navigation_result_offline:{status}")
+                self._pause(robot_id, "navigation_result_offline", f"status={status}")
                 return
 
             if (
@@ -1776,8 +1781,7 @@ class RealNavigation:
 
                     self._pause(deferred[0], "concession_failed")
 
-                self._pause(robot_id, f"navigation_result:{status}")
-
+                self._pause(robot_id, "navigation_result_failed", f"status={status}")
                 self.cancel_after_stop(robot_id)
 
                 return
@@ -1789,15 +1793,12 @@ class RealNavigation:
                 or route["node_ids"][-1] != execution[1]
                 or route["segment_index"] != len(route["node_ids"]) - 2
             ):
-
                 self._pause(robot_id, "route_progress_unconfirmed")
-
+                
                 return  # 통과하지 못한 중간 Node를 성공으로 간주하거나 예약을 해제하지 않는다.
 
             self._arrivals[robot_id] = (execution, self._clock() + REAL_ARRIVAL_CONFIRM_TIMEOUT_S)
-
             robot.set_state(RobotState.WAITING)
-
             self._check_arrival(robot_id)
 
     def _check_arrival(self, robot_id):
@@ -1857,7 +1858,7 @@ class RealNavigation:
 
             self._arrivals.pop(robot_id, None)
 
-            self._pause(robot_id, f"arrival_failed:{reason}, target={target}, distance={distance}")
+            self._pause(robot_id, "arrival_failed", f"reason={reason}, target={target}, distance={distance}")
 
             self.cancel_after_stop(robot_id)
 
