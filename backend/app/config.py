@@ -61,9 +61,9 @@ MQTT_BROKER_PORT = int(os.getenv("FMS_MQTT_BROKER_PORT", "1883"))
 ZENOH_MISSING_GRACE_S = float(os.getenv("FMS_ZENOH_MISSING_GRACE_S", "5.0"))
 
 # 실제 로봇이 움직일 것으로 예상하는 속도(m/s). 예약 시간을 계산할 때 쓴다.
-# 기본값은 0.12이며 Nav2 주행 속도를 직접 변경하지 않는다.
+# 기본값은 0.10이며 Nav2 주행 속도를 직접 변경하지 않는다.
 # 실측 평균속도보다 낮추면 예약이 길어지고, 높이면 예약 충돌 위험이 커진다.
-REAL_NAVIGATION_SPEED_MPS = float(os.getenv("FMS_REAL_NAVIGATION_SPEED_MPS", "0.12"))
+REAL_NAVIGATION_SPEED_MPS = float(os.getenv("FMS_REAL_NAVIGATION_SPEED_MPS", "0.10"))
 
 # 지점과 통로의 예약 시간 앞뒤에 더하는 여유 시간(초).
 # 시간 오차가 크면 늘리되 다른 로봇의 대기 시간이 길어진다.
