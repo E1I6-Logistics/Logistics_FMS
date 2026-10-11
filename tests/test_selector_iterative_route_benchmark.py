@@ -527,10 +527,15 @@ class SelectorIterativeRouteBenchmarkTest(unittest.TestCase):
 
     # JSON 설정은 Graph hash와 공통 옵션을 검증하고 모델별 최종 설정을 만든다.
     def test_iterative_ollama_config_resolves_selected_models(self):
-        resolved = load_iterative_config(
-            Path("simulation/evaluation/selector_iterative_benchmark.json"),
-            ["qwen3:4b", "phi4:14b"],
-        )
+        # 실행용 모델 설정을 바꾸지 않고 독립된 설정에서 모델 선택 처리를 확인한다.
+        config = json.loads(Path("simulation/evaluation/selector_iterative_benchmark.json").read_text())
+        for model in config["models"]:
+            if model["name"] == "qwen3:4b":
+                model["enabled"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps(config))
+            resolved = load_iterative_config(config_path, ["qwen3:4b", "phi4:14b"])
 
         self.assertEqual(resolved["graph_path"].name, "test_int.geojson")
         self.assertEqual(

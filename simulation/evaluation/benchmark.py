@@ -330,7 +330,7 @@ def _is_timeout(error: Exception) -> bool:
 
 
 def _compute_model_answer(provider: Any, case: dict, prepared: dict) -> dict:
-    """Execute one strategy without allowing Python to choose a search node."""
+    """Execute one strategy; iterative forced steps use the shared selector policy."""
     settings = prepared["config"]["settings"]
     model_graph = case.get("model_graph", prepared["compact_graph"])
     provider.last_chain_inferences = None
@@ -341,7 +341,11 @@ def _compute_model_answer(provider: Any, case: dict, prepared: dict) -> dict:
             int(case["start"]),
             int(case["goal"]),
             instructions=prepared["config"]["prompt"],
-            max_steps=int(settings.get("max_chain_steps", len(prepared["points"]))),
+            max_steps=int(settings.get("max_chain_steps", len(prepared["points"]) * 2)),
+            route_inputs=prepared,
+            baseline_case={"start": int(case["start"]), "target": int(case["goal"]),
+                           "expected_path": case["expected_path"],
+                           "expected_distance": case["expected_distance"]},
             neighbor_context_enabled=bool(
                 prepared["config"].get("neighbor_context", {}).get("enabled")
             ),
@@ -382,6 +386,7 @@ def _run_trial(
             )
             attempt["valid_path"] = True
         except Exception as error:
+            answer = getattr(error, "route_answer", answer)
             attempt.update(
                 timed_out=_is_timeout(error),
                 error_type=type(error).__name__,
@@ -392,9 +397,14 @@ def _run_trial(
                 time.perf_counter() - started, 6
             )
             chain_inferences = getattr(provider, "last_chain_inferences", None)
+            if isinstance(chain_inferences, list):
+                chain_result = getattr(provider, "last_chain_result", None) or {}
+                attempt["api_call_count"] = chain_result.get("api_call_count", len(chain_inferences))
+            else:
+                attempt["api_call_count"] = 1
             if chain_inferences:
                 attempt["chain_inferences"] = chain_inferences
-            else:
+            elif chain_inferences is None:
                 inference = getattr(provider, "last_inference", None)
                 if inference is not None:
                     attempt["inference"] = inference
@@ -429,7 +439,7 @@ def _run_trial(
     )
     input_characters = (
         int(answer.get("request_character_count", 0))
-        if isinstance(answer, dict) and answer.get("request_character_count")
+        if isinstance(answer, dict) and "request_character_count" in answer
         else len(prepared["config"]["prompt"] + compact_input)
     )
     # 원시 응답의 종료 사유를 집계해 모델 실패와 경로 검증 실패를 구분한다.
@@ -459,8 +469,7 @@ def _run_trial(
     )
     chain_steps = answer.get("chain_steps") if isinstance(answer, dict) else None
     api_call_count = sum(
-        len(item["chain_inferences"]) if item.get("chain_inferences") else 1
-        for item in attempts
+        item["api_call_count"] for item in attempts
     )
     return {
         "trial_id": f"{model_name}|{start}|{goal}|{repeat}",
@@ -539,6 +548,7 @@ def _run_trial(
             "reasoning_character_count": reasoning_character_count,
             "api_call_count": api_call_count,
             "chain_step_count": len(chain_steps) if isinstance(chain_steps, list) else 0,
+            "forced_step_count": sum(bool(step.get("forced_step")) for step in (chain_steps or [])),
             "retrieved_node_count": case.get("retrieval", {}).get(
                 "retrieved_node_count"
             ),
@@ -638,6 +648,9 @@ def write_exports(output: Path) -> dict:
                 ),
                 "mean_api_call_count": mean(
                     item["metrics"].get("api_call_count", 1) for item in group
+                ),
+                "mean_forced_step_count": mean(
+                    item["metrics"].get("forced_step_count", 0) for item in group
                 ),
                 "mean_chain_step_count": mean(
                     item["metrics"].get("chain_step_count", 0) for item in group

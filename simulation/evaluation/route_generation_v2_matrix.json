@@ -45,60 +45,107 @@
   ],
   "cases": [
     {
-      "start": 2,
-      "goal": 11,
+      "start": 6,
+      "goal": 5,
       "expected_path": [
-        2,
-        9,
-        7,
-        11
+        6,
+        5
       ],
-      "expected_distance": 191.0
+      "expected_distance": 79.0
+    },
+    {
+      "start": 11,
+      "goal": 4,
+      "expected_path": [
+        11,
+        12,
+        4
+      ],
+      "expected_distance": 45.0
     },
     {
       "start": 8,
+      "goal": 2,
+      "expected_path": [
+        8,
+        7,
+        9,
+        2
+      ],
+      "expected_distance": 143.0
+    },
+    {
+      "start": 7,
+      "goal": 0,
+      "expected_path": [
+        7,
+        8,
+        10,
+        0
+      ],
+      "expected_distance": 128.0
+    },
+    {
+      "start": 12,
+      "goal": 3,
+      "expected_path": [
+        12,
+        11,
+        3
+      ],
+      "expected_distance": 45.0
+    },
+    {
+      "start": 11,
+      "goal": 3,
+      "expected_path": [
+        11,
+        3
+      ],
+      "expected_distance": 14.0
+    },
+    {
+      "start": 5,
+      "goal": 6,
+      "expected_path": [
+        5,
+        6
+      ],
+      "expected_distance": 79.0
+    },
+    {
+      "start": 0,
       "goal": 5,
       "expected_path": [
+        0,
+        10,
         8,
         7,
         5
       ],
-      "expected_distance": 69.0
-    },
-    {
-      "start": 3,
-      "goal": 1,
-      "expected_path": [
-        3,
-        11,
-        7,
-        9,
-        1
-      ],
-      "expected_distance": 191.0
+      "expected_distance": 166.0
     },
     {
       "start": 4,
-      "goal": 0,
+      "goal": 3,
       "expected_path": [
         4,
         12,
-        8,
-        10,
-        0
+        11,
+        3
       ],
-      "expected_distance": 190.0
+      "expected_distance": 59.0
     },
     {
-      "start": 12,
+      "start": 2,
       "goal": 0,
       "expected_path": [
-        12,
-        8,
+        2,
+        9,
         10,
         0
       ],
-      "expected_distance": 176.0
+      "expected_distance": 154.0
     }
   ],
   "settings": {
@@ -184,37 +231,68 @@
     },
     {
       "name": "iterative_full_graph_only",
-      "description": "V2 iterative_full_graph_only on the actual frontend route graph",
+      "description": "최종 84쌍 시험과 같은 인접 후보·순환 제한·강제 이동 규칙을 고정 10쌍에 적용한다.",
       "experiment_mode": "V2_ITERATIVE_FULL_GRAPH_ONLY",
       "response_format": "iterative_chain",
       "execution_strategy": "iterative_chain",
-      "max_chain_steps": 13,
+      "max_chain_steps": 26,
       "retrieval": {
         "enabled": false,
         "policy": "full_graph"
       },
-      "prompt": "Choose exactly one next node from current_node toward target_node so that the\ncomplete route has minimum total weight. Use the full directed CompactAdjacencyGraph,\ncurrent_node, target_node, visited_nodes, and accumulated_distance. If available_edges\nis present, it is an exact adjacency lookup for the current node; select only from it.\nDo not select a visited node. Return only selected_node as schema-constrained JSON.",
+      "prompt": "Select exactly one next node for the minimum-total-weight directed route from current_node to target_node. Consider the estimated total remaining cost to the target, not merely the weight of the next edge. Use CompactAdjacencyGraph weights exactly as stored. The selected node must be connected by one directed edge from current_node and must be one of the supplied criteria. If available_edges is present, choose only a node listed there; it contains the exact outgoing edges and stored weights. Never reuse an edge in used_edges. Respect max_visits_per_node. Do not return to previous_node unless backtrack_allowed is true. Older nodes may be revisited within those limits. Return only the selected criteria ID.",
       "neighbor_context": {
         "enabled": false,
         "policy": "none"
+      },
+      "iterative_policy": {
+        "version": "shared_neighbor_choice_v1",
+        "candidate_scope": "neighbors",
+        "max_visits_per_node": 2,
+        "edge_reuse_allowed": false,
+        "backtrack_policy": "unused_reverse_edge_only_when_no_other_candidate",
+        "single_candidate_policy": "forced_step_without_model_call"
       }
     },
     {
       "name": "iterative_neighbor_context",
-      "description": "V2 iterative_neighbor_context on the actual frontend route graph",
+      "description": "최종 84쌍 시험과 같은 인접 후보·순환 제한·강제 이동 규칙을 고정 10쌍에 적용한다.",
       "experiment_mode": "V2_ITERATIVE_NEIGHBOR_CONTEXT",
       "response_format": "iterative_chain",
       "execution_strategy": "iterative_chain",
-      "max_chain_steps": 13,
+      "max_chain_steps": 26,
       "retrieval": {
         "enabled": false,
         "policy": "full_graph"
       },
-      "prompt": "Choose exactly one next node from current_node toward target_node so that the\ncomplete route has minimum total weight. Use the full directed CompactAdjacencyGraph,\ncurrent_node, target_node, visited_nodes, and accumulated_distance. If available_edges\nis present, it is an exact adjacency lookup for the current node; select only from it.\nDo not select a visited node. Return only selected_node as schema-constrained JSON.",
+      "prompt": "Select exactly one next node for the minimum-total-weight directed route from current_node to target_node. Consider the estimated total remaining cost to the target, not merely the weight of the next edge. Use CompactAdjacencyGraph weights exactly as stored. The selected node must be connected by one directed edge from current_node and must be one of the supplied criteria. If available_edges is present, choose only a node listed there; it contains the exact outgoing edges and stored weights. Never reuse an edge in used_edges. Respect max_visits_per_node. Do not return to previous_node unless backtrack_allowed is true. Older nodes may be revisited within those limits. Return only the selected criteria ID.",
       "neighbor_context": {
         "enabled": true,
         "policy": "exact_current_node_adjacency_each_step"
+      },
+      "iterative_policy": {
+        "version": "shared_neighbor_choice_v1",
+        "candidate_scope": "neighbors",
+        "max_visits_per_node": 2,
+        "edge_reuse_allowed": false,
+        "backtrack_policy": "unused_reverse_edge_only_when_no_other_candidate",
+        "single_candidate_policy": "forced_step_without_model_call"
       }
     }
-  ]
+  ],
+  "case_selection": {
+    "policy": "frozen_first_five_plus_seeded_sample_of_remaining_all_pairs",
+    "route_seed": 20260928,
+    "case_count": 10,
+    "target_nodes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "final_all_pairs_subset": true
+  }
 }

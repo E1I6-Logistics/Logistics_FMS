@@ -838,25 +838,29 @@ weight를 곱해 추정한다. 이동 횟수는 목적지에서 들어오는 간
 모델이 절차를 정확히 수행한다는 보장은 없으므로 최종 유향 간선과 비용을 코드로 검증한다.
 이전 수식 프롬프트 및 누적 비용만 비교한 프롬프트의 결과와 새 결과는 별도 시험으로 기록한다.
 출력 예산 효과를 비교할 때는 같은 새 프롬프트로 512/1024/2048을 재측정한다.
-Iterative 조건은 모델에게 A*의 open set이나 relaxation을 계산하게 하지
-않는다. 매 호출에서 모델은 전체 Graph, 현재 위치, Target, 방문 경로와 누적 거리를
-보고 다음 Node 하나만 선택한다. Python은 상태 저장과 모델이 반환한 Node의 실제
-방향성 Edge 존재 여부만 검증하며, `criteria`나 선택 후보를 모델 입력에 만들지 않는다.
-모델이 고른 Node를 최단 경로 Node로 대신 수정하지도 않는다.
+Iterative 조건은 최종 84쌍 시험과 같은 `iterative_route_runner.py` 실행 함수를
+사용하되 matrix에 지정된 고정 10쌍만 5회씩 실행한다. 현재 맵에서는 최대 26단계다.
+기존 5쌍을 유지하고 나머지 79쌍에서 시드 20260928로 5쌍을 중복 없이 추가했다.
+10쌍은 6→5, 11→4, 8→2, 7→0, 12→3, 11→3, 5→6, 0→5, 4→3, 2→0이다.
+모두 최종 84쌍에 포함되며 여섯 조건이 동일하게 사용한다.
+각 쌍의 Start와 Target은 다르지만 여러 쌍 사이에서는 같은 노드를 다시 사용할 수 있다.
+파생 configs의 case_selection에 선정 시드와 정책을 보존한다.
+두 반복 조건 모두 전체 Graph·현재/직전 Node·Target·방문 경로·방문 횟수·사용 Edge·
+누적 비용과 **이동 가능한 인접 Node criteria**를 전달한다. Neighbor Context 조건만
+동일 후보의 `available_edges`를 추가한다. 모델은 `{"choice":"node_2"}`처럼 후보 ID 하나를 반환한다.
 
-```text
-Start Node
-    ↓
-모델 API가 다음 Node 하나 선택
-    ↓
-실제 Edge 검증 후 현재 Node 갱신
-    ↓
-Target 도착까지 반복
-```
+- Node별 최대 2회 방문, 같은 방향성 Edge 재사용 금지.
+- 직전 Node는 다른 후보가 없을 때만 미사용 역방향 Edge로 복귀 가능.
+- 후보 1개는 API 호출 없이 강제 이동하며 `forced_step=true`로 기록.
+- 선택 후 실제 Edge와 이동 제한을 검증하고 Target까지 반복.
+- 실패 단계·부분 경로·실제 API 호출 수·강제 이동 수·전체 시간을 보존.
 
-직접 연결이 하나인 단계도 같은 입력 형식을 유지하기 위해 모델을 호출한다. 최종적으로
-Target 도착 여부, 전체 경로 유효성, Ground Truth 최단 경로·거리 일치율, API 호출
-횟수와 총 시간을 비교한다.
+이 비교의 가설은 **후보 제한과 검증을 포함한 반복 선택 시스템이 단일 호출보다 유효 도착률을
+높이는가**이다. 반복 호출만의 효과를 분리한 시험은 아니다. Python은 인접 후보를 제한하고
+강제 이동도 수행하지만 A* 정답으로 다음 노드를 대신 선택하지 않는다.
+결론은 새 결과의 유효 도착률 → 유효 도착 중 최단 비용 일치 → 전체 소요 시간 순으로 판단한다.
+10쌍 시험은 예비 비교이며, 선정 방식의 일반성을 최종 84쌍에서 확인한다.
+기존 13단계·후보 없는 selected_node 방식의 결과와 새 결과를 합산하지 않는다.
 
 ### 9.3 Graph Retrieval 정의
 
@@ -904,12 +908,12 @@ Edge는 값이 정확히 정의된 구조화 데이터이므로 임베딩 유사
 `iterative_neighbor_context`라고 부른다.
 
 매 단계 전체 Graph와 상태는 그대로 보내고, Python이 현재 Node에서 이동 가능한
-미방문 Edge를 정확히 조회해 다음 형태로 추가한다.
+순환 제한을 만족하는 Edge를 정확히 조회해 다음 형태로 추가한다.
 
 ```json
 "available_edges": [
-  {"node": 1, "distance": 0.3777115936682494},
-  {"node": 18, "distance": 0.428476667276754}
+  {"node": 1, "weight": 0.3777115936682494},
+  {"node": 18, "weight": 0.428476667276754}
 ]
 ```
 
@@ -917,7 +921,7 @@ Edge는 값이 정확히 정의된 구조화 데이터이므로 임베딩 유사
 
 ```text
 iterative_full_graph_only
-= 전체 Graph + current + target + visited + accumulated distance
+= 전체 Graph + current/previous + target + 방문/사용 Edge 상태 + 누적 비용 + 인접 criteria
 
 iterative_neighbor_context
 = 같은 입력 + adjacency[current_node]에서 정확히 조회한 available_edges
@@ -936,12 +940,13 @@ python -m simulation.evaluation.v2_benchmark \
   --check
 ```
 
-PC 10종 전체를 6조건으로 실행한다.
+최종 비교의 Ollama 3종을 고정 10쌍 × 5회 × 6조건으로 실행한다(총 900회).
 
 ```bash
 python -m simulation.evaluation.v2_benchmark \
   --matrix simulation/evaluation/route_generation_v2_matrix.json \
-  --output simulation/benchmark_results/pc-v2-$(date +%Y%m%d-%H%M%S)
+  --model gemma3:12b --model deepseek-coder:6.7b --model phi4:14b \
+  --output "simulation/benchmark_results/pc-v2-aligned-10pairs-$(date +%Y%m%d-%H%M%S)"
 ```
 
 V2는 Jetson에서 실행하지 않는다. PC 결과만 V2 비교 자료로 사용한다.
@@ -950,7 +955,7 @@ V2는 Jetson에서 실행하지 않는다. PC 결과만 V2 비교 자료로 사�
 
 기존 512토큰 결과를 보존한 채 CoT 두 조건만 1024/2048토큰으로 실행한다.
 모델·맵·경로·프롬프트·num_ctx=4096은 유지한다. 아래 명령은 timeout=120초도 유지하여
-출력 예산만 변경한다. 실행별 3모델 × 2조건 × 5쌍 × 5회 = 150회다.
+출력 예산만 변경한다. 실행별 3모델 × 2조건 × 10쌍 × 5회 = 300회다.
 
 ```bash
 for budget in 1024 2048; do
@@ -1015,6 +1020,10 @@ python -m simulation.evaluation.compare_strategy_results \
 
 비교할 핵심 값은 최단 경로·거리 일치율, 총 응답시간, 실제 입력·출력 토큰,
 API 호출 횟수, timeout, 출력 예산 소진율과 Retrieval coverage다.
+반복 결과의 trials.jsonl에서 metrics.forced_step_count와 llm.chain_steps도 확인한다.
+configs/*.json 및 manifest의 settings.iterative_policy로 새 반복 규칙을 구분한다.
+512토큰으로 CoT 출력이 잘리면 그 결과만으로 기법이 열등하다고 결론내리지 않는다.
+출력 예산을 바꾼 비교는 모든 조건에 같은 --num-predict 값을 적용해 별도 저장한다.
 
 ### 9.6 Ollama·Laya·Kev 공통 다음 노드 반복 선택
 

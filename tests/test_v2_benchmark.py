@@ -30,6 +30,24 @@ class V2BenchmarkTest(unittest.TestCase):
             {"CompactAdjacencyGraph"},
         )
 
+    # 고정 10쌍을 사용하고 반복 규칙·지시문을 최종 인접 선택 시험과 통일한다.
+    def test_iterative_policy_matches_final_benchmark(self):
+        from simulation.services.iterative_route_policy import NEXT_NODE_INSTRUCTIONS
+        with tempfile.TemporaryDirectory() as directory:
+            configs = [json.loads(p.read_text()) for p in resolve_experiment_configs(DEFAULT_MATRIX, Path(directory))]
+        for config in configs:
+            self.assertEqual(len(config["cases"]), 10)
+            self.assertEqual(len({(c["start"], c["goal"]) for c in config["cases"]}), 10)
+            self.assertEqual(config["case_selection"]["case_count"], 10)
+            self.assertTrue(all(c["goal"] in range(7) and c["start"] != c["goal"] for c in config["cases"]))
+            self.assertEqual(config["case_selection"]["route_seed"], 20260928)
+            self.assertEqual(config["settings"]["repeats"], 5)
+            if config["settings"]["execution_strategy"] == "iterative_chain":
+                self.assertEqual(config["prompt"], NEXT_NODE_INSTRUCTIONS)
+                self.assertEqual(config["settings"]["max_chain_steps"], 26)
+                self.assertEqual(config["settings"]["iterative_policy"]["candidate_scope"], "neighbors")
+                self.assertEqual(config["settings"]["iterative_policy"]["max_visits_per_node"], 2)
+
     # Graph Retrieval 쌍은 같은 프롬프트·모델·경로에서 Graph 입력만 바꾸는지 확인한다.
     def test_graph_retrieval_pair_changes_only_retrieval_input(self):
         with tempfile.TemporaryDirectory() as directory:

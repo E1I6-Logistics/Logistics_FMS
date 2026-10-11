@@ -104,14 +104,16 @@ def resolve_experiment_configs(
         }
         if experiment["execution_strategy"] == "iterative_chain":
             settings["max_chain_steps"] = int(
-                experiment.get("max_chain_steps", matrix["graph"]["node_count"])
+                experiment.get("max_chain_steps", matrix["graph"]["node_count"] * 2)
             )
+            settings["iterative_policy"] = experiment["iterative_policy"]
         config = {
             "benchmark_id": f"{matrix['matrix_id']}--{experiment['name']}",
             "description": experiment["description"],
             "graph": matrix["graph"],
             "models": matrix["models"],
             "cases": matrix["cases"],
+            "case_selection": matrix.get("case_selection"),
             "settings": settings,
             "retrieval": experiment["retrieval"],
             "neighbor_context": experiment.get(
