@@ -492,17 +492,20 @@ class RealNavigation:
                     self._sync_errors[rid] = "pose_stale_route_protected"
                     continue
 
-                # 연결 해제 후에도 마지막 점유를 지우지 않는다. 알 수 없는 점유로 새 실행 금지.
-
+                # 위치가 유효하지 않은 비작업 로봇의 마지막 점유 보호
                 if robot.connected or row is not None:
-                    # 자동 주행 중이 아닌 로봇은 마지막 점유를 보존한다.
+
                     if (
                         row is not None
+                        and robot.state in (RobotState.IDLE, RobotState.OFFLINE)
                         and row["route"] is None
                         and row["goal_node"] is None
+                        and robot.order_id is None
+                        and robot.navigation_type is None
                         and rid not in self._requests
                         and rid not in self._executing
                         and rid not in self._stopping
+                        and rid not in self._arrivals
                         and rid not in self._traffic._pending
                         and rid not in self._traffic._concession
                         and (
@@ -511,14 +514,25 @@ class RealNavigation:
                         )
                     ):
                         resource = occupied_resource(row, graph)
+
                         self._traffic.protect_resources(rid, {resource})
 
-                        print(
-                            f"[REAL NAV] robot={rid} "
-                            f"위치 갱신 실패, 마지막 점유 보호: {resource}",
-                            flush=True,
+                        self._sync_errors[rid] = (
+                            "inactive_robot_position_unconfirmed"
                         )
+
                         continue
+
+                    # 보호할 점유가 없다면 동기화 실패 처리
+                    valid = False
+
+                    self._sync_errors[rid] = (
+                        "robot_offline"
+                        if not robot.connected
+                        else "pose_stale_or_invalid"
+                    )
+
+                continue
 
             self._initializing_since.pop(rid, None)
 
