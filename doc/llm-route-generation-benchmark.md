@@ -288,6 +288,53 @@ python -m simulation.evaluation.benchmark \
   --export-results simulation/benchmark_results/<실행 폴더>
 ```
 
+### 4.6 DeepSeek-R1 thinking·출력 예산 진단 (PC, 본시험 제외)
+
+과거 PC V1의 R1 1.5B·14B 결과는 각각 25/25회에서
+`done_reason=length`, `eval_count=512`였다. 요청에는 `think=false`가
+있었지만 응답에는 `thinking`이 있었고 최종 JSON 경로를 얻지 못했다.
+이 기록은 **출력 예산 소진**을 보여주며, `think=false` 자체가 실패의
+원인이라는 증거는 아니다. 과거 결과는 이전 그래프의 측정값이므로 현재
+`routes/test_int.geojson` 시험과 정확도·속도를 직접 비교하지 않는다.
+
+아래 두 설정은 V1 입력·프롬프트·모델·그래프·5개 경로가 같고,
+`think`만 `false` / `true`로 다르다. 두 설정 모두
+`num_predict=2048`, `num_ctx=4096`, timeout 180초,
+모델별 예열 1회, 경로별 반복 1회다. R1 진단은 `selector_iterative_benchmark.json`의 활성 모델
+본시험과 결과 폴더를 분리한다.
+
+PC에서 R1 모델을 준비하고 설정을 확인한다. `--check`는 Ollama를 호출하지 않는다.
+
+```bash
+ollama pull deepseek-r1:1.5b
+ollama pull deepseek-r1:14b
+
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/deepseek_r1_thinking_off_diagnostic.json --check
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/deepseek_r1_thinking_on_diagnostic.json --check
+```
+
+두 조건을 각각 실행한다.
+
+```bash
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/deepseek_r1_thinking_off_diagnostic.json \
+  --output simulation/benchmark_results/pc-r1-think-off-$(date +%Y%m%d-%H%M%S)
+
+python -m simulation.evaluation.benchmark \
+  --config simulation/evaluation/deepseek_r1_thinking_on_diagnostic.json \
+  --output simulation/benchmark_results/pc-r1-think-on-$(date +%Y%m%d-%H%M%S)
+```
+
+각 결과의 `trials.jsonl`과 `model_summary.csv`를 확인한다.
+`requested_think`, `thinking_observed`, `think_control_ignored`,
+`done_reason`, `eval_count`, `output_budget_exhausted`로
+thinking 적용 여부와 길이 제한을 판단한다. 최종 모델 평가는
+JSON 성공률, 유효 경로, A* 기준 최단 경로 일치율, 응답시간으로 판단한다.
+2048토큰에서도 `done_reason=length`가 반복되면 0% 정확도를 모델의
+경로 계산 능력으로 단정하지 말고 출력 예산 소진으로 따로 표기한다.
+
 ## 5. Laya 경로 선택 시험
 
 `convaiinnovations/laya-multilingual`이 코드가 만든 후보 중 하나를 선택한다. Ollaya

@@ -1,0 +1,101 @@
+{
+  "benchmark_id": "deepseek-r1-thinking-off-diagnostic",
+  "description": "PC diagnostic: DeepSeek-R1 think control and output-budget exhaustion; separate from the enabled-model benchmark",
+  "graph": {
+    "path": "routes/test_int.geojson",
+    "sha256": "a2a02f6d97738997206ef7866e1e70e1e2c4c1ca0377fc6cd3675544abac92db",
+    "node_count": 13,
+    "directed_edge_count": 30,
+    "weight_property": "weight"
+  },
+  "models": [
+    {
+      "name": "deepseek-r1:1.5b",
+      "think": false
+    },
+    {
+      "name": "deepseek-r1:14b",
+      "think": false
+    }
+  ],
+  "cases": [
+    {
+      "start": 2,
+      "goal": 11,
+      "expected_path": [
+        2,
+        9,
+        7,
+        11
+      ],
+      "expected_distance": 191.0
+    },
+    {
+      "start": 8,
+      "goal": 5,
+      "expected_path": [
+        8,
+        7,
+        5
+      ],
+      "expected_distance": 69.0
+    },
+    {
+      "start": 3,
+      "goal": 1,
+      "expected_path": [
+        3,
+        11,
+        7,
+        9,
+        1
+      ],
+      "expected_distance": 191.0
+    },
+    {
+      "start": 4,
+      "goal": 0,
+      "expected_path": [
+        4,
+        12,
+        8,
+        10,
+        0
+      ],
+      "expected_distance": 190.0
+    },
+    {
+      "start": 12,
+      "goal": 0,
+      "expected_path": [
+        12,
+        8,
+        10,
+        0
+      ],
+      "expected_distance": 176.0
+    }
+  ],
+  "settings": {
+    "temperature": 0,
+    "seed": 20260928,
+    "num_ctx": 4096,
+    "num_predict": 2048,
+    "timeout_seconds": 180,
+    "realtime_deadline_seconds": 0.15,
+    "max_attempts": 1,
+    "repeats": 1,
+    "warmups_per_model": 1,
+    "keep_alive": "5m",
+    "response_format": "direct",
+    "execution_strategy": "single_call"
+  },
+  "prompt": "You are a deterministic shortest-path solver for a directed weighted graph.\n\nInput contains start_node, target_node, and the complete CompactRouteGraph.\nNodes are integer IDs. Edges are directed objects with from, to, and weight.\nTraverse only from from to to. Use every stored weight exactly as given and never\nrecalculate it from coordinates. Return the valid path with minimum total weight and\nthe sum of its edge weights. Return only JSON matching the schema.",
+  "prompt_sha256": "f71b207f4ccfa32b72de15f0f09ec340ff083768d9ebff6bd29805eff8fdff72",
+  "experiment_mode": "V1_DIRECT",
+  "comparison_condition_sha256": "68b0b61a9decad1be159aa0ae23fd6c8d593b720d38c7e0b34502aa82f28221c",
+  "retrieval": {
+    "enabled": false,
+    "policy": "full_graph"
+  }
+}
