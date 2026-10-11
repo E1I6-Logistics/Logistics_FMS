@@ -288,9 +288,65 @@ echo "================================"
 
 if [[ "$ROBOT_ID" == "omx1" || "$ROBOT_ID" == "omx2" ]]; then
 
-ROBOT_PORT="${OMX_ROBOT_PORT:-/dev/serial/by-id/usb-ROBOTIS_OpenRB-150_4256A5C6503059384C2E3120FF08242F-if00}"
-FRONT_CAMERA_SERIAL="${OMX_FRONT_CAMERA_SERIAL:-920312071050}"
-WRIST_CAMERA_PATH="${OMX_WRIST_CAMERA_PATH:-/dev/v4l/by-id/usb-Innomaker_Innomaker-U20CAM-1080p-S1_SN0001-video-index0}"
+# 각 OMX의 USB 시리얼 ID는 서로 다르므로 장비에서 자동으로 찾는다.
+# 여러 장비가 꽂힌 경우에는 환경 변수로 경로를 명시해야 한다.
+ROBOT_PORT="${OMX_ROBOT_PORT:-}"
+if [[ -z "$ROBOT_PORT" ]]; then
+  shopt -s nullglob
+  ROBOT_PORTS=(/dev/serial/by-id/usb-ROBOTIS_OpenRB-150_*)
+  shopt -u nullglob
+  if [[ ${#ROBOT_PORTS[@]} -ne 1 ]]; then
+    echo "[ERROR] OpenRB-150 USB 포트가 ${#ROBOT_PORTS[@]}개 발견되었습니다. 정확히 1개가 필요합니다." >&2
+    echo "[INFO] 확인: ls -l /dev/serial/by-id/" >&2
+    echo "[INFO] 수동 지정: OMX_ROBOT_PORT=/dev/ttyACM0 ./run_omx_mqtt.sh ..." >&2
+    exit 1
+  fi
+  ROBOT_PORT="${ROBOT_PORTS[0]}"
+fi
+if [[ ! -e "$ROBOT_PORT" ]]; then
+  echo "[ERROR] OpenRB-150 장치가 없습니다: $ROBOT_PORT" >&2
+  exit 1
+fi
+
+# 카메라도 USB 장치마다 시리얼/장치 경로가 달라질 수 있다.
+# Intel RealSense 카메라가 1대인 경우 자동 감지한다.
+FRONT_CAMERA_SERIAL="${OMX_FRONT_CAMERA_SERIAL:-}"
+if [[ -z "$FRONT_CAMERA_SERIAL" ]]; then
+  FRONT_CAMERA_SERIAL="$(python3 - <<'PY_CAMERA'
+try:
+    import pyrealsense2 as rs
+    devices = list(rs.context().query_devices())
+    serials = [d.get_info(rs.camera_info.serial_number) for d in devices]
+except Exception as exc:
+    raise SystemExit(f"[ERROR] RealSense 검색 실패: {exc}")
+if len(serials) != 1:
+    raise SystemExit(f"[ERROR] RealSense 카메라 {len(serials)}대 발견. 1대만 연결하거나 OMX_FRONT_CAMERA_SERIAL 환경 변수를 지정하세요.")
+print(serials[0])
+PY_CAMERA
+  )"
+fi
+
+WRIST_CAMERA_PATH="${OMX_WRIST_CAMERA_PATH:-}"
+if [[ -z "$WRIST_CAMERA_PATH" ]]; then
+  shopt -s nullglob
+  WRIST_CAMERAS=(/dev/v4l/by-id/usb-Innomaker_*-video-index0)
+  shopt -u nullglob
+  if [[ ${#WRIST_CAMERAS[@]} -ne 1 ]]; then
+    echo "[ERROR] Innomaker 손목 카메라가 ${#WRIST_CAMERAS[@]}개 발견되었습니다. 정확히 1개가 필요합니다." >&2
+    echo "[INFO] 확인: ls -l /dev/v4l/by-id/" >&2
+    echo "[INFO] OMX_WRIST_CAMERA_PATH 환경 변수로 직접 지정할 수 있습니다." >&2
+    exit 1
+  fi
+  WRIST_CAMERA_PATH="${WRIST_CAMERAS[0]}"
+fi
+if [[ ! -e "$WRIST_CAMERA_PATH" ]]; then
+  echo "[ERROR] 손목 카메라 장치가 없습니다: $WRIST_CAMERA_PATH" >&2
+  exit 1
+fi
+
+echo "[DEVICE] OpenRB-150: $ROBOT_PORT"
+echo "[DEVICE] RealSense: $FRONT_CAMERA_SERIAL"
+echo "[DEVICE] 손목 카메라: $WRIST_CAMERA_PATH"
 
 
 lerobot-rollout \
