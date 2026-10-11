@@ -25,7 +25,7 @@ class MQTTManager:
         self._cancel_callbacks = {}
 
         # MQTT Client
-        self.client = mqtt.Client()
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
 
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message

@@ -65,7 +65,7 @@ new_order_script = directory / "omx_new_order.sh"
 # MQTT / OMX 상태
 # =============================================================
 
-client = mqtt.Client()
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
 
 job_lock = threading.Lock()
 
