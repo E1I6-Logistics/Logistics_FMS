@@ -219,6 +219,8 @@ export type RobotStateDto = {
   robot_id: string
   ui_id?: string
   status: string
+  pause_reason?: string | null
+  pause_reason_code?: string | null
   battery: number | null
   x: number
   y: number
@@ -242,7 +244,7 @@ export type OmxDeviceDto = {
 }
 
 export function getConnections() {
-  return request<{ devices: ConnectionDeviceDto[] }>('/api/connections')
+  return request<{ devices: ConnectionDeviceDto[]; status?: 'unavailable' }>('/api/connections')
 }
 
 export function getRobots() {

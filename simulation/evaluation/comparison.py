@@ -36,6 +36,7 @@ def resolve_llm_route_graph_path(value: str | Path | None = None) -> Path:
         raise FileNotFoundError(f"LLM 입력 그래프를 찾을 수 없습니다: {selected}")
     return selected
 
+
 ROUTE_GRAPH_PATH = resolve_llm_route_graph_path()
 
 
@@ -57,9 +58,7 @@ def _input_metrics(raw_graph: dict, start_id: int, target_id: int) -> dict:
         if raw_graph.get("type") == "CompactRouteGraph"
         else LLMPathProvider.INSTRUCTIONS
     )
-    input_text = prompt + json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":")
-    )
+    input_text = prompt + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     character_count = len(input_text)
     return {
         "input_character_count": character_count,
@@ -70,11 +69,7 @@ def _input_metrics(raw_graph: dict, start_id: int, target_id: int) -> dict:
 def _is_timeout_error(error: Exception) -> bool:
     error_name = type(error).__name__.lower()
     error_text = str(error).lower()
-    return (
-        isinstance(error, TimeoutError)
-        or "timeout" in error_name
-        or "timed out" in error_text
-    )
+    return isinstance(error, TimeoutError) or "timeout" in error_name or "timed out" in error_text
 
 
 def _append_result(result: dict) -> None:
@@ -127,8 +122,11 @@ def compare_path_with_llm(
             "timed_out": False,
         }
         try:
-            llm_answer = (provider.compute_shortest_path(raw_graph, start_id, target_id)
-                          if provider is not None else request_llm_shortest_path(raw_graph, start_id, target_id))
+            llm_answer = (
+                provider.compute_shortest_path(raw_graph, start_id, target_id)
+                if provider is not None
+                else request_llm_shortest_path(raw_graph, start_id, target_id)
+            )
             attempt["json_response_success"] = isinstance(llm_answer, dict)
             llm_path, llm_distance = validate_and_calculate_path_distance(
                 points,
@@ -144,45 +142,34 @@ def compare_path_with_llm(
             attempt["error_type"] = type(error).__name__
             attempt["error_message"] = str(error)
         finally:
-            if provider is not None and getattr(provider, 'last_inference', None) is not None:
-                attempt['inference'] = provider.last_inference
+            if provider is not None and getattr(provider, "last_inference", None) is not None:
+                attempt["inference"] = provider.last_inference
             attempt["response_time_seconds"] = round(monotonic() - started, 6)
             attempts.append(attempt)
 
         if attempt["valid_path"]:
             break
 
-    successful_attempt = next(
-        (item["attempt"] for item in attempts if item["valid_path"]), None
-    )
+    successful_attempt = next((item["attempt"] for item in attempts if item["valid_path"]), None)
     comparison = None
     if llm_path is not None and llm_distance is not None:
-        comparison = compare_path_metrics(
-            baseline_path, baseline_distance, llm_path, llm_distance
-        )
+        comparison = compare_path_metrics(baseline_path, baseline_distance, llm_path, llm_distance)
 
     total_response_time = sum(item["response_time_seconds"] for item in attempts)
-    realtime_deadline = float(
-        os.getenv("PATH_DECISION_DEADLINE_SECONDS", "0.15")
-    )
+    realtime_deadline = float(os.getenv("PATH_DECISION_DEADLINE_SECONDS", "0.15"))
     if realtime_deadline <= 0:
         raise ValueError("PATH_DECISION_DEADLINE_SECONDS는 0보다 커야 합니다.")
     metrics = {
-        "json_response_success": any(
-            item["json_response_success"] for item in attempts
-        ),
+        "json_response_success": any(item["json_response_success"] for item in attempts),
         "valid_path": successful_attempt is not None,
         "shortest_path_match": comparison["same_path"] if comparison else False,
         "shortest_distance_match": comparison["same_distance"] if comparison else False,
-        "absolute_distance_error": (
-            abs(comparison["distance_difference"]) if comparison else None
-        ),
+        "absolute_distance_error": (abs(comparison["distance_difference"]) if comparison else None),
         "response_time_seconds": round(total_response_time, 6),
         "realtime_deadline_seconds": realtime_deadline,
         # 유효한 경로가 제한 시간 안에 도착해야 실시간 기준을 충족한다.
         "meets_realtime_deadline": (
-            successful_attempt is not None
-            and total_response_time <= realtime_deadline
+            successful_attempt is not None and total_response_time <= realtime_deadline
         ),
         "timed_out": any(item["timed_out"] for item in attempts),
         "first_attempt_success": successful_attempt == 1,
@@ -197,9 +184,7 @@ def compare_path_with_llm(
         "provider": provider_key,
         "model": os.getenv(model_env_name),
         "prompt_strategy": (
-            "compact-astar"
-            if raw_graph.get("type") == "CompactRouteGraph"
-            else "geojson-astar"
+            "compact-astar" if raw_graph.get("type") == "CompactRouteGraph" else "geojson-astar"
         ),
         "input": {
             "start_node": start_id,
@@ -214,15 +199,9 @@ def compare_path_with_llm(
         },
         "llm": {
             # 검증에 실패해도 모델이 실제 반환한 경로를 디버깅할 수 있게 보존한다.
-            "path": (
-                llm_answer.get("path")
-                if isinstance(llm_answer, dict)
-                else None
-            ),
+            "path": (llm_answer.get("path") if isinstance(llm_answer, dict) else None),
             "reported_total_distance": (
-                llm_answer.get("reported_total_distance")
-                if isinstance(llm_answer, dict)
-                else None
+                llm_answer.get("reported_total_distance") if isinstance(llm_answer, dict) else None
             ),
             "recalculated_total_distance": llm_distance,
         },
@@ -237,7 +216,7 @@ def compare_path_with_llm(
         }
 
     if context is not None:
-        result['context'] = context
+        result["context"] = context
 
     _append_result(result)
     return result

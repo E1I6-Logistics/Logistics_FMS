@@ -23,10 +23,12 @@ from simulation.evaluation.device_metadata import git_metadata, selector_device_
 from simulation.evaluation.graph_path import resolve_graph_path
 from simulation.route_selector import get_selector
 from simulation.services.iterative_route_policy import (
-    MAX_VISITS_PER_NODE, NEXT_NODE_INSTRUCTIONS,
+    MAX_VISITS_PER_NODE,
+    NEXT_NODE_INSTRUCTIONS,
 )
 from simulation.services.iterative_route_runner import (
-    run_selected_route as _run_route, _random_path_baseline,
+    run_selected_route as _run_route,
+    _random_path_baseline,
 )
 from simulation.services.route_service import (
     build_compact_adjacency_graph,
@@ -45,6 +47,7 @@ MANIFEST_FILENAME = "manifest.json"
 DEFAULT_CASE_COUNT = 5
 DEFAULT_RESULTS_DIR = ROOT / "simulation" / "benchmark_results"
 DOCKING_NODE_IDS = tuple(range(7))
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -96,13 +99,9 @@ def _generate_random_cases(
     if case_count < 1:
         raise ValueError("case_count must be positive")
     if case_count > len(docking_nodes):
-        raise ValueError(
-            f"case_count={case_count} exceeds docking nodes={len(docking_nodes)}"
-        )
+        raise ValueError(f"case_count={case_count} exceeds docking nodes={len(docking_nodes)}")
     if len(nodes) - case_count < case_count:
-        raise ValueError(
-            "시작 Node 집합과 도착 Node 집합을 겹치지 않게 만들 수 없습니다."
-        )
+        raise ValueError("시작 Node 집합과 도착 Node 집합을 겹치지 않게 만들 수 없습니다.")
 
     rng = random.Random(seed)
     # A retry loop also protects future directed maps where some random pairs
@@ -114,16 +113,12 @@ def _generate_random_cases(
         cases: list[dict[str, Any]] = []
         try:
             for start, target in zip(starts, targets):
-                baseline = plan_route(
-                    str(start), str(target), graph, require_stored_weight=True
-                )
+                baseline = plan_route(str(start), str(target), graph, require_stored_weight=True)
                 cases.append(
                     {
                         "start": start,
                         "target": target,
-                        "expected_path": [
-                            int(node) for node in baseline["node_ids"]
-                        ],
+                        "expected_path": [int(node) for node in baseline["node_ids"]],
                         "expected_distance": float(baseline["cost"]),
                     }
                 )
@@ -133,18 +128,14 @@ def _generate_random_cases(
     raise RuntimeError("유효한 랜덤 Start→Docking 경로 조합을 만들지 못했습니다.")
 
 
-def _generate_all_pairs(
-    graph: dict[str, Any], nodes: list[int]
-) -> list[dict[str, Any]]:
+def _generate_all_pairs(graph: dict[str, Any], nodes: list[int]) -> list[dict[str, Any]]:
     """Create every reachable Start→Docking pair (12×7−7 = 77 here)."""
     cases: list[dict[str, Any]] = []
     for start in nodes:
         for target in DOCKING_NODE_IDS:
             if target not in nodes or start == target:
                 continue
-            baseline = plan_route(
-                str(start), str(target), graph, require_stored_weight=True
-            )
+            baseline = plan_route(str(start), str(target), graph, require_stored_weight=True)
             cases.append(
                 {
                     "start": start,
@@ -178,13 +169,11 @@ def _prepare(
         graph_path.name,
         require_stored_weight=True,
     )
-
+    print(f"graph {compact_graph}")
     # 시드를 지정하지 않으면 실행마다 새 경로 조합을 만든다. 실제 사용한
     # 시드는 manifest에 기록하므로 다른 모델 비교 시 그대로 재사용할 수 있다.
     effective_seed = (
-        int(route_seed)
-        if route_seed is not None
-        else random.SystemRandom().randrange(1, 2**63)
+        int(route_seed) if route_seed is not None else random.SystemRandom().randrange(1, 2**63)
     )
     nodes = sorted(points)
     cases = (
@@ -236,16 +225,10 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "revisit_count": sum(row["revisit_count"] for row in rows),
         "backtrack_step_count": sum(row["backtrack_step_count"] for row in rows),
         "cycle_prevented_count": sum(row["cycle_prevented_count"] for row in rows),
-        "max_node_visit_count": max(
-            (row["max_node_visit_count"] for row in rows), default=0
-        ),
-        "forced_step_count": sum(
-            step.get("forced_step") is True for step in all_steps
-        ),
+        "max_node_visit_count": max((row["max_node_visit_count"] for row in rows), default=0),
+        "forced_step_count": sum(step.get("forced_step") is True for step in all_steps),
         "model_decision_step_count": len(model_steps),
-        "state_truncated_trial_count": sum(
-            row["state_truncated_count"] > 0 for row in laya_rows
-        ),
+        "state_truncated_trial_count": sum(row["state_truncated_count"] > 0 for row in laya_rows),
         "state_truncation_unreported_trial_count": sum(
             row["state_truncation_reporting_complete"] is False for row in laya_rows
         ),
@@ -253,32 +236,22 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             row["full_graph_input_preserved"] is True for row in laya_rows
         ),
         "exact_path_accuracy": (
-            sum(bool(row["exact_path_match"]) for row in rows) / len(rows)
-            if rows else None
+            sum(bool(row["exact_path_match"]) for row in rows) / len(rows) if rows else None
         ),
-        "mean_api_call_count": (
-            mean(row["api_call_count"] for row in rows) if rows else None
-        ),
+        "mean_api_call_count": (mean(row["api_call_count"] for row in rows) if rows else None),
         "mean_distance_ratio": (
-            mean(
-                row["distance_ratio"]
-                for row in rows
-                if row["distance_ratio"] is not None
-            )
+            mean(row["distance_ratio"] for row in rows if row["distance_ratio"] is not None)
             if any(row["distance_ratio"] is not None for row in rows)
             else None
         ),
         "mean_random_baseline_path_probability": (
-            mean(row["random_baseline_path_probability"] for row in rows)
-            if rows else None
+            mean(row["random_baseline_path_probability"] for row in rows) if rows else None
         ),
-        "step_realtime_met_count": sum(
-            step.get("realtime_met") is True for step in model_steps
-        ),
+        "step_realtime_met_count": sum(step.get("realtime_met") is True for step in model_steps),
         "step_realtime_met_rate": (
-            sum(step.get("realtime_met") is True for step in model_steps)
-            / len(model_steps)
-            if model_steps else None
+            sum(step.get("realtime_met") is True for step in model_steps) / len(model_steps)
+            if model_steps
+            else None
         ),
         "mean_answer_confidence": (
             mean(
@@ -294,9 +267,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "step_wall_latency": _stats(
             [step["wall_seconds"] for step in model_steps if "wall_seconds" in step]
         ),
-        "model_total_latency": _stats(
-            [row["model_total_seconds"] for row in completed]
-        ),
+        "model_total_latency": _stats([row["model_total_seconds"] for row in completed]),
     }
 
 
@@ -349,32 +320,18 @@ def _resolve_model_specs(
         raw_options = raw.get("options", {})
         if not isinstance(raw_options, dict):
             raise ValueError(f"model options must be an object: {name}")
-        spec = {
-            key: value
-            for key, value in defaults.items()
-            if key != "options"
-        }
-        spec.update(
-            {
-                key: value
-                for key, value in raw.items()
-                if key not in {"enabled", "options"}
-            }
-        )
+        spec = {key: value for key, value in defaults.items() if key != "options"}
+        spec.update({key: value for key, value in raw.items() if key not in {"enabled", "options"}})
         spec["name"] = name
         spec["options"] = {**default_options, **raw_options}
         resolved.append(spec)
 
     unknown = requested - seen
     if unknown:
-        raise ValueError(
-            "models not present in config: " + ", ".join(sorted(unknown))
-        )
+        raise ValueError("models not present in config: " + ", ".join(sorted(unknown)))
     disabled = requested - {spec["name"] for spec in resolved}
     if disabled:
-        raise ValueError(
-            "requested models are disabled: " + ", ".join(sorted(disabled))
-        )
+        raise ValueError("requested models are disabled: " + ", ".join(sorted(disabled)))
     if not resolved:
         raise ValueError("no enabled models selected")
     return resolved
@@ -402,16 +359,22 @@ def load_iterative_config(
     expected_sha256 = graph.get("sha256")
     if expected_sha256 and str(expected_sha256) != actual_sha256:
         raise ValueError(
-            f"graph SHA-256 mismatch: expected={expected_sha256}, "
-            f"actual={actual_sha256}"
+            f"graph SHA-256 mismatch: expected={expected_sha256}, " f"actual={actual_sha256}"
         )
 
     settings = config.get("settings")
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")
     required = {
-        "case_mode", "case_count", "repeats", "warmups", "route_seed",
-        "candidate_scope", "context_mode", "max_steps", "deadline_seconds",
+        "case_mode",
+        "case_count",
+        "repeats",
+        "warmups",
+        "route_seed",
+        "candidate_scope",
+        "context_mode",
+        "max_steps",
+        "deadline_seconds",
     }
     missing = sorted(required - settings.keys())
     if missing:
@@ -421,9 +384,7 @@ def load_iterative_config(
     if settings["candidate_scope"] not in {"neighbors", "all"}:
         raise ValueError("settings.candidate_scope must be neighbors or all")
     if settings["context_mode"] not in {"full_graph_only", "neighbor_context"}:
-        raise ValueError(
-            "settings.context_mode must be full_graph_only or neighbor_context"
-        )
+        raise ValueError("settings.context_mode must be full_graph_only or neighbor_context")
 
     models = _resolve_model_specs(config, selected_models)
     return {
@@ -481,18 +442,11 @@ def _preflight_selector(selector: Any) -> None:
     if client is not None and hasattr(client, "list"):
         response = client.list()
         payload = (
-            response.model_dump(mode="json")
-            if hasattr(response, "model_dump")
-            else dict(response)
+            response.model_dump(mode="json") if hasattr(response, "model_dump") else dict(response)
         )
-        names = {
-            str(item.get("name") or item.get("model"))
-            for item in payload.get("models", [])
-        }
+        names = {str(item.get("name") or item.get("model")) for item in payload.get("models", [])}
         if getattr(selector, "model", None) not in names:
-            raise RuntimeError(
-                f"설정한 Ollama 모델이 설치되어 있지 않습니다: {selector.model}"
-            )
+            raise RuntimeError(f"설정한 Ollama 모델이 설치되어 있지 않습니다: {selector.model}")
 
 
 def run_benchmark(
@@ -518,9 +472,7 @@ def run_benchmark(
     if candidate_scope not in {"neighbors", "all"}:
         raise ValueError("candidate_scope must be 'neighbors' or 'all'")
     if context_mode not in {"full_graph_only", "neighbor_context"}:
-        raise ValueError(
-            "context_mode must be 'full_graph_only' or 'neighbor_context'"
-        )
+        raise ValueError("context_mode must be 'full_graph_only' or 'neighbor_context'")
     if max_steps is not None and max_steps < 1:
         raise ValueError("max_steps must be positive")
     if deadline <= 0:
@@ -573,8 +525,7 @@ def run_benchmark(
             "prompt_version": "iterative-next-node-v2",
             "docking_target_nodes": prepared["docking_nodes"],
             "generated_cases": [
-                {"start": case["start"], "target": case["target"]}
-                for case in prepared["cases"]
+                {"start": case["start"], "target": case["target"]} for case in prepared["cases"]
             ],
             "expected_trial_count": len(prepared["cases"]) * repeats,
             "questions_per_api_request": 1,
@@ -616,8 +567,13 @@ def run_benchmark(
 
     for warmup in range(1, warmups + 1):
         _run_route(
-            selector, prepared, prepared["cases"][0], candidate_scope, deadline,
-            context_mode, effective_max_steps
+            selector,
+            prepared,
+            prepared["cases"][0],
+            candidate_scope,
+            deadline,
+            context_mode,
+            effective_max_steps,
         )
         if progress:
             print(f"warmup {warmup}/{warmups} complete")
@@ -627,8 +583,13 @@ def run_benchmark(
     for case in prepared["cases"]:
         for repeat in range(1, repeats + 1):
             result = _run_route(
-                selector, prepared, case, candidate_scope, deadline, context_mode,
-                effective_max_steps
+                selector,
+                prepared,
+                case,
+                candidate_scope,
+                deadline,
+                context_mode,
+                effective_max_steps,
             )
             last_result = result
             row = {
@@ -654,9 +615,9 @@ def run_benchmark(
     groups = []
     for case in prepared["cases"]:
         selected = [
-            row for row in rows
-            if row["start_node"] == case["start"]
-            and row["target_node"] == case["target"]
+            row
+            for row in rows
+            if row["start_node"] == case["start"] and row["target_node"] == case["target"]
         ]
         groups.append(
             {
@@ -678,20 +639,44 @@ def run_benchmark(
     _json_dump(output / SUMMARY_FILENAME, summary)
 
     fields = [
-        "timestamp", "selector_name", "requested_model", "start_node",
-        "target_node", "repeat", "expected_path", "path", "expected_distance",
-        "recalculated_distance", "distance_ratio", "api_call_count", "valid_path",
-        "reached_target", "has_revisit", "non_revisiting_valid_path", "step_excess",
+        "timestamp",
+        "selector_name",
+        "requested_model",
+        "start_node",
+        "target_node",
+        "repeat",
+        "expected_path",
+        "path",
+        "expected_distance",
+        "recalculated_distance",
+        "distance_ratio",
+        "api_call_count",
+        "valid_path",
+        "reached_target",
+        "has_revisit",
+        "non_revisiting_valid_path",
+        "step_excess",
         "random_baseline_path_probability",
-        "candidate_scope", "context_mode", "failed_step",
-        "invalid_edge_count", "revisit_count", "backtrack_step_count",
-        "cycle_prevented_count", "used_edge_count", "max_node_visit_count",
+        "candidate_scope",
+        "context_mode",
+        "failed_step",
+        "invalid_edge_count",
+        "revisit_count",
+        "backtrack_step_count",
+        "cycle_prevented_count",
+        "used_edge_count",
+        "max_node_visit_count",
         "visit_counts",
-        "exact_path_match", "distance_match", "wall_seconds",
-        "model_total_seconds", "state_truncated_count",
+        "exact_path_match",
+        "distance_match",
+        "wall_seconds",
+        "model_total_seconds",
+        "state_truncated_count",
         "state_truncation_reported_count",
-        "state_truncation_reporting_complete", "full_graph_input_preserved",
-        "steps", "error",
+        "state_truncation_reporting_complete",
+        "full_graph_input_preserved",
+        "steps",
+        "error",
     ]
     with (output / CSV_FILENAME).open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
@@ -709,9 +694,7 @@ def run_benchmark(
         completed_at=_utc_now(),
         completed_trial_count=len(rows),
         device=summary["device"],
-        output_files=[
-            MANIFEST_FILENAME, TRIALS_FILENAME, SUMMARY_FILENAME, CSV_FILENAME
-        ],
+        output_files=[MANIFEST_FILENAME, TRIALS_FILENAME, SUMMARY_FILENAME, CSV_FILENAME],
     )
     _json_dump(output / MANIFEST_FILENAME, manifest)
     release = getattr(selector, "release", None)
@@ -734,9 +717,7 @@ def run_configured_benchmarks(
     output.mkdir(parents=True, exist_ok=True)
     matrix_path = output / MATRIX_MANIFEST_FILENAME
     if matrix_path.exists():
-        raise FileExistsError(
-            f"existing matrix manifest would be overwritten: {matrix_path}"
-        )
+        raise FileExistsError(f"existing matrix manifest would be overwritten: {matrix_path}")
     manifest: dict[str, Any] = {
         "benchmark": "selector-iterative-ollama-matrix-v1",
         "status": "running",
@@ -768,16 +749,14 @@ def run_configured_benchmarks(
                 warmups=int(settings["warmups"]),
                 case_count=int(settings["case_count"]),
                 route_seed=(
-                    int(settings["route_seed"])
-                    if settings["route_seed"] is not None else None
+                    int(settings["route_seed"]) if settings["route_seed"] is not None else None
                 ),
                 graph_path=resolved["graph_path"],
                 case_mode=str(settings["case_mode"]),
                 candidate_scope=str(settings["candidate_scope"]),
                 context_mode=str(settings["context_mode"]),
                 max_steps=(
-                    int(settings["max_steps"])
-                    if settings["max_steps"] is not None else None
+                    int(settings["max_steps"]) if settings["max_steps"] is not None else None
                 ),
                 deadline=float(settings["deadline_seconds"]),
                 selector=selector,
@@ -840,9 +819,7 @@ def main() -> int:
         default=None,
         help="사용할 GeoJSON 경로 (기본: LLM_ROUTE_GRAPH, 없으면 benchmark JSON 설정)",
     )
-    parser.add_argument(
-        "--case-mode", choices=("random", "all-pairs"), default="random"
-    )
+    parser.add_argument("--case-mode", choices=("random", "all-pairs"), default="random")
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--case-count", type=int, default=DEFAULT_CASE_COUNT)
@@ -852,9 +829,7 @@ def main() -> int:
         default=None,
         help="랜덤 경로 생성 시드 (미지정 시 실행마다 새 시드 생성)",
     )
-    parser.add_argument(
-        "--candidate-scope", choices=("neighbors", "all"), default="neighbors"
-    )
+    parser.add_argument("--candidate-scope", choices=("neighbors", "all"), default="neighbors")
     parser.add_argument(
         "--context-mode",
         choices=("full_graph_only", "neighbor_context"),

@@ -128,6 +128,17 @@ class ReservationTable:
                 if not (row.robot_id == robot_id and row.navigation_id == navigation_id)
             ]
 
+    def release_cleared_segments(self, robot_id: str, navigation_id: str,
+                                 before_index: int, cleared_resources: set[ResourceKey]) -> None:
+        """실제 로봇 몸체가 벗어난 지난 구간만 해제한다. 현재·미래 구간은 유지한다."""
+        with self._lock:
+            self._rows = [
+                row for row in self._rows
+                if not (row.robot_id == robot_id and row.navigation_id == navigation_id
+                        and row.segment_index < before_index
+                        and row.resource in cleared_resources)
+            ]
+
 # 실로봇용 예약 테이블, 시뮬용 예약 테이블 분리
 reservation_tables = {
     "real": ReservationTable(),

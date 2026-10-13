@@ -46,6 +46,7 @@ export default function FmsControlApp() {
   const [commandState, setCommandState] = useState<CommandState>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [omxDevices, setOmxDevices] = useState<OmxDeviceDto[]>([])
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
 
   const {
     managedIds,
@@ -401,7 +402,7 @@ export default function FmsControlApp() {
             onSelect={setSelectedRobot}
           />
 
-          <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: '#E7EBF0' }} aria-label="FMS 실시간 지도">
+          <section style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, background: C.surface }} aria-label="FMS 실시간 지도">
             <ScenarioControls modeSwitching={modeSwitching} onActiveChange={setScenarioActive} />
             {commandState && (
               <CommandToast state={commandState} onClose={() => setCommandState(null)} />
@@ -449,8 +450,35 @@ export default function FmsControlApp() {
               <span aria-hidden="true" style={{ marginRight: 8 }}>■</span>
               {busy === 'emergency' ? '정지 명령 전송 중' : '전체 비상정지'}
             </button>
+            <button
+              type="button"
+              aria-label={rightPanelOpen ? '오른쪽 로봇 제어 패널 접기' : '오른쪽 로봇 제어 패널 펼치기'}
+              aria-expanded={rightPanelOpen}
+              title={rightPanelOpen ? '로봇 제어 패널 접기' : '로봇 제어 패널 펼치기'}
+              onClick={() => setRightPanelOpen(open => !open)}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: rightPanelOpen ? -16 : 14,
+                zIndex: 40,
+                width: 32,
+                height: 54,
+                transform: 'translateY(-50%)',
+                border: `1px solid ${C.line}`,
+                borderRadius: 9,
+                background: C.surface,
+                color: C.muted,
+                fontSize: 24,
+                lineHeight: 1,
+                cursor: 'pointer',
+                boxShadow: '0 3px 12px rgba(0,0,0,.12)',
+              }}
+            >
+              {rightPanelOpen ? '›' : '‹'}
+            </button>
           </section>
 
+          {rightPanelOpen && (
           <RobotPanel
             robotId={selectedRobot}
             liveRobot={selectedLiveRobot}
@@ -481,6 +509,7 @@ export default function FmsControlApp() {
             onStop={stopSelectedRobot}
             onRelease={releaseSelectedRobot}
           />
+          )}
         </div>
       </main>
     </div>
@@ -583,8 +612,16 @@ function RobotPanel({ scenarioActive, robotId, liveRobot, targetNode, drivingMod
           <StatusCard label="배터리" value={`${Math.round(battery)}%`} color={batteryColor}>
             <div style={{ height: 5, borderRadius: 5, overflow: 'hidden', background: '#E3E8EF', marginTop: 8 }}><div style={{ width: `${battery}%`, height: '100%', background: batteryColor }} /></div>
           </StatusCard>
-          <StatusCard label="통신 상태" value={connected ? '● 정상' : '● 끊김'} color={connected ? C.success : C.danger} />
+          <StatusCard label="통신 상태"
+            value={liveRobot?.connectionState === 'UNKNOWN' ? '● 확인 중' : connected ? '● 정상' : '● 끊김'}
+            color={liveRobot?.connectionState === 'UNKNOWN' ? C.warning : connected ? C.success : C.danger} />
         </div>
+
+        {status === 'PAUSED' && liveRobot?.pauseReason && (
+          <div role="status" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: '#FFF4E5', color: C.warning, fontSize: 11, overflowWrap: 'anywhere' }}>
+            일시정지 사유: {liveRobot.pauseReason}
+          </div>
+        )}
 
         <div style={{ marginTop: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: `1px solid ${C.line}`, borderRadius: 9, background: '#F3FBF7' }}>
           <div>

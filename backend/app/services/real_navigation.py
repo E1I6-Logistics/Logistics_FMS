@@ -18,6 +18,7 @@ from time import monotonic, strftime
 from ..config import (
     REAL_NAVIGATION_SPEED_MPS,
     REAL_RESERVATION_MARGIN_S,
+    REAL_RESERVATION_CLEARANCE_M,
     REAL_OCCUPANCY_TOLERANCE_M,
     REAL_DOCK_OCCUPANCY_TOLERANCE_M,
     REAL_ROUTE_TRANSITION_DISTANCE_M,
@@ -291,6 +292,7 @@ class RealNavigation:
             expected.add(edge_key(route_nodes[index - 1], route_nodes[index]))
 
         matches = {}
+        other_distances = []
 
         for feature in graph["features"]:
 
@@ -303,12 +305,6 @@ class RealNavigation:
             start, end = str(props["startid"]), str(props["endid"])
 
             resource = edge_key(start, end)
-
-            # 현재 계획 경로에 포함되지 않은 통로는 후보에서 제외한다.
-
-            if resource not in expected:
-
-                continue
 
             ax, ay = nodes[start]
 
@@ -334,6 +330,11 @@ class RealNavigation:
 
                 continue
 
+            # 경로 밖 통로가 동일하거나 더 가까우면 경로만으로 점유를 확정할 수 없다.
+            if resource not in expected:
+                other_distances.append(distance)
+                continue
+
             matches.setdefault(resource, (distance, str(props["id"])))
 
         ranked = sorted(matches.items(), key=lambda item: item[1][0])
@@ -344,6 +345,9 @@ class RealNavigation:
 
         if len(ranked) > 1 and math.isclose(ranked[0][1][0], ranked[1][1][0], abs_tol=1e-9):
 
+            return None
+
+        if other_distances and min(other_distances) <= ranked[0][1][0] + 1e-9:
             return None
 
         return ranked[0][1][1]
@@ -447,7 +451,7 @@ class RealNavigation:
                     if rid not in self._stale_idle_reported:
 
                         print(
-                            f"[{strftime('%H:%M:%S')}] [REAL NAV POSE] robot={rid} "
+                            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV POSE] robot={rid} "
                             "idle pose unavailable; last occupancy retained",
                             flush=True,
                         )
@@ -458,16 +462,74 @@ class RealNavigation:
 
                         row["status"] = "OFFLINE"
 
+                    self._traffic.clear_protected_resources(rid)
+
                     continue
 
-                # 연결 해제 후에도 마지막 점유를 지우지 않는다. 알 수 없는 점유로 새 실행 금지.
+                # 주행 중 연결 또는 Pose가 끊기면 마지막 경로 전체를 보호한다.
+                # 알려진 경로와 겹치지 않는 다른 로봇은 계속 감시·실행한다.
+                if row is not None and row["route"] is not None:
+                    nodes = row["route"]["node_ids"]
+                    resources = {node_key(node) for node in nodes}
+                    resources.update(edge_key(start, end)
+                                     for start, end in zip(nodes, nodes[1:]))
+                    self._traffic.protect_resources(rid, resources)
+                    self._traffic._pending.pop(rid, None)
+                    if not robot.connected:
+                        row["status"] = "OFFLINE"
+                    self._sync_errors[rid] = (
+                        "robot_offline_route_protected" if not robot.connected
+                        else "pose_stale_route_protected"
+                    )
+                    if previous_errors.get(rid) != self._sync_errors[rid]:
+                        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV POSITION] robot={rid} "
+                              f"reason={self._sync_errors[rid]} protected_resources={len(resources)} "
+                              "다른 로봇은 보호된 구간에 들어갈 수 없음", flush=True)
+                    continue
 
+                # 재연결 직후 Pose가 아직 없으면 기존 경로 보호를 계속한다.
+                if row is not None and rid in self._traffic._protected_resources:
+                    self._sync_errors[rid] = "pose_stale_route_protected"
+                    continue
+
+                # 위치가 유효하지 않은 비작업 로봇의 마지막 점유 보호
                 if robot.connected or row is not None:
 
+                    if (
+                        row is not None
+                        and robot.state in (RobotState.IDLE, RobotState.OFFLINE)
+                        and row["route"] is None
+                        and row["goal_node"] is None
+                        and robot.order_id is None
+                        and robot.navigation_type is None
+                        and rid not in self._requests
+                        and rid not in self._executing
+                        and rid not in self._stopping
+                        and rid not in self._arrivals
+                        and rid not in self._traffic._pending
+                        and rid not in self._traffic._concession
+                        and (
+                            row["occupied_node"] is not None
+                            or row["occupied_edge"] is not None
+                        )
+                    ):
+                        resource = occupied_resource(row, graph)
+
+                        self._traffic.protect_resources(rid, {resource})
+
+                        self._sync_errors[rid] = (
+                            "inactive_robot_position_unconfirmed"
+                        )
+
+                        continue
+
+                    # 보호할 점유가 없다면 동기화 실패 처리
                     valid = False
 
                     self._sync_errors[rid] = (
-                        "robot_offline" if not robot.connected else "pose_stale_or_invalid"
+                        "robot_offline"
+                        if not robot.connected
+                        else "pose_stale_or_invalid"
                     )
 
                 continue
@@ -477,6 +539,8 @@ class RealNavigation:
             self._stale_idle_reported.discard(rid)
 
             edge = None
+
+            node = None
 
             docked = False
 
@@ -592,16 +656,60 @@ class RealNavigation:
 
             except (ValueError, KeyError, IndexError) as exc:
 
-                valid = False
+                # 실제 Pose가 그래프 자원으로 확정됐지만 예상 Route와 다르면
+                # 실제 자원과 남은 Route를 보호하고 해당 로봇만 멈춘다.
+                mapped_node = node
+                if row is not None and row["route"] is not None and (
+                    mapped_node is not None or edge is not None
+                ):
+                    nodes = row["route"]["node_ids"]
+                    resources = {node_key(item) for item in nodes}
+                    resources.update(edge_key(start, end)
+                                     for start, end in zip(nodes, nodes[1:]))
+                    if mapped_node is not None:
+                        resources.add(node_key(mapped_node))
+                    if edge is not None:
+                        resources.add(occupied_resource(
+                            {"occupied_node": None, "occupied_edge": edge}, graph))
+                    self._traffic.protect_resources(rid, resources)
+                    self._sync_errors[rid] = f"route_mismatch_protected:{exc}"
+                else:
+                    # 정지된 비작업 로봇의 마지막 점유 보호
+                    if (
+                        row is not None
+                        and robot.state in (RobotState.IDLE, RobotState.OFFLINE)
+                        and robot.order_id is None
+                        and robot.navigation_type is None
+                        and row["route"] is None
+                        and row["goal_node"] is None
+                        and rid not in self._requests
+                        and rid not in self._executing
+                        and rid not in self._stopping
+                        and rid not in self._traffic._pending
+                        and rid not in self._traffic._concession
+                        and (
+                            row["occupied_node"] is not None
+                            or row["occupied_edge"] is not None
+                        )
+                    ):
+                        resource = occupied_resource(row, graph)
+                        self._traffic.protect_resources(rid, {resource})
 
-                self._sync_errors[rid] = f"occupancy_or_route_mismatch:{exc}"
+                        self._sync_errors[rid] = (
+                            f"inactive_robot_position_unconfirmed:{exc}"
+                        )
+                    else:
+                        valid = False
+                        self._sync_errors[rid] = (
+                            f"occupancy_or_route_mismatch:{exc}"
+                        )
 
                 if previous_errors.get(rid) != self._sync_errors[rid]:
 
                     route = row["route"] if row is not None else None
 
                     print(
-                        f"[{strftime('%H:%M:%S')}] [REAL NAV OCCUPANCY] robot={rid} "
+                        f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV OCCUPANCY] robot={rid} "
                         f"actual=({x:.3f}, {y:.3f}) edge={edge} "
                         f"route={route['node_ids'] if route else None} "
                         f"segment_index={route['segment_index'] if route else None} "
@@ -622,6 +730,10 @@ class RealNavigation:
                     stop_requested=False,
                     status=robot.state.value,
                 )
+
+            if not (robot.state == RobotState.PAUSED and row["route"] is not None
+                    and rid in self._traffic._protected_resources):
+                self._traffic.clear_protected_resources(rid)
 
             if robot.state == RobotState.INITIALIZING:
 
@@ -659,21 +771,26 @@ class RealNavigation:
 
         return valid
 
-    def _pause(self, robot_id, reason):
-
+    def _pause(
+        self, robot_id: str, reason_code: str, detail: str | None = None
+    ) -> None:
         robot = self._fleet.get_robot(robot_id)
 
         if robot is None:
-
             return
 
-        if robot.state != RobotState.EMERGENCY_STOP:
+        if robot.state == RobotState.EMERGENCY_STOP:
+            return
 
-            robot.set_state(RobotState.PAUSED if robot.connected else RobotState.OFFLINE)
+        if robot.connected:
+            robot.pause(reason_code, detail)
+        else:
+            robot.set_state(RobotState.OFFLINE)
 
         print(
-            f"[{strftime('%H:%M:%S')}] [REAL NAV STATE] robot={robot_id} "
-            f"state={robot.state.value} reason={reason}",
+            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV STATE] "
+            f"robot={robot_id} state={robot.state.value} "
+            f"reason_code={reason_code} detail={detail!r}",
             flush=True,
         )
 
@@ -724,7 +841,7 @@ class RealNavigation:
                 robot.set_state(RobotState.WAITING)
 
             print(
-                f"[{strftime('%H:%M:%S')}] [REAL NAV CANCEL] robot={robot_id} "
+                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV CANCEL] robot={robot_id} "
                 f"reason={reason} navigation_id={robot.navigation_id if robot else None}",
                 flush=True,
             )
@@ -762,7 +879,7 @@ class RealNavigation:
                             self._pause(robot_id, "after_stop_failed")
 
                             print(
-                                f"[{strftime('%H:%M:%S')}] [REAL NAV ERROR] "
+                                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [REAL NAV ERROR] "
                                 f"robot={robot_id} after_stop_failed={exc!r}",
                                 flush=True,
                             )
@@ -778,7 +895,7 @@ class RealNavigation:
                 self._pause(robot_id, "cancel_send_failed")
 
                 print(
-                    f"[{strftime('%H:%M:%S')}] [REAL NAV ERROR] "
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [REAL NAV ERROR] "
                     f"robot={robot_id} cancel_send_failed={exc!r}",
                     flush=True,
                 )
@@ -879,6 +996,11 @@ class RealNavigation:
 
                 raise ValueError(
                     f"실제 로봇의 최신 위치와 점유를 확인할 수 없습니다: {self._sync_errors}"
+                )
+
+            if robot_id in self._sync_errors:
+                raise ValueError(
+                    f"요청 로봇의 최신 위치와 점유를 확인할 수 없습니다: {self._sync_errors[robot_id]}"
                 )
 
             self._clear_cancelled()
@@ -998,7 +1120,7 @@ class RealNavigation:
             ):
 
                 robot.set_state(
-                    RobotState.MOVING
+                    RobotState.NAVIGATING
                     if rid in self._executing and rid not in self._stopping
                     else RobotState.WAITING
                 )
@@ -1049,7 +1171,7 @@ class RealNavigation:
                     index = execution[2] + current_waypoint
 
                     print(
-                        f"[{strftime('%H:%M:%S')}] [REAL NAV FEEDBACK] robot={robot_id} "
+                        f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV FEEDBACK] robot={robot_id} "
                         f"current_waypoint={current_waypoint} "
                         f"segment={route['node_ids'][index]}->{route['node_ids'][index + 1]}",
                         flush=True,
@@ -1097,6 +1219,9 @@ class RealNavigation:
             if other["robot_id"] != rid and occupied_resource(other, graph) in resources:
 
                 return "occupied"
+
+        if any(self._traffic.is_resource_protected(rid, resource) for resource in resources):
+            return "offline_robot_route"
 
         if any(
             row.robot_id != rid
@@ -1214,7 +1339,7 @@ class RealNavigation:
 
         except (OSError, KeyError, ValueError) as exc:
 
-            self._pause(rid, f"hold_failed:{exc}")
+            self._pause(rid, "hold_failed", str(exc))
 
             return  # 정지를 확인하지 못했으므로 예약은 유지한다.
 
@@ -1222,9 +1347,55 @@ class RealNavigation:
 
         self._resume_pending.add(rid)
 
-        print(f"[{strftime('%H:%M:%S')}] [REAL NAV WAITING] robot={rid} node={node}", flush=True)
+        print(f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV WAITING] robot={rid} node={node}", flush=True)
 
         self._publish()
+
+    def _release_cleared_reservations(self, planner):
+        """최신 실제 Pose에서 로봇 몸체가 벗어난 지난 예약만 조기 해제한다."""
+        reservations = self._traffic._reservations
+        rows = reservations.snapshot()
+
+        for rid, state in self._robots.items():
+            route = state["route"]
+            if route is None or route["segment_index"] == 0:
+                continue
+
+            robot = self._fleet.get_robot(rid)
+            if robot is None or not robot.connected:
+                continue
+
+            with robot._lock:
+                x, y = robot.x, robot.y
+
+            if x is None or y is None:
+                continue
+
+            cleared = set()
+            for row in rows:
+                if (row.robot_id != rid or row.navigation_id != state["navigation_id"]
+                        or row.segment_index >= route["segment_index"]):
+                    continue
+
+                if row.resource[0] == "node":
+                    distance = math.dist((x, y), planner.nodes[row.resource[1]])
+                else:
+                    ax, ay = planner.nodes[row.resource[1]]
+                    bx, by = planner.nodes[row.resource[2]]
+                    dx, dy = bx - ax, by - ay
+                    length_squared = dx * dx + dy * dy
+                    fraction = (max(0.0, min(1.0,
+                                ((x - ax) * dx + (y - ay) * dy) / length_squared))
+                                if length_squared else 0.0)
+                    distance = math.hypot(x - ax - fraction * dx,
+                                          y - ay - fraction * dy)
+
+                if distance > REAL_RESERVATION_CLEARANCE_M:
+                    cleared.add(row.resource)
+
+            if cleared:
+                reservations.release_cleared_segments(
+                    rid, state["navigation_id"], route["segment_index"], cleared)
 
     def tick(self):
 
@@ -1237,7 +1408,7 @@ class RealNavigation:
             except (OSError, ValueError, KeyError, IndexError, RuntimeError) as exc:
 
                 print(
-                    f"[{strftime('%H:%M:%S')}] [REAL NAV ERROR] navigation_update_failed={exc!r}",
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [ERROR] [REAL NAV ERROR] navigation_update_failed={exc!r}",
                     flush=True,
                 )
 
@@ -1298,11 +1469,24 @@ class RealNavigation:
 
                     if rid not in self._stopping:
 
-                        self._pause(rid, str(self._sync_errors))
+                        reason = self._sync_errors.get(rid, "state_sync_failed")
+                        reason_code, _, detail = reason.partition(":")
+                        self._pause(rid, reason_code, detail or None)
 
                         self.stop(rid, reason="pose_or_occupancy_invalid")
 
                 return
+
+            for rid, reason in self._sync_errors.items():
+                if reason in ("pose_stale_route_protected",) or reason.startswith(
+                    "route_mismatch_protected:"
+                ):
+                    if rid in self._executing and rid not in self._stopping:
+                        reason_code, _, detail = reason.partition(":")
+                        self._pause(rid, reason_code, detail or None)
+                        self.stop(rid, reason="pose_or_occupancy_invalid")
+
+            self._release_cleared_reservations(planner)
 
             self._clear_cancelled()
 
@@ -1381,14 +1565,45 @@ class RealNavigation:
                         for row in self._traffic._reservations.snapshot()
                     )
 
-                    if current_conflict:
+                    current_conflict = current_conflict or any(
+                        self._traffic.is_resource_protected(rid, resource)
+                        for resource in current_resources
+                    )
 
-                        # 이미 현재 구간을 다른 로봇이 점유하면 시간표보다 충돌 방지가 우선이다.
+                    if current_conflict:
+                        occupied_by = [
+                            other["robot_id"]
+                            for other in self._robots.values()
+                            if other["robot_id"] != rid
+                            and occupied_resource(other, graph) in current_resources
+                        ]
+
+                        reserved_by = [
+                            row.robot_id
+                            for row in self._traffic._reservations.snapshot()
+                            if row.robot_id != rid
+                            and row.resource in current_resources
+                            and row.start <= now < row.end
+                        ]
+
+                        protected_by = [
+                            owner
+                            for owner, resources in self._traffic._protected_resources.items()
+                            if owner != rid
+                            and any(resource in resources for resource in current_resources)
+                        ]
+
+                        print(
+                            f"[REAL NAV CONFLICT] robot={rid} "
+                            f"segment={route['node_ids'][route['segment_index']]}->{target} "
+                            f"occupied_by={occupied_by} "
+                            f"reserved_by={reserved_by} "
+                            f"protected_by={protected_by}",
+                            flush=True,
+                        )
 
                         self._pause(rid, "current_segment_occupied")
-
                         self.stop(rid, reason="current_segment_occupied")
-
                         continue
 
                     reason = self._next_segment_reason(rid, route, planner, graph, now)
@@ -1402,7 +1617,7 @@ class RealNavigation:
                         if route["segment_index"] + 2 < len(route["node_ids"]):
 
                             print(
-                                f"[{strftime('%H:%M:%S')}] [REAL NAV LOOKAHEAD] robot={rid} "
+                                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV LOOKAHEAD] robot={rid} "
                                 f"current={route['node_ids'][route['segment_index']]}->{target} "
                                 f"next={target}->{route['node_ids'][route['segment_index'] + 2]} "
                                 f"decision={decision}",
@@ -1414,7 +1629,7 @@ class RealNavigation:
                         self._hold[rid] = (target, reason)
 
                         print(
-                            f"[{strftime('%H:%M:%S')}] [REAL NAV HOLD] robot={rid} "
+                            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV HOLD] robot={rid} "
                             f"hold_node={target} reason={reason}",
                             flush=True,
                         )
@@ -1491,7 +1706,7 @@ class RealNavigation:
                         self._hold[rid] = (target, reason)
 
                         print(
-                            f"[{strftime('%H:%M:%S')}] [REAL NAV HOLD] robot={rid} "
+                            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [REAL NAV HOLD] robot={rid} "
                             f"hold_node={target} reason={reason}",
                             flush=True,
                         )
@@ -1569,7 +1784,7 @@ class RealNavigation:
             self._send_goal(robot_id=rid, waypoints=waypoints)
 
             print(
-                f"[{strftime('%H:%M:%S')}] [REAL NAV ROUTE SEND] robot={rid} "
+                f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV ROUTE SEND] robot={rid} "
                 f"route={'->'.join(state['route']['node_ids']) if state['route'] else target} "
                 f"waypoints={','.join(state['route']['node_ids'][segment_index + 1:]) if segment_index is not None else target}",
                 flush=True,
@@ -1578,7 +1793,7 @@ class RealNavigation:
             if rid in self._resume_pending:
 
                 print(
-                    f"[{strftime('%H:%M:%S')}] [REAL NAV RESUME] robot={rid} "
+                    f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV RESUME] robot={rid} "
                     f"route={'->'.join(state['route']['node_ids']) if state['route'] else target}",
                     flush=True,
                 )
@@ -1597,7 +1812,7 @@ class RealNavigation:
 
         if rid in self._executing:
 
-            robot.set_state(RobotState.MOVING)
+            robot.set_state(RobotState.NAVIGATING)
 
     def on_execution_error(self, robot_id, reason):
 
@@ -1605,7 +1820,7 @@ class RealNavigation:
 
         with self.lock:
 
-            self._pause(robot_id, reason)
+            self._pause(robot_id, "navigation_execution_error", reason)
 
             if robot_id in self._stopping:
 
@@ -1634,9 +1849,13 @@ class RealNavigation:
 
             robot = self._fleet.get_robot(robot_id)
 
+            if not robot.connected:
+                # 통신 단절 중의 Result만으로 물리 정지와 점유 해제를 확정하지 않는다.
+                self._pause(robot_id, "navigation_result_offline", f"status={status}")
+                return
+
             if (
                 not succeeded
-                or not robot.connected
                 or robot.state in (RobotState.EMERGENCY_STOP, RobotState.PAUSED)
             ):
 
@@ -1646,8 +1865,7 @@ class RealNavigation:
 
                     self._pause(deferred[0], "concession_failed")
 
-                self._pause(robot_id, f"navigation_result:{status}")
-
+                self._pause(robot_id, "navigation_result_failed", f"status={status}")
                 self.cancel_after_stop(robot_id)
 
                 return
@@ -1659,15 +1877,12 @@ class RealNavigation:
                 or route["node_ids"][-1] != execution[1]
                 or route["segment_index"] != len(route["node_ids"]) - 2
             ):
-
                 self._pause(robot_id, "route_progress_unconfirmed")
-
+                
                 return  # 통과하지 못한 중간 Node를 성공으로 간주하거나 예약을 해제하지 않는다.
 
             self._arrivals[robot_id] = (execution, self._clock() + REAL_ARRIVAL_CONFIRM_TIMEOUT_S)
-
             robot.set_state(RobotState.WAITING)
-
             self._check_arrival(robot_id)
 
     def _check_arrival(self, robot_id):
@@ -1686,7 +1901,12 @@ class RealNavigation:
 
             return
 
-        if not robot.connected or robot.state in (RobotState.EMERGENCY_STOP, RobotState.PAUSED):
+        if not robot.connected:
+            self._arrivals.pop(robot_id, None)
+            self._pause(robot_id, "arrival_interrupted_offline")
+            return
+
+        if robot.state in (RobotState.EMERGENCY_STOP, RobotState.PAUSED):
 
             self._arrivals.pop(robot_id, None)
 
@@ -1722,7 +1942,7 @@ class RealNavigation:
 
             self._arrivals.pop(robot_id, None)
 
-            self._pause(robot_id, f"arrival_failed:{reason}, target={target}, distance={distance}")
+            self._pause(robot_id, "arrival_failed", f"reason={reason}, target={target}, distance={distance}")
 
             self.cancel_after_stop(robot_id)
 
@@ -1731,7 +1951,7 @@ class RealNavigation:
         self._arrivals.pop(robot_id, None)
 
         print(
-            f"[{strftime('%H:%M:%S')}] [REAL NAV ARRIVAL] robot={robot_id} target={target} "
+            f"[{strftime('%Y-%m-%d %H:%M:%S')}] [INFO] [REAL NAV ARRIVAL] robot={robot_id} target={target} "
             f"actual=({robot.x:.3f}, {robot.y:.3f}) "
             f"goal=({target_position[0]:.3f}, {target_position[1]:.3f}) "
             f"distance={distance:.3f} tolerance={self._arrival_distance:.3f}",

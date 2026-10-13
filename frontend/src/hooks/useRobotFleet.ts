@@ -21,6 +21,7 @@ export type ManagedRobot = {
   blocked: boolean
   battery: number | null
   status: string
+  pauseReason?: string | null
   x: number
   y: number
   yaw: number
@@ -47,6 +48,7 @@ function uiToBackendId(id: RobotId) {
 
 export function useRobotFleet() {
   const [devices, setDevices] = useState<ConnectionDeviceDto[]>([])
+  const [connectionSnapshotAvailable, setConnectionSnapshotAvailable] = useState(true)
   const [robotStates, setRobotStates] = useState<Record<string, RobotStateDto>>({})
   const [mode, setModeState] = useState<RobotMode>('simulation')
   const [modeSwitching, setModeSwitching] = useState(false)
@@ -63,9 +65,16 @@ export function useRobotFleet() {
   const refreshConnections = useCallback(async () => {
     try {
       const result = await getConnections()
-      setDevices(result.devices)
-      setError(null)
+      if (result.status === 'unavailable') {
+        setConnectionSnapshotAvailable(false)
+        setError('Zenoh 연결 목록을 확인할 수 없습니다. 마지막 확인 상태를 표시합니다.')
+      } else {
+        setConnectionSnapshotAvailable(true)
+        setDevices(result.devices)
+        setError(null)
+      }
     } catch (e) {
+      setConnectionSnapshotAvailable(false)
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [])
@@ -199,6 +208,7 @@ export function useRobotFleet() {
         blocked: Boolean(device?.blocked),
         battery: typeof state?.battery === 'number' ? state.battery : null,
         status: state?.status ?? (device?.connected ? 'ONLINE' : 'OFFLINE'),
+        pauseReason: state?.pause_reason ?? null,
         x: state?.x ?? 0,
         y: state?.y ?? 0,
         yaw: state?.yaw ?? 0,
@@ -208,10 +218,12 @@ export function useRobotFleet() {
         pixelX: state?.pixel_x ?? null,
         pixelY: state?.pixel_y ?? null,
         hasPose: state?.map_pose_received === true,
-        connectionState: mode === 'real' ? (device?.state ?? 'OFFLINE') : (state?.connection_state ?? 'OFFLINE'),
+        connectionState: mode === 'real'
+          ? (connectionSnapshotAvailable ? (device?.state ?? 'OFFLINE') : 'UNKNOWN')
+          : (state?.connection_state ?? 'OFFLINE'),
       }
     })
-  }, [devices, mode, robotIds, robotStates])
+  }, [connectionSnapshotAvailable, devices, mode, robotIds, robotStates])
 
   const managedIds = useMemo(() => mode === 'simulation'
     ? robotIds

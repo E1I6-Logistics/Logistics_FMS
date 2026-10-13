@@ -1,4 +1,5 @@
 """단일 시나리오 실행 관리. ROS/Mock 의존성은 해당 모드에서만 로드한다."""
+
 import asyncio
 from copy import deepcopy
 from functools import wraps
@@ -53,22 +54,35 @@ def load_config():
 def robot_states(mode):
     if mode == "simulation":
         from .mock_data import mock_fms
+
         states = mock_fms.robot_snapshots(mode)
         connections = {r["name"]: r["connected"] for r in mock_fms.connections()}
-        return {r["robot_id"]: dict(r, connected=connections.get(r["robot_id"], False),
-                                   fresh=True, active=r["goal_node"] is not None or r["route"] is not None)
-                for r in states}
+        return {
+            r["robot_id"]: dict(
+                r,
+                connected=connections.get(r["robot_id"], False),
+                fresh=True,
+                active=r["goal_node"] is not None or r["route"] is not None,
+            )
+            for r in states
+        }
     from .fleet_manager import fleet_manager
     from ..ros2.ros_gateway import ros_gateway
+
     result = {}
     for robot in fleet_manager.get_all_robots():
         pending = ros_gateway.navigation_active(robot.robot_id)
         with robot._lock:
             received = robot.pose_received_at
             result[robot.robot_id] = dict(
-                robot_id=robot.robot_id, status=robot.state.value, x=robot.x, y=robot.y,
-                current_node=robot.current_node, goal_node=robot.goal_node,
-                route=deepcopy(robot.route), connected=robot.connected,
+                robot_id=robot.robot_id,
+                status=robot.state.value,
+                x=robot.x,
+                y=robot.y,
+                current_node=robot.current_node,
+                goal_node=robot.goal_node,
+                route=deepcopy(robot.route),
+                connected=robot.connected,
                 fresh=received is not None and 0 <= monotonic() - received <= REAL_POSE_TIMEOUT_S,
                 active=pending or robot.navigation_type is not None,
                 order_id=robot.order_id,
@@ -92,7 +106,9 @@ class ScenarioManager:
 
     def ensure_available(self, robot_id=None):
         with self.lock:
-            if self.active and (robot_id is None or normalize_robot_id(robot_id) in self._status["robot_ids"]):
+            if self.active and (
+                robot_id is None or normalize_robot_id(robot_id) in self._status["robot_ids"]
+            ):
                 raise ValueError("시나리오 실행 중입니다. 완료 또는 정지 후 다시 시도하세요.")
 
     def protect_command(self, method):
@@ -101,6 +117,7 @@ class ScenarioManager:
             with self.lock:
                 self.ensure_available(robot_id)
                 return method(owner, robot_id, *args, **kwargs)
+
         return guarded
 
     def start(self, name):
@@ -138,25 +155,39 @@ class ScenarioManager:
                 if row is None or not row["connected"]:
                     errors.append(f"{rid}: 연결되지 않음 (필요 시작점 N{start})")
                     continue
-                if not row["fresh"] or any(v is None or not math.isfinite(v) for v in (row["x"], row["y"])):
+                if not row["fresh"] or any(
+                    v is None or not math.isfinite(v) for v in (row["x"], row["y"])
+                ):
                     errors.append(f"{rid}: 최신 위치 없음 (필요 시작점 N{start})")
                     continue
                 if row["status"] != "IDLE" or row["active"] or row.get("order_id"):
                     errors.append(f"{rid}: 작업 가능 상태가 아님 ({row['status']})")
                 if mode == "real":
-                    node = locate_current_node(planner.nodes, row["x"], row["y"], REAL_OCCUPANCY_TOLERANCE_M)
+                    node = locate_current_node(
+                        planner.nodes, row["x"], row["y"], REAL_OCCUPANCY_TOLERANCE_M
+                    )
                     if node != start:
                         distance = math.dist((row["x"], row["y"]), planner.nodes[start])
-                        errors.append(f"{rid}: 시작 위치 불일치 — N{start}까지 {distance:.3f}m "
-                                      f"(허용 {REAL_OCCUPANCY_TOLERANCE_M:.3f}m)")
+                        errors.append(
+                            f"{rid}: 시작 위치 불일치 — N{start}까지 {distance:.3f}m "
+                            f"(허용 {REAL_OCCUPANCY_TOLERANCE_M:.3f}m)"
+                        )
             if errors:
                 raise ValueError("실행 거부:\n" + "\n".join(errors))
-            self._status = dict(state="running", run_id=uuid4().hex, name=name,
-                                description=scenario["description"], mode=mode,
-                                robot_ids=[r["id"] for r in specs], robots=[],
-                                elapsed=0., message="시작 위치 준비 및 명령 전송 중")
-            self._task = asyncio.create_task(self._run(scenario, graph, planner.nodes,
-                                                      float(config["timeout_seconds"][mode])))
+            self._status = dict(
+                state="running",
+                run_id=uuid4().hex,
+                name=name,
+                description=scenario["description"],
+                mode=mode,
+                robot_ids=[r["id"] for r in specs],
+                robots=[],
+                elapsed=0.0,
+                message="시작 위치 준비 및 명령 전송 중",
+            )
+            self._task = asyncio.create_task(
+                self._run(scenario, graph, planner.nodes, float(config["timeout_seconds"][mode]))
+            )
             return self.status()
 
     async def _run(self, scenario, graph, nodes, timeout):
@@ -170,6 +201,7 @@ class ScenarioManager:
                 raise ValueError(self._status["message"])
             if mode == "simulation":
                 from simulation.scenarios import prepare
+
                 touched = True
                 prepare(specs, nodes)
             for rid, goal in goals.items():
@@ -192,20 +224,35 @@ class ScenarioManager:
                         raise ValueError(f"{rid}: 연결 또는 최신 위치 확인 실패")
                     if row["status"] in ("PAUSED", "EMERGENCY_STOP", "OFFLINE"):
                         raise ValueError(f"{rid}: {row['status']}")
-                    rows.append(dict(robot_id=rid, status=row["status"],
-                                     current_node=row["current_node"], goal=spec["goal"]))
+                    rows.append(
+                        dict(
+                            robot_id=rid,
+                            status=row["status"],
+                            current_node=row["current_node"],
+                            goal=spec["goal"],
+                        )
+                    )
                 self._status.update(robots=rows, elapsed=round(monotonic() - started, 2))
-                done = all(states[rid]["status"] == "IDLE" and not states[rid]["active"]
-                           and states[rid]["route"] is None
-                           and str(states[rid]["current_node"]) == goal for rid, goal in goals.items())
+                done = all(
+                    states[rid]["status"] == "IDLE"
+                    and not states[rid]["active"]
+                    and states[rid]["route"] is None
+                    and str(states[rid]["current_node"]) == goal
+                    for rid, goal in goals.items()
+                )
                 # 양보 중인 비이동 대상도 종료되어야 다음 테스트와 충돌하지 않는다.
-                done &= all(row["status"] == "IDLE" and not states[row["robot_id"]]["active"] for row in rows)
+                done &= all(
+                    row["status"] == "IDLE" and not states[row["robot_id"]]["active"]
+                    for row in rows
+                )
                 if done:
-                    self._status.update(state="completed", message="모든 로봇의 주행 및 후속 동작 완료")
+                    self._status.update(
+                        state="completed", message="모든 로봇의 주행 및 후속 동작 완료"
+                    )
                     return
                 if monotonic() - started >= timeout:
                     raise ValueError(f"{timeout:g}초 내 미완료 (교착 확정 아님)")
-                await asyncio.sleep(.1)
+                await asyncio.sleep(0.1)
         except (Exception, asyncio.CancelledError) as exc:
             reason = str(exc) or "서버 종료로 중단"
             self._status.update(state="stopping", message=reason)
@@ -220,7 +267,9 @@ class ScenarioManager:
 
     def interrupt(self, robot_id=None):
         with self.lock:
-            if self.active and (robot_id is None or normalize_robot_id(robot_id) in self._status["robot_ids"]):
+            if self.active and (
+                robot_id is None or normalize_robot_id(robot_id) in self._status["robot_ids"]
+            ):
                 self._status.update(state="stopping", message="정지 요청으로 시나리오 중단")
 
     async def shutdown(self):

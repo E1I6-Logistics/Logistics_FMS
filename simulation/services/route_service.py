@@ -14,11 +14,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-
 ROUTE_GRAPH_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "routes"
-    / os.getenv("FMS_ROUTE_GRAPH", "test.geojson")
+    Path(__file__).resolve().parents[2] / "routes" / os.getenv("FMS_ROUTE_GRAPH", "test.geojson")
 )
 
 
@@ -66,9 +63,7 @@ def _resolve_edge_weight(
     if "weight" in properties:
         weight = float(properties["weight"])
     elif require_stored_weight:
-        raise ValueError(
-            f"Edge {properties.get('id', f'{start}-{end}')}에 weight가 없습니다."
-        )
+        raise ValueError(f"Edge {properties.get('id', f'{start}-{end}')}에 weight가 없습니다.")
     else:
         cost = float(properties.get("cost", 0.0))
         weight = cost if cost > 0 else math.dist(points[start], points[end])
@@ -132,13 +127,10 @@ def plan_route(
     if start_id not in nodes or goal_id not in nodes:
         raise ValueError(f"존재하지 않는 경로 노드: {start_id} → {goal_id}")
     points = {
-        key: tuple(map(float, node["geometry"]["coordinates"][:2]))
-        for key, node in nodes.items()
+        key: tuple(map(float, node["geometry"]["coordinates"][:2])) for key, node in nodes.items()
     }
     integer_points = {int(key): value for key, value in points.items()}
-    adjacency: dict[str, list[tuple[str, float, str]]] = {
-        key: [] for key in nodes
-    }
+    adjacency: dict[str, list[tuple[str, float, str]]] = {key: [] for key in nodes}
     for feature in graph.get("features", []):
         properties = feature.get("properties") or {}
         if properties.get("startid") is None or properties.get("endid") is None:
@@ -184,9 +176,7 @@ def plan_route(
             if candidate < distances.get(neighbor, math.inf):
                 distances[neighbor] = candidate
                 previous[neighbor] = (current, edge_id)
-                heapq.heappush(
-                    queue, (candidate + heuristic(neighbor), candidate, neighbor)
-                )
+                heapq.heappush(queue, (candidate + heuristic(neighbor), candidate, neighbor))
 
     if goal_id not in distances:
         raise ValueError(f"노드 {start_id}에서 {goal_id}까지 연결된 경로가 없습니다.")
@@ -218,9 +208,7 @@ def build_compact_route_graph(
     require_stored_weight: bool = False,
 ) -> dict:
     """Convert route GeoJSON into the smaller graph format sent to an LLM."""
-    points, edges = build_route_inputs(
-        graph, require_stored_weight=require_stored_weight
-    )
+    points, edges = build_route_inputs(graph, require_stored_weight=require_stored_weight)
     edge_weights = build_edge_weight_lookup(points, edges)
     return {
         "type": "CompactRouteGraph",
@@ -233,8 +221,7 @@ def build_compact_route_graph(
         ),
         "nodes": sorted(points),
         "node_coordinates": [
-            {"id": node, "x": points[node][0], "y": points[node][1]}
-            for node in sorted(points)
+            {"id": node, "x": points[node][0], "y": points[node][1]} for node in sorted(points)
         ],
         "edges": [
             {"from": start, "to": end, "weight": _model_weight(weight)}
@@ -250,17 +237,11 @@ def build_compact_adjacency_graph(
     require_stored_weight: bool = False,
 ) -> dict:
     """Build the coordinate-free adjacency format used by V2 experiments."""
-    points, edges = build_route_inputs(
-        graph, require_stored_weight=require_stored_weight
-    )
+    points, edges = build_route_inputs(graph, require_stored_weight=require_stored_weight)
     edge_weights = build_edge_weight_lookup(points, edges)
-    adjacency: dict[str, list[dict[str, int | float]]] = {
-        str(node): [] for node in sorted(points)
-    }
+    adjacency: dict[str, list[dict[str, int | float]]] = {str(node): [] for node in sorted(points)}
     for (start, end), weight in sorted(edge_weights.items()):
-        adjacency[str(start)].append(
-            {"to": end, "weight": _model_weight(weight)}
-        )
+        adjacency[str(start)].append({"to": end, "weight": _model_weight(weight)})
     return {
         "type": "CompactAdjacencyGraph",
         "source_graph": source_graph,
@@ -310,7 +291,6 @@ def compact_graph_edges(graph: dict[str, Any]) -> list[dict[str, int | float]]:
     raise ValueError(f"지원하지 않는 compact graph type: {graph_type!r}")
 
 
-
 def get_available_edges(
     graph: dict[str, Any],
     current_node: int,
@@ -332,8 +312,7 @@ def get_available_edges(
     available = [
         {"node": int(edge["to"]), "weight": _model_weight(edge["weight"])}
         for edge in compact_graph_edges(graph)
-        if int(edge["from"]) == current_node
-        and int(edge["to"]) not in visited
+        if int(edge["from"]) == current_node and int(edge["to"]) not in visited
     ]
     return sorted(available, key=lambda item: (item["node"], item["weight"]))
 

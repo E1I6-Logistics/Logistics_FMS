@@ -24,7 +24,6 @@ from simulation.services.route_service import (
     plan_route,
 )
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ROUTE_DIR = PROJECT_ROOT / "routes"
 
@@ -82,8 +81,7 @@ def run_compare(args: argparse.Namespace) -> int:
     llm_graph_path = resolve_llm_route_graph_path(args.llm_graph)
     llm_graph = validate_selected_llm_graph(llm_graph_path)
     print(
-        f"LLM 입력 그래프: {llm_graph_path.name} "
-        f"({llm_graph.get('type', 'GeoJSON')})",
+        f"LLM 입력 그래프: {llm_graph_path.name} " f"({llm_graph.get('type', 'GeoJSON')})",
         flush=True,
     )
 
@@ -91,8 +89,7 @@ def run_compare(args: argparse.Namespace) -> int:
     graph = load_route_graph()
     points, edges = build_route_inputs(graph)
     baseline = [
-        int(node_id)
-        for node_id in plan_route(str(args.start), str(args.goal), graph)["node_ids"]
+        int(node_id) for node_id in plan_route(str(args.start), str(args.goal), graph)["node_ids"]
     ]
     print(f"코드 경로: {baseline}", flush=True)
 
@@ -189,9 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
         "build-compact", description="GeoJSON을 LLM용 Compact Graph로 변환합니다."
     )
     compact_parser.add_argument("--source", default="test.geojson")
-    compact_parser.add_argument(
-        "--output", default="test_compact_graph.geojson"
-    )
+    compact_parser.add_argument("--output", default="test_compact_graph.geojson")
     compact_parser.set_defaults(handler=run_build_compact)
 
     summary_parser = commands.add_parser(

@@ -91,7 +91,6 @@ class RouteComparisonServiceTest(unittest.TestCase):
         self.assertEqual(compact["nodes"], [1, 2])
         self.assertEqual(compact["edges"], [{"from": 1, "to": 2, "weight": 5.0}])
 
-
     # 명시적 weight가 있으면 cost나 좌표 거리보다 우선하는지 확인한다.
     def test_stored_weight_is_authoritative(self):
         graph = {
@@ -107,9 +106,7 @@ class RouteComparisonServiceTest(unittest.TestCase):
                 },
                 {
                     "geometry": {"type": "MultiLineString"},
-                    "properties": {
-                        "startid": 1, "endid": 2, "cost": 99, "weight": 2.5
-                    },
+                    "properties": {"startid": 1, "endid": 2, "cost": 99, "weight": 2.5},
                 },
             ],
         }
